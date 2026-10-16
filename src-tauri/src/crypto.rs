@@ -227,9 +227,11 @@ mod tests {
 
     #[test]
     fn redact_hides_secret() {
+        // Placeholder only: real access key ids must never appear in the repo.
         let r = redact("AKIAIOSFODNN7EXAMPLE");
         assert!(r.starts_with("AKIA"));
-        assert!(!r.contains("ZQLI"));
+        assert!(!r.contains("IOSFODNN7EXAMPLE"));
+        assert!(r.contains("20 chars"));
     }
 
     #[test]
