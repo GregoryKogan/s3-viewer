@@ -45,3 +45,7 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 *.swp
+
+# --- binaries (never committed) ---
+*.dmg
+*.app/
