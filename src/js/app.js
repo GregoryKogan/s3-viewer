@@ -30,7 +30,18 @@ const state = {
   previewHidden: false,
   lastClickedIndex: null,
   capabilitiesDetected: new Set(),
+  /** Monotonic id so stale listing events can be ignored. */
+  listingRequest: 0,
+  listing: null,
+  visible: [],
+  rowHeight: 30,
+  rowPool: [],
 };
+
+/** s3:// URI for an object key, used by the copy actions. */
+export function s3Uri(bucket, key) {
+  return `s3://${bucket}/${key}`;
+}
 
 // ------------------------------------------------------------------ bootstrap
 
@@ -107,6 +118,7 @@ function wireGlobalHandlers() {
     "input",
     debounce(() => {
       state.filter = filterInput.value.trim().toLowerCase();
+      state.rebuildList = true;
       renderObjects();
     }, 120),
   );
@@ -123,6 +135,7 @@ function wireGlobalHandlers() {
       } else {
         state.sort = { key, direction: key === "name" ? "asc" : "desc" };
       }
+      state.rebuildList = true;
       renderObjects();
     });
   }
@@ -131,9 +144,16 @@ function wireGlobalHandlers() {
     const visible = visibleEntries();
     state.selected.clear();
     if (event.target.checked) for (const entry of visible) state.selected.add(entry.key);
-    renderObjects();
+    updateVisibleSelection();
     updateToolbar();
   });
+
+  $("#preview-copy-uri").addEventListener("click", () => copyUriFor(state.preview?.key));
+
+  // Streamed listing events. Each page repaints only what is on screen.
+  listen("listing://page", (event) => appendListingPage(event.payload)).catch(() => {});
+  listen("listing://done", (event) => finishListing(event.payload)).catch(() => {});
+  listen("listing://error", (event) => failListing(event.payload)).catch(() => {});
 
   document.addEventListener("keydown", onKeyDown);
   wireDragAndDrop();
@@ -419,6 +439,8 @@ async function openConnection(id) {
   state.filter = "";
   $("#filter").value = "";
   state.preview = null;
+  state.rowSignature = null;
+  state.rowPool = [];
   renderConnections();
   renderBreadcrumb();
   renderObjects();
@@ -448,39 +470,95 @@ async function maybeProbeOnConnect(view) {
   await detectCapabilities(connection.id);
 }
 
+/**
+ * Load a folder.
+ *
+ * The listing streams: S3 pages arrive as events and are appended to the visible
+ * list as they come, so a prefix with tens of thousands of keys shows its first
+ * screen immediately instead of freezing the window until the last page lands.
+ */
 async function reloadFolder({ silent = false } = {}) {
   if (!state.session) return;
   const connectionId = state.session.connection.id;
   const prefix = state.session.prefix;
-  if (!silent) {
-    state.session.loading = true;
-    renderObjects();
-  }
+  const requestId = String(++state.listingRequest);
+  // Only the newest request may write to the session.
+  state.listing = null;
+  state.listing = { requestId, connectionId, prefix, total: 0, done: false };
+
+  state.session.loading = true;
+  // Until the first page arrives the listing is *unknown*, not empty: showing
+  // "This folder is empty" here made the folder look like it had lost its files.
+  state.session.awaitingFirstPage = true;
+  state.session.entries = [];
+  state.selected.clear();
+  state.filter = "";
+  $("#filter").value = "";
+  renderObjects();
+  updateToolbar();
+
   try {
-    const result = await api.listObjects({ connectionId, prefix });
-    if (typeof result?.entries === "string" || !Array.isArray(result?.entries)) {
-      // Defensive: never let a malformed payload become a character array.
-      throw new Error(
-        `list_objects returned ${typeof result?.entries} instead of an array (keys: ${
-          result && typeof result === "object" ? Object.keys(result).join(",") : typeof result
-        })`,
-      );
-    }
-    // A slow request may resolve after the user navigated elsewhere.
-    if (state.session?.connection.id !== connectionId || state.session.prefix !== prefix) return;
-    state.session.entries = result.entries;
-    state.session.truncated = result.truncated;
-    state.session.warning = result.warning;
-    state.session.loading = false;
-    state.selected.clear();
-    renderBreadcrumb();
-    renderObjects();
-    updateToolbar();
+    await api.listObjectsStream({ connectionId, prefix, requestId });
   } catch (error) {
-    state.session.loading = false;
-    renderObjects();
-    toastError(error.message, "Cannot list this folder");
+    // A failed stream still reports through listing://error; only surface
+    // transport-level failures here.
+    if (state.listing?.requestId === requestId) {
+      state.session.loading = false;
+      renderObjects();
+      toastError(error.message, "Cannot list this folder");
+    }
   }
+}
+
+/** Accept one streamed page if it belongs to the folder on screen. */
+function appendListingPage(payload) {
+  const listing = state.listing;
+  if (!listing || payload.requestId !== listing.requestId) return;
+  if (
+    !state.session ||
+    state.session.connection.id !== listing.connectionId ||
+    state.session.prefix !== listing.prefix
+  ) {
+    return;
+  }
+  if (payload.entries?.length) {
+    state.session.entries.push(...payload.entries);
+    listing.total = state.session.entries.length;
+  }
+  state.session.awaitingFirstPage = false;
+  state.session.loading = !payload.done;
+  if (payload.done) listing.done = true;
+  renderObjects();
+  updateToolbar();
+}
+
+function finishListing(payload) {
+  const listing = state.listing;
+  if (!listing || payload.requestId !== listing.requestId) return;
+  const session = state.session;
+  if (!session || session.connection.id !== listing.connectionId) return;
+  listing.done = true;
+  session.loading = false;
+  session.awaitingFirstPage = false;
+  session.truncated = Boolean(payload.truncated);
+  session.warning = payload.warning ?? null;
+  session.prefix = payload.prefix ?? session.prefix;
+  state.rebuildList = true;
+  renderBreadcrumb();
+  renderObjects();
+  state.rebuildList = false;
+  updateToolbar();
+}
+
+function failListing(payload) {
+  const listing = state.listing;
+  if (!listing || payload.requestId !== listing.requestId) return;
+  if (state.session) {
+    state.session.loading = false;
+    state.session.awaitingFirstPage = false;
+  }
+  renderObjects();
+  toastError(payload.error?.message ?? "listing failed", "Cannot list this folder");
 }
 
 async function navigateTo(prefix) {
@@ -488,6 +566,8 @@ async function navigateTo(prefix) {
   state.session.prefix = prefix;
   state.selected.clear();
   state.preview = null;
+  state.rowSignature = null;
+  state.rowPool = [];
   renderBreadcrumb();
   renderPreviewPanel();
   await reloadFolder();
@@ -574,88 +654,273 @@ function renderBreadcrumb() {
 }
 
 function renderObjects() {
-  const list = $("#object-list");
-  clear(list);
+  const container = $("#object-rows");
+  const scroller = $("#object-list");
 
   if (!state.session) {
-    list.append(
-      el("div", { class: "empty-state", "data-testid": "no-connection-state" }, [
-        el("p", { text: "Pick a connection on the left, or create a new one." }),
-        el("p", {
-          class: "muted",
-          text: "Each connection pins one bucket and one prefix; add several to move between projects quickly.",
+    state.visible = [];
+    state.rowPool = [];
+    state.rowSignature = null;
+    resetScroller(scroller);
+    scroller.append(noConnectionState());
+    return;
+  }
+
+  state.visible = visibleEntries();
+
+  // Streaming appends pages continuously; discarding the node pool on every page
+  // would defeat the point of streaming. It is rebuilt only when the *set* of
+  // rows changes: navigation, sort, filter, or a completed listing.
+  const signature = [
+    state.session.connection.id,
+    state.session.prefix,
+    state.filter,
+    state.sort.key,
+    state.sort.direction,
+  ].join("|");
+  if (signature !== state.rowSignature || state.rebuildList) {
+    state.rowSignature = signature;
+    state.rebuildList = false;
+    state.rowPool = [];
+    resetScroller(scroller);
+  }
+
+  if (!state.visible.length) {
+    const rowsLayer = $("#object-rows");
+    if (rowsLayer) rowsLayer.style.height = "0px";
+    const pending = Boolean(state.session.loading || state.session.awaitingFirstPage);
+    const existing = scroller.querySelector(".empty-state");
+    const wanted = pending ? "loading-state" : "empty-folder";
+    if (!existing || existing.dataset.testid !== wanted) {
+      resetScroller(scroller);
+      scroller.append(
+        el("div", {
+          class: "empty-state",
+          "data-testid": wanted,
+          text: pending
+            ? "Loading…"
+            : state.filter
+              ? "Nothing matches the filter."
+              : "This folder is empty.",
         }),
-      ]),
-    );
-    return;
-  }
-  if (state.session.loading && !state.session.entries.length) {
-    list.append(el("div", { class: "empty-state", text: "Loading…", "data-testid": "loading-state" }));
+      );
+    }
+    updateListingStatus();
     return;
   }
 
-  const entries = visibleEntries();
-  if (!entries.length) {
-    list.append(
-      el("div", {
-        class: "empty-state",
-        "data-testid": "empty-folder",
-        text: state.filter ? "Nothing matches the filter." : "This folder is empty.",
-      }),
-    );
-    return;
-  }
-
-  for (const entry of entries) {
-    list.append(renderRow(entry, entries));
-  }
-  syncSelectAll(entries);
+  const stale = scroller.querySelector(".empty-state");
+  if (stale) stale.remove();
+  state.rowContainer = $("#object-rows");
+  state.rowContainer.style.height = `${state.visible.length * state.rowHeight}px`;
+  paintRows(true);
+  syncSelectAll(state.visible);
+  updateListingStatus();
 }
 
-function renderRow(entry, entries) {
-  const checkbox = el("input", {
-    type: "checkbox",
-    checked: state.selected.has(entry.key),
-    "data-testid": `row-check-${entry.name}`,
-    onClick: (event) => {
-      event.stopPropagation();
-      toggleSelection(entry.key, event.shiftKey, entries);
-      renderObjects();
-      updateToolbar();
-    },
-  });
+/**
+ * Empty the scroll container, keeping (and recreating) the rows layer inside it.
+ * Dropping the rows layer here would break every subsequent render.
+ */
+function resetScroller(scroller) {
+  const rows = $("#object-rows");
+  if (rows) rows.remove();
+  const empty = scroller.querySelector(".empty-state");
+  if (empty) empty.remove();
+  const fresh = el("div", { class: "object-rows", id: "object-rows" });
+  scroller.append(fresh);
+  return fresh;
+}
 
-  const row = el(
-    "div",
-    {
-      class: `object-row ${entry.isFolder ? "object-row--folder" : ""}`,
-      role: "option",
-      "aria-selected": state.selected.has(entry.key) ? "true" : "false",
-      "data-testid": `row-${entry.name}`,
-      "data-key": entry.key,
-      "data-kind": entry.kind,
-      onClick: (event) => {
-        toggleSelection(entry.key, event.shiftKey, entries, { single: true });
-        renderObjects();
-        updateToolbar();
-        previewEntry(entry);
-      },
-      onDblclick: () => activateEntry(entry),
-    },
-    [
-      el("label", { class: "cell cell--check" }, [checkbox]),
+/** The list container, with its scroll handler attached exactly once. */
+function objectScroller() {
+  const scroller = $("#object-list");
+  if (!scroller.dataset.bound) {
+    scroller.dataset.bound = "1";
+    let frame = null;
+    scroller.addEventListener("scroll", () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        paintRows(false);
+      });
+    });
+    window.addEventListener("resize", () => paintRows(true));
+  }
+  return scroller;
+}
+
+/**
+ * Draw only the rows inside the viewport (plus a small overscan) and recycle the
+ * DOM nodes. This is what keeps a folder with tens of thousands of objects from
+ * blocking the UI thread.
+ */
+function paintRows(force) {
+  if (!state.session || !state.visible.length) return;
+  const scroller = objectScroller();
+  const container = $("#object-rows") ?? resetScroller(scroller);
+
+  const rowHeight = state.rowHeight;
+  const scrollTop = scroller.scrollTop;
+  const viewport = scroller.clientHeight || 600;
+  const overscan = 8;
+  const first = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+  const last = Math.min(
+    state.visible.length,
+    Math.ceil((scrollTop + viewport) / rowHeight) + overscan,
+  );
+  const needed = Math.max(0, last - first);
+
+  while (state.rowPool.length < needed) {
+    const row = el("div", { class: "object-row", role: "option" });
+    row.append(
+      el("label", { class: "cell cell--check" }, [el("input", { type: "checkbox" })]),
       el("div", { class: "cell cell--name" }, [
         el("div", { class: "row-name" }, [
-          el("span", { class: "row-icon", text: kindIcon(entry.kind, entry.isFolder) }),
-          el("span", { class: "row-label", text: entry.name, title: entry.key }),
+          el("span", { class: "row-icon" }),
+          el("span", { class: "row-label" }),
         ]),
       ]),
-      el("div", { class: "cell cell--size", text: entry.isFolder ? "—" : humanSize(entry.size) }),
-      el("div", { class: "cell cell--modified", text: humanDate(entry.lastModified), title: entry.lastModified ?? "" }),
-      el("div", { class: "cell cell--kind", text: kindLabel(entry.kind) }),
-    ],
+      el("div", { class: "cell cell--size" }),
+      el("div", { class: "cell cell--modified" }),
+      el("div", { class: "cell cell--kind" }),
+    );
+    state.rowPool.push(row);
+    container.append(row);
+  }
+
+  for (let i = 0; i < state.rowPool.length; i += 1) {
+    const node = state.rowPool[i];
+    if (i >= needed) {
+      node.hidden = true;
+      continue;
+    }
+    node.hidden = false;
+    updateRow(node, state.visible[first + i], first + i);
+  }
+  void force;
+}
+
+/** Fill one recycled row from an entry. */
+function updateRow(node, entry, index) {
+  const rowHeight = state.rowHeight;
+  const selected = state.selected.has(entry.key);
+  node.style.transform = `translateY(${index * rowHeight}px)`;
+  node.dataset.key = entry.key;
+  node.dataset.testid = `row-${entry.name}`;
+  node.classList.toggle("object-row--folder", entry.isFolder);
+  node.setAttribute("aria-selected", selected ? "true" : "false");
+
+  const checkbox = node.querySelector('input[type="checkbox"]');
+  checkbox.checked = selected;
+  checkbox.dataset.testid = `row-check-${entry.name}`;
+
+  const icon = node.querySelector(".row-icon");
+  icon.textContent = kindIcon(entry.kind, entry.isFolder);
+  const label = node.querySelector(".row-label");
+  label.textContent = entry.name;
+  label.title = entry.key;
+
+  node.querySelector(".cell--size").textContent = entry.isFolder ? "—" : humanSize(entry.size);
+  const modified = node.querySelector(".cell--modified");
+  modified.textContent = humanDate(entry.lastModified);
+  modified.title = entry.lastModified ?? "";
+  node.querySelector(".cell--kind").textContent = kindLabel(entry.kind);
+
+  // Handlers are attached once per node; they read the key from the dataset so a
+  // recycled node always acts on the entry it currently shows.
+  if (!node.dataset.bound) {
+    node.dataset.bound = "1";
+    node.addEventListener("click", (event) => {
+      const key = node.dataset.key;
+      selectOnly(key, event.shiftKey);
+      updateVisibleSelection();
+      updateToolbar();
+      const current = state.visible.find((item) => item.key === key);
+      if (current) previewEntry(current);
+    });
+    node.addEventListener("dblclick", () => {
+      const current = state.visible.find((item) => item.key === node.dataset.key);
+      if (current) activateEntry(current);
+    });
+    node.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      const current = state.visible.find((item) => item.key === node.dataset.key);
+      if (current) openRowMenu(current, event);
+    });
+    checkbox.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const key = node.dataset.key;
+      if (state.selected.has(key)) state.selected.delete(key);
+      else state.selected.add(key);
+      updateVisibleSelection();
+      updateToolbar();
+    });
+  }
+}
+
+/** Repaint just the selection state of the drawn rows. */
+function updateVisibleSelection() {
+  for (const node of state.rowPool) {
+    if (node.hidden) continue;
+    const key = node.dataset.key;
+    const selected = state.selected.has(key);
+    node.setAttribute("aria-selected", selected ? "true" : "false");
+    const checkbox = node.querySelector('input[type="checkbox"]');
+    if (checkbox) checkbox.checked = selected;
+  }
+  syncSelectAll(state.visible);
+}
+
+function selectOnly(key, extend) {
+  if (extend && state.visible.length) {
+    const anchor = state.selected.size ? [...state.selected][state.selected.size - 1] : null;
+    const from = anchor ? state.visible.findIndex((item) => item.key === anchor) : -1;
+    const to = state.visible.findIndex((item) => item.key === key);
+    if (from !== -1 && to !== -1) {
+      const [lo, hi] = [from, to].sort((a, b) => a - b);
+      for (let i = lo; i <= hi; i += 1) state.selected.add(state.visible[i].key);
+      return;
+    }
+  }
+  state.selected.clear();
+  state.selected.add(key);
+}
+
+function noConnectionState() {
+  return el("div", { class: "empty-state", "data-testid": "no-connection-state" }, [
+    el("p", { text: "Pick a connection on the left, or create a new one." }),
+    el("p", {
+      class: "muted",
+      text: "Each connection pins one bucket and one prefix; add several to move between projects quickly.",
+    }),
+  ]);
+}
+
+/** Right-click menu for an object row. */
+function openRowMenu(entry, event) {
+  const uri = s3Uri(state.session.connection.bucket, entry.key);
+  copyText(uri).then((ok) => {
+    if (ok) toastOk(`Copied ${uri}`);
+    else toastError("The clipboard is not available.");
+  });
+  void event;
+}
+
+function updateListingStatus() {
+  const status = $("#folder-status");
+  if (!status || !state.session) return;
+  const files = state.session.entries.filter((entry) => !entry.isFolder).length;
+  const folders = state.session.entries.length - files;
+  const bytes = state.session.entries.reduce(
+    (sum, entry) => sum + (entry.isFolder ? 0 : entry.size),
+    0,
   );
-  return row;
+  const selected = state.selected.size ? ` · ${state.selected.size} selected` : "";
+  status.textContent =
+    `${folders} folder(s), ${files} file(s), ${humanSize(bytes)}` +
+    `${state.session.loading ? " · loading…" : ""}` +
+    `${state.session.truncated ? " (truncated)" : ""}${selected}`;
 }
 
 function syncSelectAll(entries) {
@@ -665,26 +930,6 @@ function syncSelectAll(entries) {
   box.indeterminate = !all && entries.some((entry) => state.selected.has(entry.key));
 }
 
-function toggleSelection(key, shiftKey, entries, { single = false } = {}) {
-  if (shiftKey && state.lastClickedIndex !== null) {
-    const currentIndex = entries.findIndex((entry) => entry.key === key);
-    if (currentIndex !== -1) {
-      const [from, to] = [state.lastClickedIndex, currentIndex].sort((a, b) => a - b);
-      for (let index = from; index <= to; index += 1) state.selected.add(entries[index].key);
-      state.lastClickedIndex = currentIndex;
-      return;
-    }
-  }
-  if (single) {
-    state.selected.clear();
-    state.selected.add(key);
-  } else if (state.selected.has(key)) {
-    state.selected.delete(key);
-  } else {
-    state.selected.add(key);
-  }
-  state.lastClickedIndex = entries.findIndex((entry) => entry.key === key);
-}
 
 function moveSelection(delta, extend) {
   const entries = visibleEntries();
@@ -697,10 +942,22 @@ function moveSelection(delta, extend) {
   if (!extend) state.selected.clear();
   state.selected.add(entry.key);
   state.lastClickedIndex = next;
-  renderObjects();
+  updateVisibleSelection();
   updateToolbar();
   previewEntry(entry);
-  document.querySelector(`[data-key="${CSS.escape(entry.key)}"]`)?.scrollIntoView({ block: "nearest" });
+  scrollRowIntoView(next);
+}
+
+/** Keep the painted window in sync when the keyboard moves past it. */
+function scrollRowIntoView(index) {
+  const scroller = objectScroller();
+  const top = index * state.rowHeight;
+  const bottom = top + state.rowHeight;
+  if (top < scroller.scrollTop) scroller.scrollTop = top;
+  else if (bottom > scroller.scrollTop + scroller.clientHeight) {
+    scroller.scrollTop = bottom - scroller.clientHeight;
+  }
+  paintRows(false);
 }
 
 function activateEntry(entry) {
@@ -712,7 +969,9 @@ function updateToolbar() {
   const hasSession = Boolean(state.session);
   const count = state.selected.size;
   const connection = state.session?.connection;
-  const info = describeCapabilities(state.connections.find((v) => v.connection.id === connection?.id)?.capabilities);
+  const info = describeCapabilities(
+    state.connections.find((v) => v.connection.id === connection?.id)?.capabilities,
+  );
   const canWrite = hasSession && info.level !== "ro" && !connection?.security?.readOnlyMode;
 
   for (const action of ["upload", "new-folder", "new-file"]) {
@@ -721,25 +980,19 @@ function updateToolbar() {
   }
   for (const action of ["delete", "copy", "move"]) {
     const button = document.querySelector(`[data-action="${action}"]`);
-    if (button) button.disabled = !hasSession || count === 0 || (action !== "download" && !canWrite);
+    if (button) button.disabled = !hasSession || count === 0 || !canWrite;
   }
   const download = document.querySelector('[data-action="download"]');
   if (download) download.disabled = !hasSession || count === 0;
+  const copyUri = document.querySelector('[data-action="copy-uri"]');
+  if (copyUri) copyUri.disabled = !hasSession || count === 0;
 
-  const status = $("#folder-status");
-  if (!state.session) {
-    status.textContent = "";
-  } else {
-    const files = state.session.entries.filter((entry) => !entry.isFolder).length;
-    const folders = state.session.entries.length - files;
-    const bytes = state.session.entries.reduce((sum, entry) => sum + (entry.isFolder ? 0 : entry.size), 0);
-    status.textContent = `${folders} folder(s), ${files} file(s), ${humanSize(bytes)}${
-      state.session.truncated ? " (truncated)" : ""
-    }${count ? ` · ${count} selected` : ""}`;
-  }
+  updateListingStatus();
 
   const previewDownload = $("#preview-download");
   if (previewDownload) previewDownload.disabled = !state.preview?.key;
+  const previewUri = $("#preview-copy-uri");
+  if (previewUri) previewUri.disabled = !state.preview?.key;
 }
 
 // -------------------------------------------------------------------- preview
@@ -871,6 +1124,9 @@ function handleToolbar(action) {
       break;
     case "download":
       downloadSelection();
+      break;
+    case "copy-uri":
+      copySelectionUris();
       break;
     case "delete":
       deleteSelection();
@@ -1103,6 +1359,31 @@ async function transferSelection(isMove) {
       }),
     ],
   });
+}
+
+/** Copy the s3:// URI of one key (or of the object currently previewed). */
+async function copyUriFor(key) {
+  if (!state.session || !key) return;
+  const uri = s3Uri(state.session.connection.bucket, key);
+  const ok = await copyText(uri);
+  if (ok) toastOk(`Copied ${uri}`);
+  else toastError("The clipboard is not available.");
+}
+
+/** Copy one URI per selected item, newline separated. */
+async function copySelectionUris() {
+  const entries = selectedEntries();
+  if (!state.session || !entries.length) return;
+  const bucket = state.session.connection.bucket;
+  const text = entries.map((entry) => s3Uri(bucket, entry.key)).join("\n");
+  const ok = await copyText(text);
+  if (!ok) {
+    toastError("The clipboard is not available.");
+    return;
+  }
+  toastOk(
+    entries.length === 1 ? `Copied ${text}` : `Copied ${entries.length} S3 URIs`,
+  );
 }
 
 function downloadSelection() {

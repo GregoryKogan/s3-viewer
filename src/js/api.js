@@ -146,6 +146,7 @@ export const api = {
 
   // browsing
   listObjects: (input) => invoke("list_objects", { input }),
+  listObjectsStream: (input) => invoke("list_objects_stream", { input }),
   getPreview: (input) => invoke("get_preview", { input }),
   objectMeta: (connectionId, key) => invoke("object_meta", { connectionId, key }),
 

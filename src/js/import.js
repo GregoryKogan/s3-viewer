@@ -130,7 +130,7 @@ function draftsFromJson(payload) {
 export function openImportDialog({ onImported }) {
   const textarea = el("textarea", {
     rows: 10,
-    placeholder: `{\n  "my-bucket": {\n    "access_key": "…",\n    "secret_key": "…",\n    "endpoint": "https://obs.example.ru"\n  }\n}`,
+    placeholder: `{\n  "my-bucket": {\n    "access_key": "…",\n    "secret_key": "…",\n    "endpoint": "https://s3.example.com"\n  }\n}`,
     style: { fontFamily: "var(--mono)", fontSize: "12px" },
     "data-testid": "import-textarea",
   });

@@ -28,6 +28,9 @@ npm-debug.log*
 pnpm-debug.log*
 pnpm-lock.yaml.bak
 
+# --- local test configuration (never committed: it names real infrastructure) ---
+e2e/.env.local
+
 # --- test artifacts ---
 test-results/
 s3viewer-e2e.lock

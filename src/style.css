@@ -413,13 +413,32 @@ textarea {
   flex-direction: column;
 }
 
-.table-head,
+.table-head {
+  display: grid;
+  grid-template-columns: 34px minmax(180px, 1fr) 92px 168px 92px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+}
+
+/* Rows are virtualised: the list owns the scroll and each row is absolutely
+   positioned, so a 50 000-object folder still paints only what is visible. */
 .object-row {
   display: grid;
   grid-template-columns: 34px minmax(180px, 1fr) 92px 168px 92px;
   align-items: center;
   gap: 6px;
   padding: 0 14px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  will-change: transform;
+}
+
+.object-rows {
+  position: relative;
+  width: 100%;
 }
 
 .table-head {
@@ -474,6 +493,8 @@ textarea {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  contain: strict;
+  position: relative;
 }
 
 .object-row {

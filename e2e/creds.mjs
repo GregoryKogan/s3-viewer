@@ -12,11 +12,32 @@ import os from "node:os";
 import path from "node:path";
 
 /**
- * The bucket the local e2e run touches. It is a real dev bucket, not a client
- * setting: the client itself never hard-codes any bucket. Override it with
- * S3VIEWER_TEST_BUCKET to point the suite at your own scratch bucket.
+ * The bucket this suite is allowed to touch.
+ *
+ * Deliberately *not* hard-coded: no bucket name from anyone's infrastructure
+ * belongs in this repository. Resolution order:
+ *   1. `S3VIEWER_TEST_BUCKET`
+ *   2. `e2e/.env.local` (gitignored), a tiny KEY=VALUE file
+ * There is no fallback: without one of those the suite refuses to start, which is
+ * the right failure mode for a test that creates and deletes objects.
  */
-export const ALLOWED_BUCKET = process.env.S3VIEWER_TEST_BUCKET ?? "my-bucket";
+export function resolveBucket() {
+  if (process.env.S3VIEWER_TEST_BUCKET) return process.env.S3VIEWER_TEST_BUCKET;
+  const localFile = path.join(import.meta.dirname, ".env.local");
+  if (fs.existsSync(localFile)) {
+    for (const line of fs.readFileSync(localFile, "utf8").split("\n")) {
+      const match = line.match(/^\s*S3VIEWER_TEST_BUCKET\s*=\s*(.+?)\s*$/);
+      if (match) return match[1].replace(/^["']|["']$/g, "");
+    }
+  }
+  throw new Error(
+    "No test bucket configured. Set S3VIEWER_TEST_BUCKET or create e2e/.env.local with\n" +
+      "  S3VIEWER_TEST_BUCKET=<your scratch bucket>",
+  );
+}
+
+/** Resolved once per process. */
+export const ALLOWED_BUCKET = resolveBucket();
 export const E2E_PREFIX = "_s3viewer-e2e/";
 const CREDS_PATH = path.join(os.homedir(), ".secrets", "s3", "s3-creds.json");
 
@@ -30,13 +51,6 @@ function redact(value) {
  *            secretKey: string, source: string}}
  */
 export function devCreds() {
-  const envBucket = process.env.S3VIEWER_TEST_BUCKET;
-  if (envBucket && envBucket !== ALLOWED_BUCKET) {
-    throw new Error(
-      `S3VIEWER_TEST_BUCKET is ${envBucket}, but this suite is only permitted to touch ${ALLOWED_BUCKET}.`,
-    );
-  }
-
   const endpoint = process.env.S3VIEWER_TEST_ENDPOINT;
   const accessKey = process.env.S3VIEWER_TEST_ACCESS_KEY;
   const secretKey = process.env.S3VIEWER_TEST_SECRET_KEY;

@@ -14,7 +14,7 @@ use crate::store::{AppSettings, ConnectionInput, Theme};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 pub type CmdResult<T> = Result<T, ErrorPayload>;
 
@@ -335,6 +335,16 @@ pub fn detect_capabilities(app: State<'_, Arc<AppCore>>, id: String) -> CmdResul
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ListStreamInput {
+    pub connection_id: String,
+    #[serde(default)]
+    pub prefix: Option<String>,
+    /// Echoed back in every event so stale listeners can be ignored.
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListInput {
     pub connection_id: String,
     #[serde(default)]
@@ -362,29 +372,113 @@ pub fn list_objects(app: State<'_, Arc<AppCore>>, input: ListInput) -> CmdResult
     if !show_system {
         entries.retain(|e| !is_system_entry(e));
     }
-    if entries.iter().filter(|e| !e.is_folder).count() > limit {
-        // Keep every folder and only trim the file tail.
-        let mut kept = 0usize;
-        entries.retain(|entry| {
-            if entry.is_folder {
-                return true;
-            }
-            kept += 1;
-            kept <= limit
-        });
-        truncated = true;
-    }
+    truncated = trim_to_limit(&mut entries, limit) || truncated;
     Ok(ListResult {
-        prefix,
+        prefix: prefix.clone(),
         entries,
         truncated,
-        warning: if truncated {
-            Some(format!(
-                "Listing truncated at {limit} entries. Open a sub-folder or narrow the prefix."
-            ))
-        } else {
-            None
+        warning: truncation_warning(truncated, limit),
+    })
+}
+
+/// Listing that streams: every S3 page is emitted as an event so the UI can paint
+/// results while a large prefix is still being read.
+///
+/// Returns when the listing is complete. The final `listing://done` event carries
+/// the authoritative totals, including the result of the system-object filter.
+#[tauri::command]
+pub fn list_objects_stream(
+    app: AppHandle,
+    app_state: State<'_, Arc<AppCore>>,
+    input: ListStreamInput,
+) -> CmdResult<()> {
+    let ctx = Ctx(&app_state);
+    let core = ctx.core();
+    let conn = core.connection(&input.connection_id).map_err(err)?;
+    let limit = core.settings().list_page_limit as usize;
+    let show_system = core.settings().show_system_objects;
+    let prefix = match input.prefix.clone() {
+        Some(p) => as_folder_prefix(&p),
+        None => as_folder_prefix(&conn.prefix),
+    };
+    core.mark_used(&input.connection_id);
+    let store = core.client(&input.connection_id).map_err(err)?;
+
+    let request_id = input.request_id.clone();
+    let mut sent = 0usize;
+    let mut total_files = 0usize;
+    let mut truncated = false;
+
+    let emit = |event: &str, payload: serde_json::Value| {
+        let _ = app.emit(event, payload);
+    };
+
+    let result = core.fetch.run(objects::list_folder_streaming(
+        &store,
+        &prefix,
+        limit,
+        |page| {
+            let mut entries = page.entries;
+            if !show_system {
+                entries.retain(|entry| !is_system_entry(entry));
+            }
+            total_files += entries.iter().filter(|entry| !entry.is_folder).count();
+            sent += entries.len();
+            truncated = page.truncated;
+            emit(
+                "listing://page",
+                serde_json::json!({
+                    "requestId": request_id,
+                    "prefix": prefix,
+                    "entries": entries,
+                    "total": sent,
+                    "done": page.is_last,
+                }),
+            );
         },
+    ));
+    core.fetch.handle();
+    if let Err(e) = result {
+        let payload = ErrorPayload::from(&e);
+        emit(
+            "listing://error",
+            serde_json::json!({ "requestId": request_id, "error": payload }),
+        );
+        return Err(payload);
+    }
+    emit(
+        "listing://done",
+        serde_json::json!({
+            "requestId": request_id,
+            "prefix": prefix,
+            "total": sent,
+            "files": total_files,
+            "truncated": truncated,
+            "warning": truncation_warning(truncated, limit),
+        }),
+    );
+    Ok(())
+}
+
+/// Keep every folder and trim only the file tail past `limit`.
+fn trim_to_limit(entries: &mut Vec<ObjectEntry>, limit: usize) -> bool {
+    if entries.iter().filter(|e| !e.is_folder).count() <= limit {
+        return false;
+    }
+    let mut kept = 0usize;
+    entries.retain(|entry| {
+        if entry.is_folder {
+            return true;
+        }
+        kept += 1;
+        kept <= limit
+    });
+    true
+}
+
+fn truncation_warning(truncated: bool, limit: usize) -> Option<String> {
+    truncated.then(|| {
+        format!("Listing truncated at {limit} objects. Open a sub-folder or narrow the prefix.")
     })
 }
 

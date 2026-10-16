@@ -83,7 +83,7 @@ pub fn start<H: ScriptHost>(host: &H, plan: &TestPlan) -> AppResult<()> {
 }
 
 /// How long the whole scenario may take before the harness gives up.
-pub const SCENARIO_TIMEOUT: Duration = Duration::from_secs(300);
+pub const SCENARIO_TIMEOUT: Duration = Duration::from_secs(420);
 
 /// Strictly parse the report the page produced.
 pub fn parse_report(text: &str) -> AppResult<serde_json::Value> {
@@ -128,7 +128,7 @@ const SCENARIO: &str = r#"(async () => {
   const $$ = (selector) => Array.from(document.querySelectorAll(selector));
   const invoke = window.__TAURI__.core.invoke;
 
-  const wait = async (what, fn, timeout = 45000) => {
+  const wait = async (what, fn, timeout = 20000) => {
     const deadline = Date.now() + timeout;
     let last = null;
     for (;;) {
@@ -190,7 +190,20 @@ const SCENARIO: &str = r#"(async () => {
   const rowNames = () => $$('.object-row .row-label').map((n) => n.textContent);
   const clickRow = (label) => {
     const row = $$('.object-row').find((r) => r.querySelector('.row-label').textContent === label);
-    if (!row) throw new Error('row not found: ' + label);
+    if (!row) {
+      throw new Error(
+        'row not found: ' + label
+        + ' :: drawn=[' + rowNames().join(',') + ']'
+        + ' visible=' + window.__s3viewer.state.visible.length
+        + ' pool=' + window.__s3viewer.state.rowPool.length
+        + ' entries=' + (window.__s3viewer.state.session ? window.__s3viewer.state.session.entries.length : -1)
+        + ' loading=' + Boolean(window.__s3viewer.state.session && window.__s3viewer.state.session.loading)
+        + ' scrollerHeight=' + (($('#object-list') || {}).clientHeight)
+        + ' rowsLayer=' + Boolean($('#object-rows'))
+        + ' empty=' + (($('[data-testid=empty-folder]') || {}).textContent || '')
+        + ' loadingEl=' + Boolean($('[data-testid=loading-state]')),
+      );
+    }
     row.click();
     return row;
   };
@@ -350,10 +363,8 @@ const SCENARIO: &str = r#"(async () => {
     await check('preview: audio metadata loads through ranged reads', async () => {
       clickRow('tone.wav');
       const audio = await wait('the audio element', () => $('[data-testid=preview-audio]'));
-      const duration = await wait('audio duration', async () => {
-        const value = audio.duration;
-        return Number.isFinite(value) && value > 0 ? value : null;
-      });
+      await wait('audio metadata', async () => (audio.readyState >= 1 ? true : null));
+      const duration = audio.duration;
       if (!(duration > 0.5)) throw new Error('suspicious duration: ' + duration);
       return duration.toFixed(2) + 's';
     });

@@ -68,6 +68,7 @@
           <button class="btn" data-testid="new-file" data-action="new-file">+ File</button>
           <span class="toolbar__sep"></span>
           <button class="btn" data-testid="download" data-action="download" disabled>⤓ Download</button>
+          <button class="btn" data-testid="copy-uri" data-action="copy-uri" disabled>⧉ S3 URI</button>
           <button class="btn" data-testid="copy" data-action="copy" disabled>⧉ Copy</button>
           <button class="btn" data-testid="move" data-action="move" disabled>↦ Move</button>
           <button class="btn btn--danger" data-testid="delete" data-action="delete" disabled>🗑 Delete</button>
@@ -86,7 +87,9 @@
               <button class="cell cell--modified sortable" data-sort="modified">Modified</button>
               <button class="cell cell--kind sortable" data-sort="kind">Type</button>
             </div>
-            <div id="object-list" class="object-list" data-testid="object-list" role="listbox" aria-label="Objects"></div>
+            <div id="object-list" class="object-list" data-testid="object-list" role="listbox" aria-label="Objects">
+              <div id="object-rows" class="object-rows"></div>
+            </div>
           </section>
 
           <aside class="preview" id="preview" data-testid="preview">
@@ -96,6 +99,9 @@
                 <span class="muted" id="preview-meta" data-testid="preview-meta"></span>
               </div>
               <div class="preview__actions">
+                <button id="preview-copy-uri" class="btn btn--ghost btn--sm" data-testid="preview-copy-uri" disabled title="Copy the s3:// URI">
+                  ⧉ URI
+                </button>
                 <button id="preview-download" class="btn btn--sm" data-testid="preview-download" disabled>
                   Download
                 </button>

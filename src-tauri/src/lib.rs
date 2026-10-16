@@ -56,6 +56,7 @@ pub fn run() {
             commands::test_connection,
             commands::detect_capabilities,
             commands::list_objects,
+            commands::list_objects_stream,
             commands::get_preview,
             commands::object_meta,
             commands::download_object,

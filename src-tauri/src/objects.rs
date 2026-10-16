@@ -30,38 +30,75 @@ pub fn leaf_name(key: &str, folder: &str) -> String {
         .to_string()
 }
 
-/// List one folder, following continuation tokens up to `limit` entries.
+/// One delivered page of a folder listing.
+pub struct ListingPage {
+    pub entries: Vec<ObjectEntry>,
+    pub is_last: bool,
+    pub truncated: bool,
+}
+
+/// List one folder page by page.
+///
+/// The caller receives every page as soon as S3 returns it, which is what lets
+/// the UI paint results while a large prefix is still being read. `limit` caps
+/// the number of *objects* (folders are always delivered, since a prefix full of
+/// sub-folders must not consume the budget meant for files).
+pub async fn list_folder_streaming<F>(
+    store: &AnyStore,
+    prefix: &str,
+    limit: usize,
+    mut on_page: F,
+) -> AppResult<()>
+where
+    F: FnMut(ListingPage),
+{
+    let folder = as_folder_prefix(prefix);
+    let mut files = 0usize;
+    let mut token: Option<String> = None;
+    let mut truncated = false;
+
+    loop {
+        let page = store
+            .list_page(&folder, Some("/"), token.as_deref(), PAGE_SIZE)
+            .await?;
+        files += page.entries.iter().filter(|entry| !entry.is_folder).count();
+        if files >= limit {
+            truncated = true;
+        }
+        let next_token = if page.is_truncated {
+            page.next_token
+                .clone()
+                .filter(|t| Some(t) != token.as_ref())
+        } else {
+            None
+        };
+        let is_last = next_token.is_none() || truncated;
+        on_page(ListingPage {
+            entries: page.entries,
+            is_last,
+            truncated,
+        });
+        if is_last {
+            break;
+        }
+        token = next_token;
+    }
+    Ok(())
+}
+
+/// Collect the whole folder, used by paths that do not need incremental output.
 pub async fn list_folder(
     store: &AnyStore,
     prefix: &str,
     limit: usize,
 ) -> AppResult<(Vec<ObjectEntry>, bool)> {
-    let folder = as_folder_prefix(prefix);
     let mut entries: Vec<ObjectEntry> = Vec::new();
-    let mut files = 0usize;
-    let mut token: Option<String> = None;
     let mut truncated = false;
-    loop {
-        let page = store
-            .list_page(&folder, Some("/"), token.as_deref(), PAGE_SIZE)
-            .await?;
-        // Only real objects are counted against the cap: a prefix full of
-        // sub-folders must not consume the budget meant for files, otherwise
-        // files later in the listing silently disappear.
-        files += page.entries.iter().filter(|entry| !entry.is_folder).count();
+    list_folder_streaming(store, prefix, limit, |page| {
         entries.extend(page.entries);
-        if files >= limit {
-            truncated = true;
-            break;
-        }
-        if !page.is_truncated {
-            break;
-        }
-        match page.next_token {
-            Some(t) if Some(&t) != token.as_ref() => token = Some(t),
-            _ => break,
-        }
-    }
+        truncated = page.truncated;
+    })
+    .await?;
     Ok((entries, truncated))
 }
 
