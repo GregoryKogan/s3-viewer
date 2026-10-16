@@ -133,15 +133,19 @@ Requirements: Rust (stable), Node.js with pnpm, and the platform toolchain.
 
 ```bash
 pnpm install
-pnpm build:frontend     # bundles src/ into dist/
+pnpm build:frontend     # bundles src/ into dist/ (readable; --minify to shrink)
 pnpm tauri dev          # run in development
-pnpm tauri build        # package for the current platform
+CI=true pnpm tauri build   # package for the current platform
 ```
 
 Outputs land in `src-tauri/target/release/bundle/`:
 
 - macOS: `dmg/S3 Viewer_<version>_<arch>.dmg` and `macos/S3 Viewer.app`
 - Linux: `deb/` and `appimage/`
+
+`CI=true` matters for the `.dmg`: without it the bundler asks Finder to lay out the
+disk-image window, which fails when the terminal lacks Automation permission
+(`AppleEvent timed out`). The `.app` is produced either way.
 
 The builds are unsigned. On macOS Gatekeeper warns on first launch (right-click →
 Open, or `xattr -dr com.apple.quarantine`). To sign properly, add a Developer ID
