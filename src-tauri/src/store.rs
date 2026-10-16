@@ -140,7 +140,8 @@ impl Store {
         let config = match std::fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str::<PersistedConfig>(&text).unwrap_or_else(|err| {
                 // A corrupt config must not brick the app: keep a backup and start clean.
-                let backup = path.with_extension(format!("corrupt-{}.json", chrono::Utc::now().timestamp()));
+                let backup =
+                    path.with_extension(format!("corrupt-{}.json", chrono::Utc::now().timestamp()));
                 let _ = std::fs::write(&backup, &text);
                 eprintln!(
                     "s3viewer: config parse failed ({err}); moved to {}",
@@ -168,10 +169,11 @@ impl Store {
             let Some(conn) = self.config.connections.get(&id) else {
                 continue;
             };
-            let legacy: Option<String> =
-                serde_json::from_value::<LegacySecret>(serde_json::to_value(conn).unwrap_or_default())
-                    .ok()
-                    .and_then(|l| l.secret_access_key);
+            let legacy: Option<String> = serde_json::from_value::<LegacySecret>(
+                serde_json::to_value(conn).unwrap_or_default(),
+            )
+            .ok()
+            .and_then(|l| l.secret_access_key);
             if let Some(secret) = legacy {
                 if !secret.is_empty() {
                     self.set_secret(&id, &secret, None)?;
@@ -468,11 +470,17 @@ fn endpoint_is_https(endpoint: &str) -> bool {
     endpoint.starts_with("https://")
 }
 
-/// S3 prefixes are paths: keep a single trailing slash, no leading slash.
+/// S3 prefixes are key prefixes, matched literally against object keys — the
+/// same semantics boto3's `Prefix=` has. Keys in some buckets genuinely start
+/// with `/`, so a leading slash is preserved. A single trailing slash is added
+/// because every listing this app performs is a folder listing.
 pub fn normalize_prefix(prefix: &str) -> String {
-    let trimmed = prefix.trim().trim_matches('/');
+    let trimmed = prefix.trim();
     if trimmed.is_empty() {
-        String::new()
+        return String::new();
+    }
+    if trimmed.ends_with('/') {
+        trimmed.to_string()
     } else {
         format!("{trimmed}/")
     }
@@ -533,13 +541,18 @@ mod tests {
     fn create_encrypts_secret_and_never_writes_plaintext() {
         let (dir, mut store) = temp_store();
         let conn = store.upsert(sample_input()).unwrap();
-        assert_eq!(conn.prefix, "a/b/");
+        // A leading slash is preserved because it is part of the key prefix.
+        assert_eq!(conn.prefix, "/a/b/");
         assert_eq!(conn.endpoint_url, "https://obs.example.ru");
+        assert_eq!(conn.region, "us-east-1");
         let creds = store.creds(&conn.id).unwrap();
         assert_eq!(creds.secret_access_key, "top-secret");
 
         let raw = std::fs::read_to_string(dir.path().join("config.json")).unwrap();
-        assert!(!raw.contains("top-secret"), "secret leaked into config.json");
+        assert!(
+            !raw.contains("top-secret"),
+            "secret leaked into config.json"
+        );
         assert!(raw.contains("enc:v1:"));
     }
 
@@ -567,7 +580,10 @@ mod tests {
         input.name = "Renamed".into();
         let updated = store.upsert(input).unwrap();
         assert_eq!(updated.name, "Renamed");
-        assert_eq!(store.creds(&conn.id).unwrap().secret_access_key, "top-secret");
+        assert_eq!(
+            store.creds(&conn.id).unwrap().secret_access_key,
+            "top-secret"
+        );
     }
 
     #[test]
@@ -634,9 +650,13 @@ mod tests {
     #[test]
     fn normalize_prefix_shapes() {
         assert_eq!(normalize_prefix(""), "");
-        assert_eq!(normalize_prefix("/"), "");
+        assert_eq!(normalize_prefix("   "), "");
         assert_eq!(normalize_prefix("a"), "a/");
-        assert_eq!(normalize_prefix("/a/b/"), "a/b/");
+        assert_eq!(normalize_prefix("/a/b/"), "/a/b/");
+        assert_eq!(normalize_prefix("a/b"), "a/b/");
+        // Leading slashes are preserved: keys in some buckets really start with
+        // one, so trimming it would silently change which objects are listed.
+        assert_eq!(normalize_prefix("/absolute"), "/absolute/");
     }
 
     #[test]

@@ -256,8 +256,7 @@ mod tests {
         let sts = req.string_to_sign();
         let tail = sts.split(DATE).nth(1).unwrap();
         assert_eq!(
-            tail,
-            "\nx-amz-acl:public-read\nx-amz-meta-b:2\n/b/k",
+            tail, "\nx-amz-acl:public-read\nx-amz-meta-b:2\n/b/k",
             "amz headers must be lowercased, sorted and trimmed"
         );
     }
@@ -281,7 +280,10 @@ mod tests {
         mac.update(sts.as_bytes());
         let expected = format!("AWS {ACCESS}:{}", B64.encode(mac.finalize().into_bytes()));
         assert_eq!(req.authorization(ACCESS, SECRET).unwrap(), expected);
-        assert!(req.authorization(ACCESS, SECRET).unwrap().starts_with("AWS AKIAIOSFODNN7EXAMPLE:"));
+        assert!(req
+            .authorization(ACCESS, SECRET)
+            .unwrap()
+            .starts_with("AWS AKIAIOSFODNN7EXAMPLE:"));
     }
 
     #[test]
@@ -306,7 +308,10 @@ mod tests {
     fn encode_path_keeps_slashes_and_encodes_specials() {
         assert_eq!(encode_path("a/b c.png"), "a/b%20c.png");
         assert_eq!(encode_path("a+b"), "a%2Bb");
-        assert_eq!(encode_path("кириллица"), "%D0%BA%D0%B8%D1%80%D0%B8%D0%BB%D0%BB%D0%B8%D1%86%D0%B0");
+        assert_eq!(
+            encode_path("кириллица"),
+            "%D0%BA%D0%B8%D1%80%D0%B8%D0%BB%D0%BB%D0%B8%D1%86%D0%B0"
+        );
     }
 
     #[test]

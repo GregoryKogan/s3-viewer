@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>S3 Viewer</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="app" class="app" data-testid="app">
+      <!-- Sidebar ------------------------------------------------------- -->
+      <aside class="sidebar">
+        <div class="sidebar__brand">
+          <span class="brand__mark" aria-hidden="true">S3</span>
+          <div class="brand__text">
+            <strong>S3 Viewer</strong>
+            <span class="muted">object browser</span>
+          </div>
+        </div>
+
+        <div class="sidebar__heading">
+          <span>Connections</span>
+          <button
+            id="new-connection"
+            class="btn btn--primary btn--sm"
+            data-testid="new-connection"
+            title="Add connection (⌘N)"
+          >
+            + New
+          </button>
+        </div>
+
+        <div id="connection-list" class="connection-list" data-testid="connection-list"></div>
+
+        <div class="sidebar__footer">
+          <button id="open-settings" class="btn btn--ghost btn--block" data-testid="open-settings">
+            Settings
+          </button>
+        </div>
+      </aside>
+
+      <!-- Main ---------------------------------------------------------- -->
+      <main class="main">
+        <header class="topbar">
+          <nav class="breadcrumb" id="breadcrumb" data-testid="breadcrumb"></nav>
+          <div class="topbar__actions">
+            <div class="search">
+              <input
+                id="filter"
+                type="search"
+                placeholder="Filter this folder…"
+                data-testid="filter-input"
+                autocomplete="off"
+              />
+            </div>
+            <button id="refresh" class="btn btn--ghost" data-testid="refresh" title="Refresh (⌘R)">
+              ⟳
+            </button>
+            <button id="toggle-preview" class="btn btn--ghost" data-testid="toggle-preview" title="Toggle preview panel">
+              ◧
+            </button>
+          </div>
+        </header>
+
+        <div class="toolbar" id="toolbar" data-testid="toolbar">
+          <button class="btn" data-testid="upload" data-action="upload" title="Upload file (⌘U)">⇪ Upload</button>
+          <button class="btn" data-testid="new-folder" data-action="new-folder">+ Folder</button>
+          <button class="btn" data-testid="new-file" data-action="new-file">+ File</button>
+          <span class="toolbar__sep"></span>
+          <button class="btn" data-testid="download" data-action="download" disabled>⤓ Download</button>
+          <button class="btn" data-testid="copy" data-action="copy" disabled>⧉ Copy</button>
+          <button class="btn" data-testid="move" data-action="move" disabled>↦ Move</button>
+          <button class="btn btn--danger" data-testid="delete" data-action="delete" disabled>🗑 Delete</button>
+          <span class="toolbar__spacer"></span>
+          <span class="toolbar__status muted" id="folder-status" data-testid="folder-status"></span>
+        </div>
+
+        <div class="content">
+          <section class="browser" data-testid="browser">
+            <div class="table-head" data-testid="table-head">
+              <label class="cell cell--check">
+                <input type="checkbox" id="select-all" data-testid="select-all" />
+              </label>
+              <button class="cell cell--name sortable" data-sort="name">Name</button>
+              <button class="cell cell--size sortable" data-sort="size">Size</button>
+              <button class="cell cell--modified sortable" data-sort="modified">Modified</button>
+              <button class="cell cell--kind sortable" data-sort="kind">Type</button>
+            </div>
+            <div id="object-list" class="object-list" data-testid="object-list" role="listbox" aria-label="Objects"></div>
+          </section>
+
+          <aside class="preview" id="preview" data-testid="preview">
+            <header class="preview__head">
+              <div class="preview__title">
+                <strong id="preview-name" data-testid="preview-name">No selection</strong>
+                <span class="muted" id="preview-meta" data-testid="preview-meta"></span>
+              </div>
+              <div class="preview__actions">
+                <button id="preview-download" class="btn btn--sm" data-testid="preview-download" disabled>
+                  Download
+                </button>
+                <button id="preview-close" class="btn btn--ghost btn--sm" data-testid="preview-close">✕</button>
+              </div>
+            </header>
+            <div class="preview__body" id="preview-body" data-testid="preview-body">
+              <div class="empty-state" data-testid="preview-empty">
+                <p>Select a file to preview it here.</p>
+                <p class="muted">
+                  Images, audio, video and PDFs render inline. Text, Markdown and code open with syntax
+                  highlighting.
+                </p>
+              </div>
+            </div>
+          </aside>
+        </div>
+
+        <div class="dropzone" id="dropzone" data-testid="dropzone">Drop files to upload</div>
+      </main>
+    </div>
+
+    <!-- Transfers -->
+    <div id="transfers" class="transfers" data-testid="transfers" hidden></div>
+
+    <!-- Toasts -->
+    <div id="toasts" class="toasts" data-testid="toasts"></div>
+
+    <!-- Modal host -->
+    <div id="modal-root" class="modal-root" data-testid="modal-root" hidden></div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

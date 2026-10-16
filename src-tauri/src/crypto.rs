@@ -104,7 +104,9 @@ impl Cipher {
         let body = sealed
             .strip_prefix(CIPHER_PREFIX)
             .ok_or_else(|| "value is not sealed".to_string())?;
-        let blob = B64.decode(body).map_err(|_| "corrupt ciphertext".to_string())?;
+        let blob = B64
+            .decode(body)
+            .map_err(|_| "corrupt ciphertext".to_string())?;
         if blob.len() < 25 {
             return Err("corrupt ciphertext".to_string());
         }

@@ -84,7 +84,10 @@ impl From<&AppError> for ErrorPayload {
                     );
                 }
                 if code == "PermanentRedirect" || code == "AuthorizationHeaderMalformed" {
-                    hints.push("The bucket lives in a different region. Set Region to that value.".to_string());
+                    hints.push(
+                        "The bucket lives in a different region. Set Region to that value."
+                            .to_string(),
+                    );
                 }
                 if code == "AccessDenied" {
                     hints.push(

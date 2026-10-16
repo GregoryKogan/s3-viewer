@@ -141,7 +141,7 @@ fn default_region() -> String {
     "us-east-1".to_string()
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Capabilities {
     pub can_list: bool,
@@ -258,4 +258,20 @@ pub enum ProgressState {
 pub struct ProbeResult {
     pub capabilities: Capabilities,
     pub bucket_region: Option<String>,
+}
+
+/// Machine-readable S3 error code, when the failure came from S3.
+pub fn error_code(err: &crate::error::AppError) -> Option<String> {
+    match err {
+        crate::error::AppError::S3 { code, .. } => Some(code.clone()),
+        _ => None,
+    }
+}
+
+/// Short human description used inside capability details and preview notes.
+pub fn describe_error(err: &crate::error::AppError) -> String {
+    match err {
+        crate::error::AppError::S3 { code, message, .. } => format!("{code}: {message}"),
+        other => other.to_string(),
+    }
 }
