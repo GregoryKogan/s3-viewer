@@ -11,7 +11,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export const ALLOWED_BUCKET = "my-bucket";
+/**
+ * The bucket the local e2e run touches. It is a real dev bucket, not a client
+ * setting: the client itself never hard-codes any bucket. Override it with
+ * S3VIEWER_TEST_BUCKET to point the suite at your own scratch bucket.
+ */
+export const ALLOWED_BUCKET = process.env.S3VIEWER_TEST_BUCKET ?? "my-bucket";
 export const E2E_PREFIX = "_s3viewer-e2e/";
 const CREDS_PATH = path.join(os.homedir(), ".secrets", "s3", "s3-creds.json");
 
@@ -71,9 +76,14 @@ export function devCreds() {
   return resolved;
 }
 
-/** `s3.eu-central-1.example.com` -> `us-east-1` */
+/**
+ * Best-effort region extraction from an S3 endpoint host, e.g.
+ * `s3.eu-central-1.example.com` -> `eu-central-1`. Providers differ, so this is
+ * only a fallback: S3VIEWER_TEST_REGION always wins.
+ */
 function guessRegion(endpoint) {
-  const match = String(endpoint ?? "").match(/obs\.([a-z0-9-]+)\./i);
+  const host = String(endpoint ?? "").replace(/^https?:\/\//, "").split("/")[0];
+  const match = host.match(/(?:^|[.\-_])([a-z]{2}(?:-[a-z]+)+(?:-\d+)?)/i);
   return match ? match[1] : null;
 }
 
