@@ -474,7 +474,7 @@ const SCENARIO: &str = r#"(async () => {
 
     await check('preview: JSON is highlighted and pretty-printed', async () => {
       clickRow('sample.json');
-      const code = await wait('the code preview', () => $('[data-testid=preview-code]'));
+      const code = await wait('the code preview', () => $('[data-testid=preview-code]'), 30000);
       const html = code.innerHTML;
       if (!/hljs-(attr|string)/.test(html)) throw new Error('no highlighting: ' + html.slice(0, 160));
       if (!html.includes('preview-fixture')) throw new Error('content missing');
@@ -523,6 +523,76 @@ const SCENARIO: &str = r#"(async () => {
       if (!/exceeds the preview limit/i.test(text)) throw new Error('wrong message: ' + text);
       if (!/MB/.test(text)) throw new Error('the message does not name the sizes: ' + text);
       return text.replace(/\s+/g, ' ').trim().slice(0, 120);
+    });
+
+    await check('preview: Parquet renders as a table', async () => {
+      // Seeded by the runner before the app started; refresh so the listing
+      // includes anything uploaded since the window opened.
+      $('[data-testid=refresh]').click();
+      await wait('the parquet row', async () => (rowNames().includes('table.parquet') ? true : null), 30000);
+      clickRow('table.parquet');
+      const table = await wait('the parquet table', () => $('[data-testid=preview-table] table'), 30000);
+      const headers = Array.from(table.querySelectorAll('thead th')).map((th) => th.textContent);
+      if (headers.join(',') !== 'name,count,score') {
+        throw new Error('unexpected parquet columns: ' + headers.join(','));
+      }
+      const body = table.querySelectorAll('tbody tr');
+      if (body.length !== 3) throw new Error('expected 3 parquet rows, found ' + body.length);
+      if (!table.textContent.includes('alpha')) throw new Error('parquet values are missing');
+      if (!table.textContent.includes('2.75')) throw new Error('numeric parquet values are missing');
+      return headers.join(',') + ' · ' + body.length + ' rows';
+    });
+
+    await check('preview: YAML is syntax highlighted', async () => {
+      await wait('the yaml row', async () => (rowNames().includes('config.yaml') ? true : null), 30000);
+      clickRow('config.yaml');
+      const code = await wait('the code preview', () => $('[data-testid=preview-code]'), 20000);
+      const html = code.innerHTML;
+      if (!/hljs-/.test(html)) throw new Error('no highlighting for YAML: ' + html.slice(0, 200));
+      if (!html.includes('replicas')) throw new Error('content missing from the YAML preview');
+      return 'highlighted, ' + html.length + ' bytes';
+    });
+
+    await check('ui: the layout can be collapsed and resized', async () => {
+      const sidebar = $('#sidebar');
+      const before = sidebar.getBoundingClientRect().width;
+      $('[data-testid=collapse-sidebar]').click();
+      const collapsed = sidebar.getBoundingClientRect().width;
+      if (!(collapsed < before)) throw new Error('the sidebar did not collapse (' + before + ' -> ' + collapsed + ')');
+      $('[data-testid=collapse-sidebar]').click();
+      const restored = sidebar.getBoundingClientRect().width;
+      if (Math.abs(restored - before) > 2) {
+        throw new Error('the sidebar did not expand again (' + collapsed + ' -> ' + restored + ')');
+      }
+
+      // Dragging the handle must change the width, and a double click reset it.
+      const handle = $('[data-testid=resizer-sidebar]');
+      const startX = handle.getBoundingClientRect().left + 2;
+      handle.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, bubbles: true }));
+      document.dispatchEvent(new PointerEvent('pointermove', { clientX: startX + 80, bubbles: true }));
+      document.dispatchEvent(new PointerEvent('pointerup', { clientX: startX + 80, bubbles: true }));
+      const widened = sidebar.getBoundingClientRect().width;
+      if (!(widened > restored + 20)) {
+        throw new Error('dragging the handle did not resize the sidebar (' + restored + ' -> ' + widened + ')');
+      }
+      handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const reset = sidebar.getBoundingClientRect().width;
+      if (Math.abs(reset - restored) > 2) throw new Error('double click did not reset the width: ' + reset);
+      return before + 'px collapsed to ' + collapsed + 'px, dragged to ' + widened + 'px, reset';
+    });
+
+    await check('ui: an object S3 URI can be copied', async () => {
+      clickRow('image.png');
+      const uri = $('#preview-copy-uri');
+      if (uri.disabled) throw new Error('the URI button is disabled for a selected object');
+      uri.click();
+      await wait('the confirmation toast', () => $$('[data-testid^=toast-]').find((t) => /s3:\/\//.test(t.textContent)), 10000);
+      const toast = $$('[data-testid^=toast-]').find((t) => /s3:\/\//.test(t.textContent));
+      const expected = 's3://' + __BUCKET__ + '/';
+      if (!toast.textContent.includes(expected)) {
+        throw new Error('unexpected URI in the toast: ' + toast.textContent);
+      }
+      return toast.textContent.replace(/\s+/g, ' ').slice(0, 80);
     });
 
     await check('preview: the panel can be hidden and shown again', async () => {

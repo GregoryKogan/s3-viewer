@@ -24,10 +24,44 @@ import java from "highlight.js/lib/languages/java";
 import cpp from "highlight.js/lib/languages/cpp";
 import ini from "highlight.js/lib/languages/ini";
 import markdown from "highlight.js/lib/languages/markdown";
+import csharp from "highlight.js/lib/languages/csharp";
+import ruby from "highlight.js/lib/languages/ruby";
+import php from "highlight.js/lib/languages/php";
+import lua from "highlight.js/lib/languages/lua";
+import perl from "highlight.js/lib/languages/perl";
+import r from "highlight.js/lib/languages/r";
+import swift from "highlight.js/lib/languages/swift";
+import kotlin from "highlight.js/lib/languages/kotlin";
+import scala from "highlight.js/lib/languages/scala";
+import dart from "highlight.js/lib/languages/dart";
+import dockerfile from "highlight.js/lib/languages/dockerfile";
+import makefile from "highlight.js/lib/languages/makefile";
+import protobuf from "highlight.js/lib/languages/protobuf";
+import graphql from "highlight.js/lib/languages/graphql";
+import powershell from "highlight.js/lib/languages/powershell";
+import diff from "highlight.js/lib/languages/diff";
+import plaintext from "highlight.js/lib/languages/plaintext";
 import { marked } from "marked";
 
 const LANGUAGES = {
   python,
+  csharp,
+  ruby,
+  php,
+  lua,
+  perl,
+  r,
+  swift,
+  kotlin,
+  scala,
+  dart,
+  dockerfile,
+  makefile,
+  protobuf,
+  graphql,
+  powershell,
+  diff,
+  plaintext,
   javascript,
   typescript,
   json,
@@ -51,6 +85,7 @@ hljs.configure({ ignoreUnescapedHTML: true, throwOnError: false });
 const EXTENSION_LANGUAGE = {
   py: "python",
   pyi: "python",
+  pyw: "python",
   ipynb: "json",
   js: "javascript",
   mjs: "javascript",
@@ -62,10 +97,12 @@ const EXTENSION_LANGUAGE = {
   jsonl: "json",
   ndjson: "json",
   geojson: "json",
+  json5: "json",
   sh: "bash",
   bash: "bash",
   zsh: "bash",
   fish: "bash",
+  ksh: "bash",
   yml: "yaml",
   yaml: "yaml",
   toml: "ini",
@@ -73,35 +110,108 @@ const EXTENSION_LANGUAGE = {
   cfg: "ini",
   conf: "ini",
   env: "ini",
+  properties: "ini",
   html: "xml",
   htm: "xml",
   xml: "xml",
   svg: "xml",
+  xsl: "xml",
+  plist: "xml",
+  rss: "xml",
   css: "css",
   scss: "css",
+  sass: "css",
   less: "css",
   sql: "sql",
   go: "go",
   rs: "rust",
   java: "java",
-  kt: "java",
-  scala: "java",
+  kt: "kotlin",
+  kts: "kotlin",
+  scala: "scala",
+  sbt: "scala",
   c: "cpp",
   h: "cpp",
   cc: "cpp",
   cpp: "cpp",
+  cxx: "cpp",
   hpp: "cpp",
-  cs: "cpp",
+  cs: "csharp",
+  csx: "csharp",
+  rb: "ruby",
+  rake: "ruby",
+  gemspec: "ruby",
+  php: "php",
+  lua: "lua",
+  pl: "perl",
+  pm: "perl",
+  r: "r",
+  rmd: "r",
+  swift: "swift",
+  dart: "dart",
+  ex: "ruby",
+  exs: "ruby",
+  erl: "erlang",
+  hrl: "erlang",
+  clj: "clojure",
+  cljs: "clojure",
+  hs: "haskell",
+  ml: "ocaml",
+  mli: "ocaml",
+  fs: "fsharp",
+  fsx: "fsharp",
+  vim: "vim",
   md: "markdown",
   markdown: "markdown",
   mdx: "markdown",
-  dockerfile: "bash",
-  log: "bash",
-  srt: "bash",
-  vtt: "bash",
-  diff: "bash",
-  patch: "bash",
+  rst: "markdown",
+  dockerfile: "dockerfile",
+  containerfile: "dockerfile",
+  mk: "makefile",
+  makefile: "makefile",
+  cmake: "cmake",
+  proto: "protobuf",
+  graphql: "graphql",
+  gql: "graphql",
+  tf: "hcl",
+  hcl: "hcl",
+  ps1: "powershell",
+  psm1: "powershell",
+  bat: "dos",
+  cmd: "dos",
+  diff: "diff",
+  patch: "diff",
+  log: "plaintext",
+  srt: "plaintext",
+  vtt: "plaintext",
+  license: "plaintext",
+  txt: "plaintext",
+  text: "plaintext",
 };
+
+/** Files that are identified by name rather than by extension. */
+const FILENAME_LANGUAGE = {
+  dockerfile: "dockerfile",
+  containerfile: "dockerfile",
+  makefile: "makefile",
+  gnumakefile: "makefile",
+  "cmakelists.txt": "cmake",
+  ".gitignore": "bash",
+  ".dockerignore": "bash",
+  ".npmignore": "bash",
+  ".env": "ini",
+  ".editorconfig": "ini",
+  "requirements.txt": "plaintext",
+};
+
+/** Languages tried, in order, when a file's type cannot be named exactly. */
+const DETECT_CANDIDATES = [
+  "json", "yaml", "xml", "ini", "bash", "python", "javascript", "typescript",
+  "sql", "cpp", "go", "rust", "java", "csharp", "markdown", "plaintext",
+];
+
+/** Above this size auto-detection is skipped: it is not worth the CPU. */
+const DETECT_MAX_BYTES = 48 * 1024;
 
 marked.setOptions({ gfm: true, breaks: false, headerIds: false, mangle: false });
 
@@ -132,6 +242,11 @@ export function renderPreview(data, options = {}) {
     case "markdown":
       return renderMarkdown(data, options, view);
     case "json":
+    case "parquet":
+      return data.table ? renderTable(data, options) : messageBlock(
+        "Preview unavailable",
+        data.unavailableReason ?? "This Parquet file could not be read.",
+      );
     case "csv":
     case "code":
     case "text":
@@ -315,9 +430,41 @@ function renderMarkdown(data, { onToggleView }, view) {
   ]);
 }
 
+/**
+ * Which highlighter language a key should use.
+ *
+ * Orders of preference: the exact file name, then the extension, then — for
+ * files whose type is unknown — detection over a short candidate list. Falling
+ * back to plain text is deliberate: guessing wildly paints the whole file one
+ * colour, which reads worse than no colour at all.
+ */
+export function resolveLanguage(key, text) {
+  const name = key.toLowerCase().split("/").pop() ?? "";
+  const byName = FILENAME_LANGUAGE[name];
+  if (byName) return byName;
+
+  const byExtension = EXTENSION_LANGUAGE[extensionOf(key)];
+  if (byExtension) return byExtension;
+
+  // Detection runs every registered grammar over the text, so it is only worth
+  // the CPU on genuinely small files. Big ones get the extension mapping or
+  // plain text.
+  if (text && text.length <= DETECT_MAX_BYTES && typeof hljs.highlightAuto === "function") {
+    try {
+      const result = hljs.highlightAuto(text, DETECT_CANDIDATES);
+      const language = result.language;
+      // `plaintext` or nothing means detection was not conclusive.
+      if (language && language !== "plaintext" && result.relevance > 2) return language;
+    } catch {
+      /* detection is best-effort */
+    }
+  }
+  return null;
+}
+
 function renderText(data, options) {
   const text = data.text ?? "";
-  const language = EXTENSION_LANGUAGE[extensionOf(data.key)];
+  const language = resolveLanguage(data.key, text);
   const code = el("code");
 
   // CSV/TSV get a real table; everything else gets syntax highlighting.
@@ -325,9 +472,19 @@ function renderText(data, options) {
     return renderCsv(data, text, options);
   }
 
+  code.className = "hljs";
   if (language && hljs.getLanguage(language)) {
     try {
       code.innerHTML = hljs.highlight(text, { language, ignoreIllegals: true }).value;
+    } catch {
+      code.textContent = text;
+    }
+  } else if (text.length <= DETECT_MAX_BYTES) {
+    // Unknown type (an extension we do not map): let the registered languages
+    // compete, constrained to a short candidate list.
+    try {
+      const guess = hljs.highlightAuto(text, DETECT_CANDIDATES);
+      code.innerHTML = guess.value;
     } catch {
       code.textContent = text;
     }
@@ -335,11 +492,12 @@ function renderText(data, options) {
     code.textContent = text;
   }
 
-  const pretty = data.kind === "json" ? tryPrettyJson(text) : null;
+  const pretty = language === "json" ? tryPrettyJson(text) : null;
   const shown = pretty ?? text;
 
   if (pretty && code.innerHTML) {
     try {
+      code.className = "hljs";
       code.innerHTML = hljs.highlight(pretty, { language: "json", ignoreIllegals: true }).value;
     } catch {
       code.textContent = pretty;
@@ -385,6 +543,49 @@ function renderCsv(data, text, options) {
       rows.length >= 500
         ? el("p", { class: "muted", text: "Only the first 500 rows are shown." })
         : null,
+    ]),
+  ]);
+}
+
+/** Generic table renderer, used for Parquet (CSV has its own parser). */
+function renderTable(data, options) {
+  const table = data.table;
+  const node = el("table", {}, [
+    el(
+      "thead",
+      {},
+      [el("tr", {}, table.columns.map((column) => el("th", { text: column, title: column })))],
+    ),
+    el(
+      "tbody",
+      {},
+      table.rows.map((row) =>
+        el("tr", {}, table.columns.map((_, index) => el("td", { text: row[index] ?? "" }))),
+      ),
+    ),
+  ]);
+
+  const notes = [];
+  if (table.truncatedRows) {
+    notes.push(`Showing the first ${table.rows.length} of ${table.totalRows.toLocaleString()} rows.`);
+  }
+  if (table.truncatedColumns) {
+    notes.push(`Showing the first ${table.columns.length} columns.`);
+  }
+
+  return el("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, [
+    infoBar(data, options.onDownload ? [el("button", {
+      class: "btn btn--ghost btn--sm",
+      text: "Download",
+      onClick: options.onDownload,
+    })] : []),
+    el("div", { class: "preview-markdown preview-table-wrap", "data-testid": "preview-table" }, [
+      table.rows.length ? node : el("p", { class: "muted", text: "The file has no rows." }),
+      ...notes.map((note) => el("p", { class: "muted", text: note })),
+      el("p", {
+        class: "muted",
+        text: `${table.columns.length} column(s) · ${table.totalRows.toLocaleString()} row(s) in the file`,
+      }),
     ]),
   ]);
 }

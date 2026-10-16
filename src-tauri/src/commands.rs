@@ -1,7 +1,8 @@
 //! All Tauri commands. These are deliberately thin: validate input, call into
 //! [`crate::state::AppCore`], map errors to a structured payload.
 
-use crate::error::{AppError, ErrorPayload};
+use crate::error::{AppError, AppResult, ErrorPayload};
+// `macro_export` places these at the crate root, so they need importing here.
 use crate::model::{
     Capabilities, Connection, ConnectionView, FileKind, ListResult, ObjectEntry, PreviewData,
     ProgressView, StaticCreds,
@@ -34,12 +35,12 @@ impl Ctx<'_> {
 // ------------------------------------------------------------------ settings
 
 #[tauri::command]
-pub fn get_settings(app: State<'_, Arc<AppCore>>) -> AppSettings {
-    Ctx(&app).core().settings()
+pub async fn get_settings(app: State<'_, Arc<AppCore>>) -> CmdResult<AppSettings> {
+    Ok(Ctx(&app).core().settings())
 }
 
 #[tauri::command]
-pub fn update_settings(
+pub async fn update_settings(
     app: State<'_, Arc<AppCore>>,
     settings: AppSettings,
 ) -> CmdResult<AppSettings> {
@@ -65,7 +66,7 @@ pub struct SecurityStatus {
 }
 
 #[tauri::command]
-pub fn security_status(app: State<'_, Arc<AppCore>>) -> CmdResult<SecurityStatus> {
+pub async fn security_status(app: State<'_, Arc<AppCore>>) -> CmdResult<SecurityStatus> {
     let ctx = Ctx(&app);
     Ok(ctx.core().read(|store| SecurityStatus {
         master_key_in_keychain: store.master_key_in_keychain(),
@@ -80,12 +81,12 @@ pub fn security_status(app: State<'_, Arc<AppCore>>) -> CmdResult<SecurityStatus
 // --------------------------------------------------------------- connections
 
 #[tauri::command]
-pub fn list_connections(app: State<'_, Arc<AppCore>>) -> Vec<ConnectionView> {
-    Ctx(&app).core().connection_views()
+pub async fn list_connections(app: State<'_, Arc<AppCore>>) -> CmdResult<Vec<ConnectionView>> {
+    Ok(Ctx(&app).core().connection_views())
 }
 
 #[tauri::command]
-pub fn get_connection(app: State<'_, Arc<AppCore>>, id: String) -> CmdResult<ConnectionView> {
+pub async fn get_connection(app: State<'_, Arc<AppCore>>, id: String) -> CmdResult<ConnectionView> {
     let ctx = Ctx(&app);
     let core = ctx.core();
     let conn = core.connection(&id).map_err(err)?;
@@ -97,7 +98,7 @@ pub fn get_connection(app: State<'_, Arc<AppCore>>, id: String) -> CmdResult<Con
 }
 
 #[tauri::command]
-pub fn save_connection(
+pub async fn save_connection(
     app: State<'_, Arc<AppCore>>,
     input: ConnectionInput,
 ) -> CmdResult<Connection> {
@@ -114,12 +115,15 @@ pub fn save_connection(
 }
 
 #[tauri::command]
-pub fn delete_connection(app: State<'_, Arc<AppCore>>, id: String) -> CmdResult<()> {
+pub async fn delete_connection(app: State<'_, Arc<AppCore>>, id: String) -> CmdResult<()> {
     Ctx(&app).core().delete_connection(&id).map_err(err)
 }
 
 #[tauri::command]
-pub fn duplicate_connection(app: State<'_, Arc<AppCore>>, id: String) -> CmdResult<Connection> {
+pub async fn duplicate_connection(
+    app: State<'_, Arc<AppCore>>,
+    id: String,
+) -> CmdResult<Connection> {
     let ctx = Ctx(&app);
     let core = ctx.core();
     let conn = core.connection(&id).map_err(err)?;
@@ -285,15 +289,14 @@ impl Ctx<'_> {
 }
 
 #[tauri::command]
-pub fn test_connection(app: State<'_, Arc<AppCore>>, input: ProbeInput) -> CmdResult<ProbeOutcome> {
+pub async fn test_connection(
+    app: State<'_, Arc<AppCore>>,
+    input: ProbeInput,
+) -> CmdResult<ProbeOutcome> {
     let ctx = Ctx(&app);
     let (store, conn) = ctx.resolve_probe(&input).map_err(err)?;
     let prefix = as_folder_prefix(&conn.prefix);
-    let list = ctx
-        .core()
-        .fetch
-        .run(async { objects::list_folder(&store, &prefix, 25).await })
-        .map_err(err)?;
+    let list = objects::list_folder(&store, &prefix, 25).await?;
     let sample_keys = list
         .0
         .iter()
@@ -301,10 +304,7 @@ pub fn test_connection(app: State<'_, Arc<AppCore>>, input: ProbeInput) -> CmdRe
         .map(|e| e.key.clone())
         .collect::<Vec<_>>();
 
-    let caps = ctx
-        .core()
-        .fetch
-        .block_on(objects::probe_capabilities(&store, input.detect_write))?;
+    let caps = objects::probe_capabilities(&store, input.detect_write).await;
 
     Ok(ProbeOutcome {
         capabilities: caps,
@@ -318,15 +318,16 @@ pub fn test_connection(app: State<'_, Arc<AppCore>>, input: ProbeInput) -> CmdRe
 }
 
 #[tauri::command]
-pub fn detect_capabilities(app: State<'_, Arc<AppCore>>, id: String) -> CmdResult<Capabilities> {
+pub async fn detect_capabilities(
+    app: State<'_, Arc<AppCore>>,
+    id: String,
+) -> CmdResult<Capabilities> {
     let ctx = Ctx(&app);
     let core = ctx.core();
     let conn = core.connection(&id).map_err(err)?;
     let store = core.client(&id).map_err(err)?;
     let detect = conn.security.detect_permissions;
-    let caps = core
-        .fetch
-        .block_on(objects::probe_capabilities(&store, detect))?;
+    let caps = objects::probe_capabilities(&store, detect).await;
     core.set_capabilities(&id, caps.clone()).map_err(err)?;
     Ok(caps)
 }
@@ -352,7 +353,7 @@ pub struct ListInput {
 }
 
 #[tauri::command]
-pub fn list_objects(app: State<'_, Arc<AppCore>>, input: ListInput) -> CmdResult<ListResult> {
+pub async fn list_objects(app: State<'_, Arc<AppCore>>, input: ListInput) -> CmdResult<ListResult> {
     let ctx = Ctx(&app);
     let core = ctx.core();
     let conn = core.connection(&input.connection_id).map_err(err)?;
@@ -364,10 +365,7 @@ pub fn list_objects(app: State<'_, Arc<AppCore>>, input: ListInput) -> CmdResult
     };
     core.mark_used(&input.connection_id);
     let store = core.client(&input.connection_id).map_err(err)?;
-    let (mut entries, mut truncated) = core
-        .fetch
-        .run(objects::list_folder(&store, &prefix, limit))
-        .map_err(err)?;
+    let (mut entries, mut truncated) = objects::list_folder(&store, &prefix, limit).await?;
 
     if !show_system {
         entries.retain(|e| !is_system_entry(e));
@@ -387,7 +385,7 @@ pub fn list_objects(app: State<'_, Arc<AppCore>>, input: ListInput) -> CmdResult
 /// Returns when the listing is complete. The final `listing://done` event carries
 /// the authoritative totals, including the result of the system-object filter.
 #[tauri::command]
-pub fn list_objects_stream(
+pub async fn list_objects_stream(
     app: AppHandle,
     app_state: State<'_, Arc<AppCore>>,
     input: ListStreamInput,
@@ -405,19 +403,19 @@ pub fn list_objects_stream(
     let store = core.client(&input.connection_id).map_err(err)?;
 
     let request_id = input.request_id.clone();
-    let mut sent = 0usize;
-    let mut total_files = 0usize;
-    let mut truncated = false;
 
     let emit = |event: &str, payload: serde_json::Value| {
         let _ = app.emit(event, payload);
     };
 
-    let result = core.fetch.run(objects::list_folder_streaming(
-        &store,
-        &prefix,
-        limit,
-        |page| {
+    let result: AppResult<(usize, usize, bool)> = async {
+        let app = app.clone();
+        let prefix_for_pages = prefix.clone();
+        let request = request_id.clone();
+        let mut sent = 0usize;
+        let mut total_files = 0usize;
+        let mut truncated = false;
+        objects::list_folder_streaming(&store, &prefix, limit, |page| {
             let mut entries = page.entries;
             if !show_system {
                 entries.retain(|entry| !is_system_entry(entry));
@@ -425,27 +423,33 @@ pub fn list_objects_stream(
             total_files += entries.iter().filter(|entry| !entry.is_folder).count();
             sent += entries.len();
             truncated = page.truncated;
-            emit(
+            let _ = app.emit(
                 "listing://page",
                 serde_json::json!({
-                    "requestId": request_id,
-                    "prefix": prefix,
+                    "requestId": request,
+                    "prefix": prefix_for_pages,
                     "entries": entries,
                     "total": sent,
                     "done": page.is_last,
                 }),
             );
-        },
-    ));
-    core.fetch.handle();
-    if let Err(e) = result {
-        let payload = ErrorPayload::from(&e);
-        emit(
-            "listing://error",
-            serde_json::json!({ "requestId": request_id, "error": payload }),
-        );
-        return Err(payload);
+        })
+        .await?;
+        Ok::<_, AppError>((sent, total_files, truncated))
     }
+    .await;
+
+    let (sent, total_files, truncated) = match result {
+        Ok(counts) => counts,
+        Err(e) => {
+            let payload = ErrorPayload::from(&e);
+            let _ = app.emit(
+                "listing://error",
+                serde_json::json!({ "requestId": input.request_id, "error": payload }),
+            );
+            return Err(payload);
+        }
+    };
     emit(
         "listing://done",
         serde_json::json!({
@@ -505,20 +509,24 @@ pub struct PreviewInput {
 }
 
 #[tauri::command]
-pub fn get_preview(app: State<'_, Arc<AppCore>>, input: PreviewInput) -> CmdResult<PreviewData> {
+pub async fn get_preview(
+    app: State<'_, Arc<AppCore>>,
+    input: PreviewInput,
+) -> CmdResult<PreviewData> {
     let ctx = Ctx(&app);
     let core = ctx.core();
+    if std::env::var("S3VIEWER_E2E_TRACE").is_ok() {
+        eprintln!("s3viewer e2e: get_preview entered {}", input.key);
+    }
     let max = core.settings().preview_max_bytes;
     let store = core.client(&input.connection_id).map_err(err)?;
-    let mut data = core
-        .fetch
-        .run(preview::build_preview(
-            &store,
-            &input.connection_id,
-            &input.key,
-            max,
-        ))
-        .map_err(err)?;
+    let mut data: PreviewData =
+        preview::build_preview(&store, &input.connection_id, &input.key, max)
+            .await
+            .map_err(err)?;
+    if std::env::var("S3VIEWER_E2E_TRACE").is_ok() {
+        eprintln!("s3viewer e2e: get_preview finished {}", input.key);
+    }
     if let Some(hint) = input.kind_hint {
         // The UI may re-open the same bytes rendered differently (markdown vs
         // plain text); keep the classification consistent with the toggle.
@@ -537,14 +545,14 @@ pub struct StreamMeta {
 }
 
 #[tauri::command]
-pub fn object_meta(
+pub async fn object_meta(
     app: State<'_, Arc<AppCore>>,
     connection_id: String,
     key: String,
 ) -> CmdResult<StreamMeta> {
     let ctx = Ctx(&app);
     let store = ctx.core().client(&connection_id).map_err(err)?;
-    let meta = ctx.core().fetch.run(store.stat(&key)).map_err(err)?;
+    let meta = store.stat(&key).await?;
     Ok(StreamMeta {
         size: meta.size.unwrap_or(0),
         content_type: meta
@@ -573,7 +581,7 @@ pub struct DownloadInput {
 }
 
 #[tauri::command]
-pub fn download_object(
+pub async fn download_object(
     app: State<'_, Arc<AppCore>>,
     input: DownloadInput,
 ) -> CmdResult<TransferResult> {
@@ -603,8 +611,7 @@ pub fn download_object(
     let dest_task = dest.clone();
     let conn_name = conn.name.clone();
 
-    let handle = core.fetch.handle().clone();
-    handle.spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let outcome = async {
             if let Some(parent) = dest_task.parent() {
                 tokio::fs::create_dir_all(parent).await?;
@@ -664,17 +671,17 @@ pub struct UploadPlanItem {
 }
 
 #[tauri::command]
-pub fn upload_files(
+pub async fn upload_files(
     app: State<'_, Arc<AppCore>>,
     input: UploadInput,
 ) -> CmdResult<Vec<UploadPlanItem>> {
     let ctx = Ctx(&app);
-    upload_files_impl(ctx.core(), input).map_err(err)
+    upload_files_impl(ctx.core(), input).await.map_err(err)
 }
 
 /// Implementation shared by the command and the e2e hooks: validates the
 /// connection, builds the upload plan and spawns the transfer.
-pub fn upload_files_impl(
+pub async fn upload_files_impl(
     core: &AppCore,
     input: UploadInput,
 ) -> crate::error::AppResult<Vec<UploadPlanItem>> {
@@ -709,10 +716,9 @@ pub fn upload_files_impl(
     }
 
     let tracker = core.progress.clone();
-    let handle = core.fetch.handle().clone();
     let items = plan.clone();
     let overwrite = input.overwrite;
-    handle.spawn(async move {
+    tauri::async_runtime::spawn(async move {
         for item in items {
             let id = tracker.start(objects::progress_label("Uploading", &item.key), None);
             let path = PathBuf::from(&item.local_path);
@@ -744,22 +750,21 @@ pub struct SaveTextInput {
 }
 
 #[tauri::command]
-pub fn save_text_object(app: State<'_, Arc<AppCore>>, input: SaveTextInput) -> CmdResult<()> {
+pub async fn save_text_object(app: State<'_, Arc<AppCore>>, input: SaveTextInput) -> CmdResult<()> {
     let ctx = Ctx(&app);
     let core = ctx.core();
     ensure_writable(core, &input.connection_id)?;
     let store = core.client(&input.connection_id).map_err(err)?;
-    core.fetch
-        .run(
-            store.put_bytes(
-                &input.key,
-                input.content.into_bytes(),
-                input
-                    .content_type
-                    .as_deref()
-                    .or(Some("text/plain; charset=utf-8")),
-            ),
+    store
+        .put_bytes(
+            &input.key,
+            input.content.into_bytes(),
+            input
+                .content_type
+                .as_deref()
+                .or(Some("text/plain; charset=utf-8")),
         )
+        .await
         .map_err(err)
 }
 
@@ -781,20 +786,20 @@ fn ensure_writable(core: &AppCore, connection_id: &str) -> CmdResult<()> {
 }
 
 #[tauri::command]
-pub fn transfer_progress(app: State<'_, Arc<AppCore>>) -> Vec<ProgressView> {
+pub async fn transfer_progress(app: State<'_, Arc<AppCore>>) -> CmdResult<Vec<ProgressView>> {
     let ctx = Ctx(&app);
     // Finished entries are kept until the user clears them (or the app exits):
     // pruning here would race with a poll that is waiting for a result.
-    ctx.core().progress.all()
+    Ok(ctx.core().progress.all())
 }
 
 /// Drops every finished transfer from the tracker and reports how many went.
 #[tauri::command]
-pub fn clear_transfers(app: State<'_, Arc<AppCore>>) -> usize {
+pub async fn clear_transfers(app: State<'_, Arc<AppCore>>) -> CmdResult<usize> {
     let ctx = Ctx(&app);
     let before = ctx.core().progress.all().len();
     ctx.core().progress.prune_finished();
-    before - ctx.core().progress.all().len()
+    Ok(before - ctx.core().progress.all().len())
 }
 
 // ------------------------------------------------------------------- mutation
@@ -808,7 +813,10 @@ pub struct CreateFolderInput {
 }
 
 #[tauri::command]
-pub fn create_folder(app: State<'_, Arc<AppCore>>, input: CreateFolderInput) -> CmdResult<String> {
+pub async fn create_folder(
+    app: State<'_, Arc<AppCore>>,
+    input: CreateFolderInput,
+) -> CmdResult<String> {
     let ctx = Ctx(&app);
     let core = ctx.core();
     ensure_writable(core, &input.connection_id)?;
@@ -823,9 +831,9 @@ pub fn create_folder(app: State<'_, Arc<AppCore>>, input: CreateFolderInput) -> 
     }
     let key = format!("{}{}/", as_folder_prefix(&input.prefix), name);
     let store = core.client(&input.connection_id).map_err(err)?;
-    core.fetch
-        .run(store.put_bytes(&key, Vec::new(), Some("application/x-directory")))
-        .map_err(err)?;
+    store
+        .put_bytes(&key, Vec::new(), Some("application/x-directory"))
+        .await?;
     Ok(key)
 }
 
@@ -840,7 +848,10 @@ pub struct CreateFileInput {
 }
 
 #[tauri::command]
-pub fn create_file(app: State<'_, Arc<AppCore>>, input: CreateFileInput) -> CmdResult<String> {
+pub async fn create_file(
+    app: State<'_, Arc<AppCore>>,
+    input: CreateFileInput,
+) -> CmdResult<String> {
     let ctx = Ctx(&app);
     let core = ctx.core();
     ensure_writable(core, &input.connection_id)?;
@@ -853,9 +864,9 @@ pub fn create_file(app: State<'_, Arc<AppCore>>, input: CreateFileInput) -> CmdR
     let store = core.client(&input.connection_id).map_err(err)?;
     let content_type = crate::s3::guess_content_type(Path::new(&name))
         .unwrap_or_else(|| "text/plain; charset=utf-8".to_string());
-    core.fetch
-        .run(store.put_bytes(&key, input.content.into_bytes(), Some(&content_type)))
-        .map_err(err)?;
+    store
+        .put_bytes(&key, input.content.into_bytes(), Some(&content_type))
+        .await?;
     Ok(key)
 }
 
@@ -875,7 +886,7 @@ pub struct DeleteOutcome {
 }
 
 #[tauri::command]
-pub fn delete_objects(
+pub async fn delete_objects(
     app: State<'_, Arc<AppCore>>,
     input: DeleteInput,
 ) -> CmdResult<DeleteOutcome> {
@@ -899,10 +910,7 @@ pub fn delete_objects(
         if key.ends_with('/') {
             folders += 1;
             keys.push(key.clone());
-            let nested = core
-                .fetch
-                .run(objects::list_all_keys(&store, key))
-                .map_err(err)?;
+            let nested = objects::list_all_keys(&store, key).await?;
             keys.extend(nested);
         } else {
             keys.push(key.clone());
@@ -924,8 +932,7 @@ pub fn delete_objects(
     let tracker = core.progress.clone();
     let store_task = store.clone();
     let keys_task = keys.clone();
-    let handle = core.fetch.handle().clone();
-    handle.spawn(async move {
+    tauri::async_runtime::spawn(async move {
         match store_task.delete_many(&keys_task).await {
             Ok(()) => tracker.finish(&progress_id, None),
             Err(e) => tracker.fail(&progress_id, crate::model::describe_error(&e)),
@@ -958,7 +965,10 @@ pub struct CopyOutcome {
 }
 
 #[tauri::command]
-pub fn copy_objects(app: State<'_, Arc<AppCore>>, input: CopyInput) -> CmdResult<CopyOutcome> {
+pub async fn copy_objects(
+    app: State<'_, Arc<AppCore>>,
+    input: CopyInput,
+) -> CmdResult<CopyOutcome> {
     let ctx = Ctx(&app);
     let core = ctx.core();
     ensure_writable(core, &input.dest_connection_id)?;
@@ -977,10 +987,7 @@ pub fn copy_objects(app: State<'_, Arc<AppCore>>, input: CopyInput) -> CmdResult
     for key in &input.keys {
         if key.ends_with('/') {
             let folder_name = objects::leaf_name(key, "");
-            let nested = core
-                .fetch
-                .run(objects::list_all_keys(&src, key))
-                .map_err(err)?;
+            let nested = objects::list_all_keys(&src, key).await?;
             for nested_key in nested {
                 let rel = nested_key.strip_prefix(key).unwrap_or(&nested_key);
                 pairs.push((
@@ -1014,12 +1021,11 @@ pub fn copy_objects(app: State<'_, Arc<AppCore>>, input: CopyInput) -> CmdResult
     );
     let tracker = core.progress.clone();
     let move_objects = input.move_objects;
-    let handle = core.fetch.handle().clone();
     let src_task = src.clone();
     let dst_task = dst.clone();
     let pairs_task = pairs.clone();
     let copied = pairs.len();
-    handle.spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let mut done = 0u64;
         for (from, to) in &pairs_task {
             if let Err(e) = dst_task.copy_object(from, to).await {
@@ -1117,19 +1123,19 @@ pub struct StreamResponse {
 // ---------------------------------------------------------------- filesystem
 
 #[tauri::command]
-pub fn reveal_in_file_manager(path: String) -> CmdResult<()> {
+pub async fn reveal_in_file_manager(path: String) -> CmdResult<()> {
     crate::fsutil::reveal(Path::new(&path)).map_err(err)
 }
 
 #[tauri::command]
-pub fn open_path(path: String) -> CmdResult<()> {
+pub async fn open_path(path: String) -> CmdResult<()> {
     crate::fsutil::open(Path::new(&path)).map_err(err)
 }
 
 /// Home directory of the user, used as the default upload start folder.
 #[tauri::command]
-pub fn default_upload_dir() -> String {
-    crate::fsutil::home_dir().display().to_string()
+pub async fn default_upload_dir() -> CmdResult<String> {
+    Ok(crate::fsutil::home_dir().display().to_string())
 }
 
 #[cfg(test)]

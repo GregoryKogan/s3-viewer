@@ -127,7 +127,8 @@ async fn await_report(app: &AppHandle, slot: &Arc<ReportSlot>) -> AppResult<serd
     loop {
         let latest = slot.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if let Some(report) = &latest {
-            // Echo the page's heartbeat so a stall names the check it stalled on.
+            // Every heartbeat is mirrored to a file: if the app is killed, that
+            // file is the only surviving evidence of where it got stuck.
             if !report
                 .get("final")
                 .and_then(|v| v.as_bool())
@@ -135,6 +136,23 @@ async fn await_report(app: &AppHandle, slot: &Arc<ReportSlot>) -> AppResult<serd
             {
                 if let Some(active) = report.get("active").and_then(|v| v.as_str()) {
                     eprintln!("s3viewer e2e: running — {active}");
+                    if let Ok(path) = std::env::var("S3VIEWER_E2E_TRACE") {
+                        use std::io::Write;
+                        if let Ok(mut file) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(path)
+                        {
+                            let _ = writeln!(
+                                file,
+                                "{:.0}s {active}",
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs_f32())
+                                    .unwrap_or_default()
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -183,7 +201,7 @@ fn plan() -> AppResult<TestPlan> {
 /// Uses only the settings the runner passes in, and mirrors what the connection
 /// form does — minus the typing, which the form test covers separately.
 #[tauri::command]
-pub fn e2e_setup(core: tauri::State<'_, Arc<AppCore>>) -> Result<String, String> {
+pub async fn e2e_setup(core: tauri::State<'_, Arc<AppCore>>) -> Result<String, String> {
     let plan = plan().map_err(|e| e.to_string())?;
     let input = ConnectionInput {
         id: None,
@@ -216,10 +234,7 @@ pub fn e2e_setup(core: tauri::State<'_, Arc<AppCore>>) -> Result<String, String>
 
     let store = core.client(&connection.id).map_err(|e| e.to_string())?;
     let detect = connection.security.detect_permissions;
-    let caps = core
-        .fetch
-        .block_on(crate::objects::probe_capabilities(&store, detect))
-        .map_err(|e| e.to_string())?;
+    let caps = crate::objects::probe_capabilities(&store, detect).await;
     core.set_capabilities(&connection.id, caps)
         .map_err(|e| e.to_string())?;
 
@@ -229,7 +244,7 @@ pub fn e2e_setup(core: tauri::State<'_, Arc<AppCore>>) -> Result<String, String>
 /// Downloads the image fixture through the same command the Download button
 /// calls, then compares the byte count with what S3 reports.
 #[tauri::command]
-pub fn e2e_transfer_check(
+pub async fn e2e_transfer_check(
     core: tauri::State<'_, Arc<AppCore>>,
 ) -> Result<serde_json::Value, String> {
     let plan = plan().map_err(|e| e.to_string())?;
@@ -244,26 +259,26 @@ pub fn e2e_transfer_check(
     let dest = crate::fsutil::unique_path(&dir, "e2e-image.png");
 
     let store = core.client(&id).map_err(|e| e.to_string())?;
-    let remote_size = core
-        .fetch
-        .block_on(async { store.stat(&key).await })
-        .map_err(|e| e.to_string())?
+    let remote_size = store
+        .stat(&key)
+        .await
         .map_err(|e| e.to_string())?
         .size
         .unwrap_or(0);
 
-    let written = core
-        .fetch
-        .block_on(async {
-            use tokio::io::AsyncWriteExt;
-            let file = tokio::fs::File::create(&dest).await?;
-            let mut writer = tokio::io::BufWriter::new(file);
-            let written = store.get_to(&key, &mut writer).await?;
-            writer.flush().await?;
-            Ok::<u64, AppError>(written)
-        })
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
+    let written = {
+        use tokio::io::AsyncWriteExt;
+        let file = tokio::fs::File::create(&dest)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut writer = tokio::io::BufWriter::new(file);
+        let written = store
+            .get_to(&key, &mut writer)
+            .await
+            .map_err(|e| e.to_string())?;
+        writer.flush().await.map_err(|e| e.to_string())?;
+        written
+    };
 
     let local_size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
     let match_ = written == remote_size as u64 && local_size == remote_size as u64;
@@ -278,7 +293,7 @@ pub fn e2e_transfer_check(
 
 /// Uploads a temporary object and deletes it again, through the real commands.
 #[tauri::command]
-pub fn e2e_roundtrip_check(
+pub async fn e2e_roundtrip_check(
     core: tauri::State<'_, Arc<AppCore>>,
 ) -> Result<serde_json::Value, String> {
     let plan = plan().map_err(|e| e.to_string())?;
@@ -287,27 +302,22 @@ pub fn e2e_roundtrip_check(
     let body = b"round-trip probe from the e2e suite".to_vec();
     let store = core.client(&id).map_err(|e| e.to_string())?;
 
-    core.fetch
-        .block_on(async {
-            store
-                .put_bytes(&key, body.clone(), Some("text/plain"))
-                .await?;
-            let back = store.get_bytes(&key, None).await?;
-            if back.body != body {
-                return Err(AppError::msg("uploaded bytes came back different"));
-            }
-            store.delete_object(&key).await?;
-            Ok::<(), AppError>(())
-        })
-        .map_err(|e| e.to_string())?
+    store
+        .put_bytes(&key, body.clone(), Some("text/plain"))
+        .await
         .map_err(|e| e.to_string())?;
+    let back = store
+        .get_bytes(&key, None)
+        .await
+        .map_err(|e| e.to_string())?;
+    if back.body != body {
+        return Err("uploaded bytes came back different".to_string());
+    }
+    store.delete_object(&key).await.map_err(|e| e.to_string())?;
 
-    // Confirm from S3 that the object really is gone.
-    let still_there = core
-        .fetch
-        .block_on(async { store.stat(&key).await })
-        .map_err(|e| e.to_string())?
-        .is_ok();
+    // Confirm from S3 that the object really is gone: a HEAD on a deleted key
+    // fails, which is the signal we want.
+    let still_there = store.stat(&key).await.is_ok();
 
     Ok(serde_json::json!({
         "uploaded": true,
@@ -318,7 +328,9 @@ pub fn e2e_roundtrip_check(
 
 /// Audits the on-disk configuration: sealed secret, 0600 file, 0700 directory.
 #[tauri::command]
-pub fn e2e_config_audit(core: tauri::State<'_, Arc<AppCore>>) -> Result<serde_json::Value, String> {
+pub async fn e2e_config_audit(
+    core: tauri::State<'_, Arc<AppCore>>,
+) -> Result<serde_json::Value, String> {
     let plan = plan().map_err(|e| e.to_string())?;
     let path = core.read(|store| store.path.clone());
     let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -355,7 +367,7 @@ fn file_mode(_path: &std::path::Path) -> String {
 /// and a real upload is attempted through it: the guard must reject the call
 /// before anything reaches S3.
 #[tauri::command]
-pub fn e2e_readonly_check(
+pub async fn e2e_readonly_check(
     core: tauri::State<'_, Arc<AppCore>>,
 ) -> Result<serde_json::Value, String> {
     let plan = plan().map_err(|e| e.to_string())?;
@@ -399,7 +411,8 @@ pub fn e2e_readonly_check(
             local_paths: vec![local.display().to_string()],
             overwrite: true,
         },
-    );
+    )
+    .await;
 
     let _ = std::fs::remove_dir_all(&dir);
     let _ = core.delete_connection(&read_only.id);

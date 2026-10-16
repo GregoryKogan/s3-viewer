@@ -192,6 +192,20 @@ def hello(name):
     "",
   ].join("\n"),
   "table.csv": ["name,size,note", "alpha,1,first", 'beta,2,"quoted, value"', "gamma,3,third"].join("\n"),
+  "config.yaml": [
+    "# e2e fixture",
+    "service:",
+    "  name: s3-viewer",
+    "  replicas: 2",
+    "  enabled: true",
+    "  ports:",
+    "    - 8080",
+    "    - 9090",
+    "  limits:",
+    '    cpu: "500m"',
+    "    memory: 256Mi",
+    "",
+  ].join("\n"),
 };
 const SMALL_TEXT_FILE_NAMES = Object.keys(SMALL_TEXT_FILES);
 

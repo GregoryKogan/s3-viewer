@@ -9,7 +9,7 @@
 //! inlined at all — the frontend streams it through the `s3stream://` protocol,
 //! which supports `Range`, so a 4 GB video previews without being downloaded.
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::model::{FileKind, PreviewData};
 use crate::s3::{kind::detect_kind, AnyStore, ByteRange, ObjectStore};
 
@@ -47,6 +47,15 @@ pub fn is_natively_renderable(kind: FileKind) -> bool {
         FileKind::Image | FileKind::Audio | FileKind::Video | FileKind::Pdf
     )
 }
+
+/// Kinds rendered as a table.
+pub fn is_tabular(kind: FileKind) -> bool {
+    matches!(kind, FileKind::Csv | FileKind::Parquet)
+}
+
+/// Bytes read for a Parquet preview. The footer lives at the end, but the first
+/// rows are at the start, so the whole object is read up to this cap.
+pub const PARQUET_LIMIT: u64 = 64 * 1024 * 1024;
 
 /// Kinds whose preview requires reading the content.
 pub fn is_textual(kind: FileKind) -> bool {
@@ -98,6 +107,7 @@ pub async fn build_preview(
                 last_modified: stat.last_modified,
                 text: None,
                 base64: None,
+                table: None,
                 stream_url: url,
                 truncated: false,
                 unavailable_reason: Some(format!(
@@ -124,6 +134,7 @@ pub async fn build_preview(
         last_modified: head.last_modified.clone().or(stat.last_modified.clone()),
         text: None,
         base64: None,
+        table: None,
         stream_url: url,
         truncated: false,
         unavailable_reason: None,
@@ -150,6 +161,33 @@ pub async fn build_preview(
             data.truncated = true;
         }
         return Ok(data);
+    }
+
+    if kind == FileKind::Parquet {
+        if size > PARQUET_LIMIT as i64 {
+            data.unavailable_reason = Some(format!(
+                "Parquet previews are limited to {} (this file is {}). Download it to inspect it locally.",
+                crate::objects::human_size(PARQUET_LIMIT as i64),
+                crate::objects::human_size(size)
+            ));
+            return Ok(data);
+        }
+        // Read the whole object: a Parquet table cannot be rendered from a head
+        // slice, because the schema lives in the footer.
+        let full = store
+            .get_bytes(key, None)
+            .await
+            .map_err(|e| AppError::msg(format!("read parquet object: {e}")))?;
+        match crate::parquet_preview::preview(&full.body) {
+            Ok(table) => {
+                data.table = Some(table);
+                return Ok(data);
+            }
+            Err(err) => {
+                data.unavailable_reason = Some(err.to_string());
+                return Ok(data);
+            }
+        }
     }
 
     if is_textual(kind) {

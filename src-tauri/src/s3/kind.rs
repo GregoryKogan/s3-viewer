@@ -51,6 +51,8 @@ fn kind_from_extension(ext: &str) -> Option<FileKind> {
         "md" | "markdown" | "mdx" => FileKind::Markdown,
         "json" | "jsonl" | "ndjson" | "geojson" | "json5" | "ipynb" => FileKind::Json,
         "csv" | "tsv" => FileKind::Csv,
+        // Columnar data gets a real table preview.
+        "parquet" | "pq" | "orc" => FileKind::Parquet,
         "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar" | "zst" => FileKind::Archive,
         "txt" | "log" | "text" | "rst" | "ini" | "cfg" | "conf" | "env" | "properties" | "srt"
         | "vtt" | "diff" | "patch" => FileKind::Text,
@@ -137,6 +139,9 @@ pub fn kind_from_magic(head: Option<&[u8]>) -> Option<FileKind> {
     if has(b"PK\x03\x04") {
         return Some(FileKind::Archive);
     }
+    if head.len() >= 4 && &head[..4] == b"PAR1" {
+        return Some(FileKind::Parquet);
+    }
     if head.len() >= 12 && &head[4..8] == b"ftyp" {
         return Some(FileKind::Video);
     }
@@ -218,6 +223,8 @@ mod tests {
         assert_eq!(detect_kind("config.yaml", None, None), FileKind::Code);
         assert_eq!(detect_kind("notes.txt", None, None), FileKind::Text);
         assert_eq!(detect_kind("bundle.tar.gz", None, None), FileKind::Archive);
+        assert_eq!(detect_kind("data.parquet", None, None), FileKind::Parquet);
+        assert_eq!(detect_kind("data.PQ", None, None), FileKind::Parquet);
     }
 
     #[test]

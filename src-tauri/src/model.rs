@@ -227,6 +227,7 @@ pub enum FileKind {
     Code,
     Json,
     Csv,
+    Parquet,
     Archive,
     Binary,
     Folder,
@@ -259,11 +260,25 @@ pub struct PreviewData {
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base64: Option<String>,
+    /// Present for tabular formats (Parquet).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<TablePreview>,
     pub stream_url: String,
     pub truncated: bool,
     /// Set when the preview is not available, explaining exactly why.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
+}
+
+/// A tabular preview (Parquet, and any future columnar format).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TablePreview {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    pub total_rows: i64,
+    pub truncated_rows: bool,
+    pub truncated_columns: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

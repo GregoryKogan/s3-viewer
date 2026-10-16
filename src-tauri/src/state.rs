@@ -1,7 +1,6 @@
 //! Shared application state and connection → store resolution.
 
 use crate::error::AppResult;
-use crate::fetch::Fetch;
 use crate::model::{Capabilities, Connection, ConnectionView, StaticCreds};
 use crate::progress::ProgressTracker;
 use crate::s3::{aws::AwsStore, v2::V2Store, AnyStore};
@@ -12,18 +11,16 @@ use std::sync::Mutex;
 pub struct AppCore {
     store: Mutex<Store>,
     pub progress: ProgressTracker,
-    pub fetch: Fetch,
     /// One live client per connection, invalidated whenever the connection is
     /// edited or deleted.
     clients: Mutex<HashMap<String, AnyStore>>,
 }
 
 impl AppCore {
-    pub fn new(store: Store, handle: tokio::runtime::Handle) -> Self {
+    pub fn new(store: Store) -> Self {
         AppCore {
             store: Mutex::new(store),
             progress: ProgressTracker::new(),
-            fetch: Fetch::new(handle),
             clients: Mutex::new(HashMap::new()),
         }
     }

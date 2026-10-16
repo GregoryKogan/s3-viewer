@@ -45,11 +45,16 @@ zeroize = { version = "1", features = ["derive"] }
 keyring = { version = "3", features = ["apple-native", "sync-secret-service", "crypto-rust"] }
 httpdate = "1"
 
+# Parquet preview: the low-level API avoids pulling in arrow (and its
+# multi-minute build) just to show a table.
+parquet = { version = "55", default-features = false, features = ["snap", "flate2", "lz4", "zstd"] }
+
 # SigV2 (legacy) fallback signer
 hmac = "0.12"
 sha1 = "0.10"
 sha2 = "0.10"
 quick-xml = "0.37"
+bytes = "1"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls-native-roots",
     "stream",
@@ -62,6 +67,9 @@ libc = "0.2"
 [dev-dependencies]
 tempfile = "3"
 wiremock = "0.6"
+# Only tests need to *write* Parquet files; the app only reads them.
+parquet = { version = "55", default-features = false, features = ["arrow", "snap", "flate2", "lz4", "zstd"] }
+arrow = { version = "55", features = ["prettyprint"] }
 
 [features]
 default = ["custom-protocol"]

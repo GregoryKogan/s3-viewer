@@ -4,10 +4,10 @@ pub mod commands;
 pub mod crypto;
 pub mod e2e;
 pub mod error;
-pub mod fetch;
 pub mod fsutil;
 pub mod model;
 pub mod objects;
+pub mod parquet_preview;
 pub mod preview;
 pub mod progress;
 pub mod s3;
@@ -22,13 +22,8 @@ use tauri::Manager;
 
 /// Builds the shared core, then hands it to Tauri.
 pub fn run() {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime");
-    let handle = runtime.handle().clone();
     let store = store::Store::load().expect("load configuration");
-    let core = Arc::new(AppCore::new(store, handle));
+    let core = Arc::new(AppCore::new(store));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -37,8 +32,7 @@ pub fn run() {
         .register_asynchronous_uri_scheme_protocol("s3stream", move |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             let core = app.state::<Arc<AppCore>>().inner().clone();
-            let runtime = core.fetch.handle().clone();
-            runtime.spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 let response = handle_stream_request(&core, request).await;
                 responder.respond(response);
             });
@@ -80,8 +74,6 @@ pub fn run() {
             ping,
         ])
         .setup(|app| {
-            // Keep the runtime alive for the lifetime of the app.
-            app.manage(RuntimeGuard(runtime));
             // The self-hosted end-to-end harness only starts when the runner
             // asks for it explicitly (S3VIEWER_E2E=1).
             if let Some(plan) = e2e::TestPlan::from_env() {
@@ -97,13 +89,10 @@ pub fn run() {
         .expect("error while running s3viewer");
 }
 
-/// Keeps the tokio runtime from being dropped while the app is running.
-struct RuntimeGuard(#[allow(dead_code)] tokio::runtime::Runtime);
-
 /// A trivial command the e2e suite uses to confirm the IPC bridge is alive.
 #[tauri::command]
-fn ping() -> String {
-    "pong".to_string()
+async fn ping() -> Result<String, crate::error::ErrorPayload> {
+    Ok("pong".to_string())
 }
 
 /// `s3stream://localhost/<connection-id>/<percent-encoded-key>`
