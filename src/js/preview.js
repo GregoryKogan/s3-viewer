@@ -241,12 +241,14 @@ export function renderPreview(data, options = {}) {
       return renderPdf(data);
     case "markdown":
       return renderMarkdown(data, options, view);
-    case "json":
     case "parquet":
-      return data.table ? renderTable(data, options) : messageBlock(
-        "Preview unavailable",
-        data.unavailableReason ?? "This Parquet file could not be read.",
-      );
+      return data.table
+        ? renderTable(data, options)
+        : messageBlock(
+            "Preview unavailable",
+            data.unavailableReason ?? "This Parquet file could not be read.",
+          );
+    case "json":
     case "csv":
     case "code":
     case "text":

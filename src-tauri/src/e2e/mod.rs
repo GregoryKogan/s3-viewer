@@ -229,6 +229,10 @@ const SCENARIO: &str = r#"(async () => {
   };
   const rowNames = () => $$('.object-row .row-label').map((n) => n.textContent);
   const clickRow = (label) => {
+    // The list is virtualised: only the rows near the viewport exist in the DOM,
+    // so scroll the target into the painted window before looking for it.
+    const index = window.__s3viewer.state.visible.findIndex((e) => e.name === label);
+    if (index >= 0) window.__s3viewer.scrollToRow(index);
     const row = $$('.object-row').find((r) => r.querySelector('.row-label').textContent === label);
     if (!row) {
       throw new Error(
@@ -474,7 +478,19 @@ const SCENARIO: &str = r#"(async () => {
 
     await check('preview: JSON is highlighted and pretty-printed', async () => {
       clickRow('sample.json');
-      const code = await wait('the code preview', () => $('[data-testid=preview-code]'), 30000);
+      const code = await wait('the code preview', () => $('[data-testid=preview-code]'), 30000)
+        .catch((error) => {
+          const state = window.__s3viewer.state;
+          throw new Error(error.message
+            + ' :: previewKey=' + state.preview?.key
+            + ' loading=' + state.preview?.loading
+            + ' err=' + (state.preview?.error?.message || 'none')
+            + ' reason=' + (state.preview?.data?.unavailableReason || 'none')
+            + ' kind=' + (state.preview?.data?.kind || 'none')
+            + ' panelHidden=' + $('#preview').hidden
+            + ' bodyClasses=[' + $$('#preview-body *').slice(0, 6).map((n) => n.className || n.tagName).join(' | ') + ']'
+            + ' trace=' + window.__s3viewer.describe().previewTrace);
+        });
       const html = code.innerHTML;
       if (!/hljs-(attr|string)/.test(html)) throw new Error('no highlighting: ' + html.slice(0, 160));
       if (!html.includes('preview-fixture')) throw new Error('content missing');

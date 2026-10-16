@@ -34,6 +34,8 @@ const state = {
   layout: { sidebar: 264, preview: 420, collapsed: false },
   /** Monotonic id so stale listing events can be ignored. */
   listingRequest: 0,
+  /** Monotonic id so a stale preview response cannot overwrite a newer one. */
+  previewRequest: 0,
   listing: null,
   visible: [],
   rowHeight: 30,
@@ -55,7 +57,7 @@ async function boot() {
       state.layout = { ...state.layout, ...state.settings.layout };
     }
     applyTheme(state.settings.theme);
-    applyLayout();
+    applyLayoutAndRepaint();
   } catch (error) {
     toastError(error.message, "Cannot read settings");
   }
@@ -114,11 +116,11 @@ function wireGlobalHandlers() {
     // Flip whatever is on screen right now, then remember the choice.
     state.previewHidden = !panel.hidden;
     panel.hidden = state.previewHidden;
-    applyLayout();
+    applyLayoutAndRepaint();
   });
   $("#preview-close").addEventListener("click", () => {
     $("#preview").hidden = true;
-    applyLayout();
+    applyLayoutAndRepaint();
   });
 
   const filterInput = $("#filter");
@@ -185,7 +187,7 @@ function wireGlobalHandlers() {
   });
   window.addEventListener("resize", () => {
     clampLayout();
-    applyLayout();
+    applyLayoutAndRepaint();
   });
 
   // Streamed listing events. Each page repaints only what is on screen.
@@ -296,6 +298,11 @@ function applyLayout() {
   if (sidebarHandle) sidebarHandle.hidden = state.layout.collapsed;
   const previewHandle = $("#resizer-preview");
   if (previewHandle) previewHandle.hidden = $("#preview").hidden;
+}
+
+/** Apply the layout *and* repaint the list, for geometry changes. */
+function applyLayoutAndRepaint() {
+  applyLayout();
   paintRows(true);
 }
 
@@ -311,7 +318,7 @@ function clampLayout() {
 function toggleSidebar() {
   state.layout.collapsed = !state.layout.collapsed;
   persistLayout();
-  applyLayout();
+  applyLayoutAndRepaint();
 }
 
 let layoutSaveTimer = null;
@@ -585,7 +592,8 @@ async function openConnection(id) {
   state.selected.clear();
   state.filter = "";
   $("#filter").value = "";
-  state.preview = null;
+  // The preview is deliberately kept: a second click on the same connection must
+  // not blank the panel for the object the user is looking at.
   state.rowSignature = null;
   state.rowPool = [];
   renderConnections();
@@ -726,7 +734,9 @@ async function navigateTo(prefix) {
   if (!state.session) return;
   state.session.prefix = prefix;
   state.selected.clear();
+  // Changing folder does clear the preview: the object belongs to the old folder.
   state.preview = null;
+  state.previewRequest += 1;
   state.rowSignature = null;
   state.rowPool = [];
   renderBreadcrumb();
@@ -1158,26 +1168,59 @@ function updateToolbar() {
 
 // -------------------------------------------------------------------- preview
 
-async function previewEntry(entry, { force = false } = {}) {
+/**
+ * Load and show the preview for one object.
+ *
+ * Two guards matter here. Clicking two rows in quick succession used to leave the
+ * panel stuck on "Loading…" while the newer preview sat unrendered in state; and
+ * the folder branch bailed out before repainting. Both are covered by the request
+ * id below: only the newest load may write to `state.preview`, and the render
+ * always happens after the write.
+ */
+async function previewEntry(candidate, { force = false } = {}) {
+  // Rows are recycled, so a click can arrive with an object captured from an
+  // earlier listing. Re-read the live entry by key and drop the stale one.
+  const entry =
+    state.session?.entries.find((item) => item.key === candidate?.key) ?? candidate;
+  if (!entry) return;
+
   if (entry.isFolder) {
     // Folders can still be "selected"; the preview explains why it is empty.
-    state.preview = { key: entry.key, entry, loading: false, data: null, error: null, unavailable: "This is a folder." };
+    state.preview = {
+      key: entry.key,
+      entry,
+      loading: false,
+      data: null,
+      error: null,
+      unavailable: "This is a folder.",
+    };
     renderPreviewPanel();
     return;
   }
-  if (!force && state.preview?.key === entry.key) return;
+
   // Re-opening the same object keeps the view the user last chose for it.
-  const view = state.preview?.key === entry.key ? state.preview.view : undefined;
+  const sameObject = state.preview?.key === entry.key;
+  if (!force && sameObject && !state.preview?.loading) return;
+  const view = sameObject ? state.preview.view : undefined;
+
+  const request = ++state.previewRequest;
   state.preview = { key: entry.key, entry, loading: true, data: null, error: null, view };
   renderPreviewPanel();
+
+  let next;
   try {
-    const data = await api.getPreview({ connectionId: state.session.connection.id, key: entry.key });
-    if (state.preview?.key !== entry.key) return;
-    state.preview = { key: entry.key, entry, loading: false, data, error: null, view };
+    const data = await api.getPreview({
+      connectionId: state.session.connection.id,
+      key: entry.key,
+    });
+    next = { key: entry.key, entry, loading: false, data, error: null, view };
   } catch (error) {
-    if (state.preview?.key !== entry.key) return;
-    state.preview = { key: entry.key, entry, loading: false, data: null, error, view };
+    next = { key: entry.key, entry, loading: false, data: null, error, view };
   }
+
+  // A newer click (or a different object) wins; this response is stale.
+  if (request !== state.previewRequest || state.preview?.key !== entry.key) return;
+  state.preview = next;
   renderPreviewPanel();
 }
 
@@ -1763,5 +1806,7 @@ window.__s3viewer = {
   },
   openConnection,
   refreshConnections,
+  /** Bring one virtualised row into the painted window (used by the e2e suite). */
+  scrollToRow: (index) => scrollRowIntoView(index),
   copySnippet: () => copyText($("#boto3-snippet")?.textContent ?? ""),
 };
