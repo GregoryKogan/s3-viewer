@@ -27,7 +27,7 @@ async function run() {
     format: "esm",
     target: ["safari16", "chrome110", "firefox115"],
     minify: !watch && !debug,
-    sourcemap: watch || debug ? "inline" : false,
+    sourcemap: false,
     keepNames: debug,
     logLevel: "info",
     legalComments: "none",

@@ -8,8 +8,14 @@
   </head>
   <body>
     <div id="app" class="app" data-testid="app">
+      <!-- Drag strip: the window is moved from the top bar, never from a
+           control inside it. -->
+      <header class="titlebar" data-tauri-drag-region data-testid="titlebar">
+        <span class="titlebar__title" data-tauri-drag-region>S3 Viewer</span>
+      </header>
+
       <!-- Sidebar ------------------------------------------------------- -->
-      <aside class="sidebar">
+      <aside class="sidebar" id="sidebar">
         <div class="sidebar__brand">
           <span class="brand__mark" aria-hidden="true">S3</span>
           <div class="brand__text">
@@ -19,22 +25,33 @@
         </div>
 
         <div class="sidebar__heading">
-          <span>Connections</span>
-          <button
-            id="new-connection"
-            class="btn btn--primary btn--sm"
-            data-testid="new-connection"
-            title="Add connection (⌘N)"
-          >
-            + New
-          </button>
+          <span class="sidebar__heading-label">Connections</span>
+          <div class="sidebar__heading-actions">
+            <button
+              id="new-connection"
+              class="btn btn--primary btn--sm"
+              data-testid="new-connection"
+              title="Add connection (⌘N)"
+            >
+              + New
+            </button>
+            <button
+              id="collapse-sidebar"
+              class="btn btn--ghost btn--sm"
+              data-testid="collapse-sidebar"
+              title="Collapse the sidebar (⌘B)"
+            >
+              ‹
+            </button>
+          </div>
         </div>
 
         <div id="connection-list" class="connection-list" data-testid="connection-list"></div>
 
         <div class="sidebar__footer">
           <button id="open-settings" class="btn btn--ghost btn--block" data-testid="open-settings">
-            Settings
+            <span class="sidebar__footer-label">Settings</span>
+            <span class="sidebar__footer-icon" aria-hidden="true">⚙</span>
           </button>
         </div>
       </aside>
@@ -122,6 +139,10 @@
 
         <div class="dropzone" id="dropzone" data-testid="dropzone">Drop files to upload</div>
       </main>
+
+      <!-- Resize handles: the sidebar and the preview panel are both drag-resizable -->
+      <div class="resizer resizer--sidebar" id="resizer-sidebar" data-testid="resizer-sidebar" role="separator" aria-orientation="vertical"></div>
+      <div class="resizer resizer--preview" id="resizer-preview" data-testid="resizer-preview" role="separator" aria-orientation="vertical"></div>
     </div>
 
     <!-- Transfers -->

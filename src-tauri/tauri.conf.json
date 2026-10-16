@@ -18,9 +18,10 @@
         "minWidth": 900,
         "minHeight": 560,
         "resizable": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true,
-        "dragDropEnabled": true
+        "dragDropEnabled": true,
+        "minimizable": true,
+        "maximizable": true,
+        "closable": true
       }
     ],
     "security": {

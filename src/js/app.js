@@ -30,6 +30,8 @@ const state = {
   previewHidden: false,
   lastClickedIndex: null,
   capabilitiesDetected: new Set(),
+  /** Sidebar/preview geometry, persisted per user. */
+  layout: { sidebar: 264, preview: 420, collapsed: false },
   /** Monotonic id so stale listing events can be ignored. */
   listingRequest: 0,
   listing: null,
@@ -49,7 +51,11 @@ async function boot() {
   wireGlobalHandlers();
   try {
     state.settings = await api.getSettings();
+    if (state.settings.layout) {
+      state.layout = { ...state.layout, ...state.settings.layout };
+    }
     applyTheme(state.settings.theme);
+    applyLayout();
   } catch (error) {
     toastError(error.message, "Cannot read settings");
   }
@@ -95,7 +101,7 @@ function wireGlobalHandlers() {
   $("#open-settings").addEventListener("click", () =>
     openSettingsDialog({
       onSaved: async (settings) => {
-        state.settings = settings;
+        state.settings = { ...settings, layout: state.layout };
         applyTheme(settings.theme);
         if (state.session) await reloadFolder();
       },
@@ -108,9 +114,11 @@ function wireGlobalHandlers() {
     // Flip whatever is on screen right now, then remember the choice.
     state.previewHidden = !panel.hidden;
     panel.hidden = state.previewHidden;
+    applyLayout();
   });
   $("#preview-close").addEventListener("click", () => {
     $("#preview").hidden = true;
+    applyLayout();
   });
 
   const filterInput = $("#filter");
@@ -150,6 +158,36 @@ function wireGlobalHandlers() {
 
   $("#preview-copy-uri").addEventListener("click", () => copyUriFor(state.preview?.key));
 
+  $("#collapse-sidebar").addEventListener("click", () => toggleSidebar());
+  wireResizer({
+    handle: "#resizer-sidebar",
+    cssVar: "--sidebar-width",
+    min: 190,
+    max: 520,
+    get: () => state.layout.sidebar,
+    set: (value) => {
+      state.layout.sidebar = value;
+      persistLayout();
+    },
+    direction: 1,
+  });
+  wireResizer({
+    handle: "#resizer-preview",
+    cssVar: "--preview-width",
+    min: 260,
+    max: () => Math.max(280, Math.round(window.innerWidth * 0.7)),
+    get: () => state.layout.preview,
+    set: (value) => {
+      state.layout.preview = value;
+      persistLayout();
+    },
+    direction: -1,
+  });
+  window.addEventListener("resize", () => {
+    clampLayout();
+    applyLayout();
+  });
+
   // Streamed listing events. Each page repaints only what is on screen.
   listen("listing://page", (event) => appendListingPage(event.payload)).catch(() => {});
   listen("listing://done", (event) => finishListing(event.payload)).catch(() => {});
@@ -172,6 +210,11 @@ function onKeyDown(event) {
   if (meta && event.key.toLowerCase() === "u" && state.session) {
     event.preventDefault();
     uploadFiles();
+    return;
+  }
+  if (meta && event.key.toLowerCase() === "b") {
+    event.preventDefault();
+    toggleSidebar();
     return;
   }
   if (meta && event.key.toLowerCase() === "n") {
@@ -237,6 +280,110 @@ function wireDragAndDrop() {
     const paths = event?.payload?.paths ?? [];
     if (paths.length && state.session) await uploadPaths(paths);
   }).catch(() => {});
+}
+
+// -------------------------------------------------------------------- layout
+
+/** Apply the stored geometry. */
+function applyLayout() {
+  const root = document.documentElement;
+  root.style.setProperty("--sidebar-width", `${state.layout.sidebar}px`);
+  root.style.setProperty("--preview-width", `${state.layout.preview}px`);
+  $("#sidebar").classList.toggle("sidebar--collapsed", state.layout.collapsed);
+  $("#collapse-sidebar").textContent = state.layout.collapsed ? "›" : "‹";
+  $("#collapse-sidebar").title = state.layout.collapsed ? "Expand the sidebar (⌘B)" : "Collapse the sidebar (⌘B)";
+  const sidebarHandle = $("#resizer-sidebar");
+  if (sidebarHandle) sidebarHandle.hidden = state.layout.collapsed;
+  const previewHandle = $("#resizer-preview");
+  if (previewHandle) previewHandle.hidden = $("#preview").hidden;
+  paintRows(true);
+}
+
+/** Keep both panels usable however the window is sized. */
+function clampLayout() {
+  state.layout.sidebar = Math.min(Math.max(190, state.layout.sidebar), Math.min(520, Math.round(window.innerWidth * 0.5)));
+  state.layout.preview = Math.min(
+    Math.max(260, state.layout.preview),
+    Math.max(280, Math.round(window.innerWidth * 0.7)),
+  );
+}
+
+function toggleSidebar() {
+  state.layout.collapsed = !state.layout.collapsed;
+  persistLayout();
+  applyLayout();
+}
+
+let layoutSaveTimer = null;
+function persistLayout() {
+  // Debounced: dragging a handle must not write settings on every pixel.
+  if (layoutSaveTimer) clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = setTimeout(() => {
+    const settings = { ...(state.settings ?? {}), layout: state.layout };
+    state.settings = settings;
+    api.updateSettings(settings).catch(() => {});
+  }, 400);
+}
+
+/**
+ * Make a panel resizable by dragging its handle.
+ * @param {{handle: string, cssVar: string, min: number, max: number|Function,
+ *          get: Function, set: Function, direction: 1|-1}} options
+ */
+function wireResizer({ handle, cssVar, min, max, get, set, direction }) {
+  const node = $(handle);
+  if (!node) return;
+  let startX = 0;
+  let startValue = 0;
+
+  const onMove = (event) => {
+    const limit = typeof max === "function" ? max() : max;
+    const delta = (event.clientX - startX) * direction;
+    const next = Math.min(Math.max(min, startValue + delta), limit);
+    document.documentElement.style.setProperty(cssVar, `${next}px`);
+    set(next);
+    paintRows(true);
+  };
+
+  const onUp = () => {
+    node.classList.remove("resizer--active");
+    document.body.style.cursor = "";
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    persistLayout();
+  };
+
+  node.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    startX = event.clientX;
+    startValue = get();
+    node.classList.add("resizer--active");
+    document.body.style.cursor = "col-resize";
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  });
+
+  // Keyboard access: the separator is focusable and responds to arrows.
+  node.tabIndex = 0;
+  node.addEventListener("keydown", (event) => {
+    const step = event.shiftKey ? 40 : 10;
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const limit = typeof max === "function" ? max() : max;
+    const delta = (event.key === "ArrowRight" ? 1 : -1) * step * direction;
+    const next = Math.min(Math.max(min, get() + delta), limit);
+    document.documentElement.style.setProperty(cssVar, `${next}px`);
+    set(next);
+    paintRows(true);
+  });
+
+  node.addEventListener("dblclick", () => {
+    const defaults = { "--sidebar-width": 264, "--preview-width": 420 };
+    const value = defaults[cssVar] ?? get();
+    document.documentElement.style.setProperty(cssVar, `${value}px`);
+    set(value);
+    paintRows(true);
+  });
 }
 
 // ---------------------------------------------------------------- connections
@@ -482,31 +629,41 @@ async function reloadFolder({ silent = false } = {}) {
   const connectionId = state.session.connection.id;
   const prefix = state.session.prefix;
   const requestId = String(++state.listingRequest);
-  // Only the newest request may write to the session.
-  state.listing = null;
   state.listing = { requestId, connectionId, prefix, total: 0, done: false };
+  // The new listing is staged and swapped in when it is complete. Appending
+  // straight into the visible list meant a cancelled stream could leave the UI
+  // showing a half-loaded folder forever.
+  state.replaces = [];
 
   state.session.loading = true;
-  // Until the first page arrives the listing is *unknown*, not empty: showing
-  // "This folder is empty" here made the folder look like it had lost its files.
   state.session.awaitingFirstPage = true;
-  state.session.entries = [];
+  state.session.error = null;
   state.selected.clear();
-  state.filter = "";
-  $("#filter").value = "";
   renderObjects();
   updateToolbar();
+
+  // A stream that never reports back must not pin the UI in "loading".
+  const guard = setTimeout(() => {
+    if (state.listing?.requestId === requestId && state.session?.loading) {
+      state.session.loading = false;
+      state.session.awaitingFirstPage = false;
+      renderObjects();
+      updateToolbar();
+      toastWarn("The listing took too long to finish. Press ⟳ to try again.", "Listing stalled");
+    }
+  }, 120_000);
 
   try {
     await api.listObjectsStream({ connectionId, prefix, requestId });
   } catch (error) {
-    // A failed stream still reports through listing://error; only surface
-    // transport-level failures here.
     if (state.listing?.requestId === requestId) {
       state.session.loading = false;
+      state.session.awaitingFirstPage = false;
       renderObjects();
       toastError(error.message, "Cannot list this folder");
     }
+  } finally {
+    clearTimeout(guard);
   }
 }
 
@@ -521,15 +678,12 @@ function appendListingPage(payload) {
   ) {
     return;
   }
-  if (payload.entries?.length) {
-    state.session.entries.push(...payload.entries);
-    listing.total = state.session.entries.length;
+  if (Array.isArray(payload.entries) && payload.entries.length) {
+    state.replaces.push(...payload.entries);
+    listing.total = state.replaces.length;
   }
-  state.session.awaitingFirstPage = false;
-  state.session.loading = !payload.done;
-  if (payload.done) listing.done = true;
-  renderObjects();
-  updateToolbar();
+  // Show progress without pretending the folder only contains what has arrived.
+  updateListingStatus();
 }
 
 function finishListing(payload) {
@@ -537,27 +691,34 @@ function finishListing(payload) {
   if (!listing || payload.requestId !== listing.requestId) return;
   const session = state.session;
   if (!session || session.connection.id !== listing.connectionId) return;
+
   listing.done = true;
+  session.entries = state.replaces ?? [];
+  state.replaces = [];
   session.loading = false;
   session.awaitingFirstPage = false;
   session.truncated = Boolean(payload.truncated);
   session.warning = payload.warning ?? null;
   session.prefix = payload.prefix ?? session.prefix;
+
+  // A completed listing replaces the visible set, so the node pool is rebuilt.
   state.rebuildList = true;
   renderBreadcrumb();
   renderObjects();
-  state.rebuildList = false;
   updateToolbar();
 }
 
 function failListing(payload) {
   const listing = state.listing;
   if (!listing || payload.requestId !== listing.requestId) return;
+  state.replaces = [];
   if (state.session) {
     state.session.loading = false;
     state.session.awaitingFirstPage = false;
+    state.session.error = payload.error ?? null;
   }
   renderObjects();
+  updateToolbar();
   toastError(payload.error?.message ?? "listing failed", "Cannot list this folder");
 }
 
@@ -1023,7 +1184,10 @@ async function previewEntry(entry, { force = false } = {}) {
 function renderPreviewPanel({ reveal = true } = {}) {
   // Selecting an object reveals the panel again unless the user hid it; a pure
   // re-render (the Markdown raw/rendered toggle) must not.
-  if (reveal && !state.previewHidden) $("#preview").hidden = false;
+  if (reveal && !state.previewHidden) {
+    $("#preview").hidden = false;
+    applyLayout();
+  }
   const nameNode = $("#preview-name");
   const metaNode = $("#preview-meta");
   const body = $("#preview-body");

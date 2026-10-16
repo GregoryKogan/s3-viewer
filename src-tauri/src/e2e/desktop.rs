@@ -43,20 +43,6 @@ impl ScriptHost for DesktopHost {
     }
 }
 
-impl DesktopHost {
-    /// Evaluates an expression and reads its value back through a callback.
-    pub fn probe(&self, expression: &str) -> AppResult<String> {
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.webview()?
-            .eval_with_callback(expression, move |value| {
-                let _ = tx.send(value);
-            })
-            .map_err(|e| AppError::msg(format!("probe failed: {e}")))?;
-        rx.recv_timeout(Duration::from_secs(5))
-            .map_err(|_| AppError::msg("the page did not answer the probe"))
-    }
-}
-
 /// Shared slot the webview fills in when the scenario finishes.
 #[derive(Default)]
 pub struct ReportSlot(Mutex<Option<serde_json::Value>>);
@@ -87,7 +73,11 @@ pub fn maybe_run(app: &AppHandle, core: &Arc<AppCore>, plan: &TestPlan, slot: Ar
     let plan = plan.clone();
     tauri::async_runtime::spawn(async move {
         let host = DesktopHost::new(app.clone());
-        let outcome = match wait_until_ready(&host).and_then(|()| super::start(&host, &plan)) {
+        // Nothing can be read back out of the page (`eval_with_callback` blocks
+        // its caller on this platform), so the scenario is simply injected and
+        // waits for the IPC bridge itself. Injection is idempotent because the
+        // scenario is guarded by `window.__S3VIEWER_E2E_STARTED`.
+        let outcome = match super::start(&host, &plan) {
             Ok(()) => await_report(&app, &slot).await,
             Err(err) => Err(err),
         };
@@ -126,38 +116,6 @@ pub fn maybe_run(app: &AppHandle, core: &Arc<AppCore>, plan: &TestPlan, slot: Ar
     });
 }
 
-/// Blocks until the page says its shell is interactive.
-///
-/// Injecting earlier is a real failure mode: `window.__TAURI__` may not exist
-/// yet, the scenario then throws on its first line, and the run looks like a
-/// mysterious timeout.
-fn wait_until_ready(host: &DesktopHost) -> AppResult<()> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        if host.eval_str("window.__s3viewerReady === true").is_ok() {
-            // `eval` cannot return a value, so an explicit probe is used below;
-            // the flag is only a gate, and the scenario itself is idempotent.
-            if probe_ready(host) {
-                return Ok(());
-            }
-        }
-        if std::time::Instant::now() > deadline {
-            return Err(AppError::msg(
-                "the app shell never became interactive (window.__s3viewerReady)",
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(150));
-    }
-}
-
-/// `true` when the page's readiness flag is set. Uses the webview's reply
-/// channel, which is the only way to read a value back out of the page.
-fn probe_ready(host: &DesktopHost) -> bool {
-    host.probe("window.__s3viewerReady === true ? '1' : ''")
-        .map(|value| value.contains('1'))
-        .unwrap_or(false)
-}
-
 /// Waits for the *final* report.
 ///
 /// The page publishes partial reports after every check so a hang is always
@@ -168,6 +126,18 @@ async fn await_report(app: &AppHandle, slot: &Arc<ReportSlot>) -> AppResult<serd
     let deadline = std::time::Instant::now() + SCENARIO_TIMEOUT;
     loop {
         let latest = slot.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(report) = &latest {
+            // Echo the page's heartbeat so a stall names the check it stalled on.
+            if !report
+                .get("final")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                if let Some(active) = report.get("active").and_then(|v| v.as_str()) {
+                    eprintln!("s3viewer e2e: running — {active}");
+                }
+            }
+        }
         if let Some(report) = &latest {
             if report
                 .get("final")

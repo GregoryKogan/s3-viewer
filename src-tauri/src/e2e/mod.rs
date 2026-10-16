@@ -83,7 +83,7 @@ pub fn start<H: ScriptHost>(host: &H, plan: &TestPlan) -> AppResult<()> {
 }
 
 /// How long the whole scenario may take before the harness gives up.
-pub const SCENARIO_TIMEOUT: Duration = Duration::from_secs(420);
+pub const SCENARIO_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Strictly parse the report the page produced.
 pub fn parse_report(text: &str) -> AppResult<serde_json::Value> {
@@ -121,6 +121,20 @@ pub fn scenario_script(plan: &TestPlan) -> String {
 }
 
 const SCENARIO: &str = r#"(async () => {
+  // The harness may inject before the page has finished loading. Wait for the
+  // Tauri bridge (injected as a global) and for the app shell to exist, so a slow
+  // start is a wait rather than a crash.
+  {
+    const deadline = Date.now() + 60000;
+    while (!(window.__TAURI__ && window.__TAURI__.core && window.__s3viewer)) {
+      if (Date.now() > deadline) {
+        window.__S3VIEWER_E2E_STARTED = true;
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  window.__S3VIEWER_E2E_STARTED = true;
   const REPORT = [];
   const connectionName = __CONNECTION_NAME__;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -128,7 +142,7 @@ const SCENARIO: &str = r#"(async () => {
   const $$ = (selector) => Array.from(document.querySelectorAll(selector));
   const invoke = window.__TAURI__.core.invoke;
 
-  const wait = async (what, fn, timeout = 20000) => {
+  const wait = async (what, fn, timeout = 15000) => {
     const deadline = Date.now() + timeout;
     let last = null;
     for (;;) {
@@ -145,10 +159,35 @@ const SCENARIO: &str = r#"(async () => {
     }
   };
 
+  // Heartbeat: while a check is running, the partial report says which one, so a
+  // stall is attributable without any value ever being read back from the page.
+  let ACTIVE = null;
+  setInterval(() => {
+    if (!window.__TAURI__ || !ACTIVE) return;
+    invoke('e2e_report', {
+      report: JSON.stringify({
+        ok: false,
+        final: false,
+        active: ACTIVE,
+        checks: REPORT.slice(),
+        updatedAt: new Date().toISOString(),
+      }),
+    }).catch(() => {});
+  }, 3000);
+
+  const withLimit = (promise, seconds, label) =>
+    Promise.race([
+      promise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('timed out after ' + seconds + 's: ' + label)), seconds * 1000),
+      ),
+    ]);
+
   const check = async (name, fn) => {
     const started = Date.now();
+    ACTIVE = name;
     try {
-      const detail = await fn();
+      const detail = await withLimit(fn(), 90, name);
       REPORT.push({ name, ok: true, detail: detail ? String(detail) : '', ms: Date.now() - started });
     } catch (error) {
       REPORT.push({
@@ -159,6 +198,7 @@ const SCENARIO: &str = r#"(async () => {
         ms: Date.now() - started,
       });
     }
+    ACTIVE = null;
     publish(false);
   };
 
@@ -363,8 +403,10 @@ const SCENARIO: &str = r#"(async () => {
     await check('preview: audio metadata loads through ranged reads', async () => {
       clickRow('tone.wav');
       const audio = await wait('the audio element', () => $('[data-testid=preview-audio]'));
-      await wait('audio metadata', async () => (audio.readyState >= 1 ? true : null));
-      const duration = audio.duration;
+      const duration = await wait('audio duration', async () => {
+        const value = audio.duration;
+        return Number.isFinite(value) && value > 0 ? value : null;
+      }, 30000);
       if (!(duration > 0.5)) throw new Error('suspicious duration: ' + duration);
       return duration.toFixed(2) + 's';
     });

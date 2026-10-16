@@ -23,6 +23,26 @@ use std::path::{Path, PathBuf};
 
 pub const CONFIG_VERSION: u32 = 1;
 
+/// Panel geometry, stored in the settings object so it survives restarts
+/// without a second config file.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayoutSettings {
+    pub sidebar: u32,
+    pub preview: u32,
+    pub collapsed: bool,
+}
+
+impl Default for LayoutSettings {
+    fn default() -> Self {
+        Self {
+            sidebar: 264,
+            preview: 420,
+            collapsed: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -37,6 +57,8 @@ pub struct AppSettings {
     /// Show hidden-ish entries (dotfiles, `_SUCCESS`, `_temporary`).
     pub show_system_objects: bool,
     pub theme: Theme,
+    #[serde(default)]
+    pub layout: LayoutSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -55,6 +77,7 @@ impl Default for AppSettings {
             download_dir: None,
             show_system_objects: false,
             theme: Theme::Dark,
+            layout: LayoutSettings::default(),
         }
     }
 }

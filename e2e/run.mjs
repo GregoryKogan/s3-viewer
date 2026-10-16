@@ -28,7 +28,8 @@ const root = path.resolve(import.meta.dirname, "..");
 const lockFile = path.join(os.tmpdir(), "s3viewer-e2e.lock");
 const args = process.argv.slice(2);
 const keep = args.includes("--keep");
-const timeoutSeconds = 420;
+// Longer than the app's own scenario budget so it can write its report.
+const timeoutSeconds = 720;
 
 let s3 = null;
 let workDir = null;

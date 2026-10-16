@@ -68,26 +68,88 @@ textarea {
 
 .app {
   display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
   height: 100vh;
+  position: relative;
+}
+
+/* The title strip is the only place the window is dragged from. It reserves
+   room for the macOS traffic lights so they keep their clicks. */
+.titlebar {
+  flex: 0 0 100%;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-left: 78px;
+  -webkit-app-region: drag;
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.titlebar__title {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 /* ---------------------------------------------------------------- sidebar */
 
 .sidebar {
   width: var(--sidebar-width);
-  min-width: var(--sidebar-width);
+  min-width: 64px;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   background: var(--bg-inset);
-  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* Compact mode: names and labels give way to a narrow icon rail. */
+.sidebar--collapsed {
+  width: 64px !important;
+}
+
+.sidebar--collapsed .sidebar__heading-label,
+.sidebar--collapsed .sidebar__footer-label,
+.sidebar--collapsed .connection-card__path,
+.sidebar--collapsed .connection-card__badges,
+.sidebar--collapsed #new-connection,
+.sidebar--collapsed .brand__text,
+.sidebar--collapsed .connection-list .btn--block,
+.sidebar--collapsed .empty-hint p {
+  display: none;
+}
+
+.sidebar--collapsed .connection-card {
+  align-items: center;
+  padding: 8px 4px;
+}
+
+.sidebar--collapsed .connection-card__name {
+  font-size: 11px;
+  max-width: 100%;
+  text-align: center;
+}
+
+.sidebar--collapsed .sidebar__heading {
+  justify-content: center;
+}
+
+.sidebar--collapsed .sidebar__footer-icon {
+  display: inline;
+}
+
+.sidebar__footer-icon {
+  display: none;
 }
 
 .sidebar__brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 22px 14px 12px;
-  -webkit-app-region: drag;
+  padding: 10px 14px 6px;
 }
 
 .brand__mark {
@@ -113,10 +175,17 @@ textarea {
   font-size: 11px;
 }
 
+.sidebar__heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .sidebar__heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
   padding: 10px 14px 6px;
   font-size: 11px;
   text-transform: uppercase;
@@ -231,27 +300,53 @@ textarea {
 /* ------------------------------------------------------------------- main */
 
 .main {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
   position: relative;
 }
 
+.resizer {
+  position: absolute;
+  top: 30px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 25;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.resizer:hover,
+.resizer--active {
+  background: var(--accent);
+  opacity: 0.5;
+}
+
+.resizer--sidebar {
+  left: calc(var(--sidebar-width) - 3px);
+}
+
+.resizer--preview {
+  right: calc(var(--preview-width) - 3px);
+}
+
+.resizer[hidden] {
+  display: none;
+}
+
 .topbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 14px 8px;
-  padding-top: 22px;
-  -webkit-app-region: drag;
+  padding: 10px 14px 8px;
 }
 
 .topbar__actions {
   display: flex;
   align-items: center;
   gap: 6px;
-  -webkit-app-region: no-drag;
 }
 
 .breadcrumb {
@@ -262,7 +357,6 @@ textarea {
   overflow-x: auto;
   white-space: nowrap;
   scrollbar-width: none;
-  -webkit-app-region: no-drag;
 }
 
 .breadcrumb::-webkit-scrollbar {
@@ -559,11 +653,11 @@ textarea {
   width: var(--preview-width);
   min-width: 280px;
   max-width: 60vw;
+  flex: 0 0 auto;
   border-left: 1px solid var(--border);
   background: var(--bg-inset);
   display: flex;
   flex-direction: column;
-  resize: horizontal;
   overflow: hidden;
 }
 
