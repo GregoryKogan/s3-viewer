@@ -1,0 +1,40 @@
+# --- secrets: never commit credentials of any kind ---
+*.pem
+*.key
+*.p12
+**/s3-creds.json
+**/credentials
+.env
+.env.*
+!.env.example
+**/*secret*
+!**/*secret*.rs
+!**/*secret*.ts
+!**/*secret*.js
+
+# --- rust / tauri ---
+target/
+src-tauri/target/
+gen/
+
+# --- node ---
+node_modules/
+.pnpm-store/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+pnpm-lock.yaml.bak
+
+# --- test artifacts ---
+test-results/
+playwright-report/
+e2e/artifacts/
+e2e/fixtures/generated/
+
+# --- os / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
