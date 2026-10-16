@@ -154,6 +154,7 @@ export const api = {
   uploadFiles: (input) => invoke("upload_files", { input }),
   saveTextObject: (input) => invoke("save_text_object", { input }),
   transferProgress: () => invoke("transfer_progress"),
+  clearTransfers: () => invoke("clear_transfers"),
 
   // mutation
   createFolder: (input) => invoke("create_folder", { input }),

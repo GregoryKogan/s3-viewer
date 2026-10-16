@@ -2,6 +2,7 @@
 
 pub mod commands;
 pub mod crypto;
+pub mod e2e;
 pub mod error;
 pub mod fetch;
 pub mod fsutil;
@@ -32,6 +33,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .register_asynchronous_uri_scheme_protocol("s3stream", move |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             let core = app.state::<Arc<AppCore>>().inner().clone();
@@ -60,6 +62,7 @@ pub fn run() {
             commands::upload_files,
             commands::save_text_object,
             commands::transfer_progress,
+            commands::clear_transfers,
             commands::create_folder,
             commands::create_file,
             commands::delete_objects,
@@ -67,11 +70,26 @@ pub fn run() {
             commands::reveal_in_file_manager,
             commands::open_path,
             commands::default_upload_dir,
+            e2e::desktop::e2e_setup,
+            e2e::desktop::e2e_transfer_check,
+            e2e::desktop::e2e_roundtrip_check,
+            e2e::desktop::e2e_config_audit,
+            e2e::desktop::e2e_readonly_check,
+            e2e::desktop::e2e_report,
             ping,
         ])
         .setup(|app| {
             // Keep the runtime alive for the lifetime of the app.
             app.manage(RuntimeGuard(runtime));
+            // The self-hosted end-to-end harness only starts when the runner
+            // asks for it explicitly (S3VIEWER_E2E=1).
+            if let Some(plan) = e2e::TestPlan::from_env() {
+                let handle = app.handle().clone();
+                let core = handle.state::<Arc<AppCore>>().inner().clone();
+                let slot = Arc::new(e2e::desktop::ReportSlot::default());
+                app.manage(slot.clone());
+                e2e::desktop::maybe_run(&handle, &core, &plan, slot);
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

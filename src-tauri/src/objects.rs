@@ -38,14 +38,19 @@ pub async fn list_folder(
 ) -> AppResult<(Vec<ObjectEntry>, bool)> {
     let folder = as_folder_prefix(prefix);
     let mut entries: Vec<ObjectEntry> = Vec::new();
+    let mut files = 0usize;
     let mut token: Option<String> = None;
     let mut truncated = false;
     loop {
         let page = store
             .list_page(&folder, Some("/"), token.as_deref(), PAGE_SIZE)
             .await?;
+        // Only real objects are counted against the cap: a prefix full of
+        // sub-folders must not consume the budget meant for files, otherwise
+        // files later in the listing silently disappear.
+        files += page.entries.iter().filter(|entry| !entry.is_folder).count();
         entries.extend(page.entries);
-        if entries.len() >= limit {
+        if files >= limit {
             truncated = true;
             break;
         }
@@ -56,12 +61,6 @@ pub async fn list_folder(
             Some(t) if Some(&t) != token.as_ref() => token = Some(t),
             _ => break,
         }
-    }
-    // A 1000-key page boundary is the common case; only report truncation when
-    // the caller really asked for less than S3 can deliver.
-    if entries.len() > limit {
-        entries.truncate(limit);
-        truncated = true;
     }
     Ok((entries, truncated))
 }

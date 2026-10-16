@@ -1,0 +1,794 @@
+//! Built-in end-to-end harness (headless-testable core).
+//!
+//! WebDriver is not an option on macOS: WKWebView has no WebDriver
+//! implementation, so `tauri-driver` refuses to start, and driving the screen
+//! with synthetic clicks would not test the app anyway. Instead the app hosts the
+//! test itself. When `S3VIEWER_E2E=1` is set, the real window boots, a scripted
+//! scenario runs inside the actual webview against the real Rust backend and the
+//! real S3 bucket, and the outcome is written to `S3VIEWER_E2E_OUT` as JSON.
+//!
+//! This covers what unit tests cannot: IPC round-trips, the `s3stream://` media
+//! protocol, DOM rendering, sanitisation, and every command the UI calls.
+//!
+//! Safety: the scenario only ever touches the bucket and prefix the runner
+//! passes in, and none of this is reachable unless the environment variable is
+//! set explicitly. The desktop-only glue lives in [`desktop`].
+
+pub mod desktop;
+
+use crate::error::AppResult;
+use std::time::Duration;
+
+pub const ENV_RUN: &str = "S3VIEWER_E2E";
+pub const ENV_OUT: &str = "S3VIEWER_E2E_OUT";
+pub const ENV_BUCKET: &str = "S3VIEWER_E2E_BUCKET";
+pub const ENV_PREFIX: &str = "S3VIEWER_E2E_PREFIX";
+pub const ENV_ENDPOINT: &str = "S3VIEWER_E2E_ENDPOINT";
+pub const ENV_REGION: &str = "S3VIEWER_E2E_REGION";
+pub const ENV_ACCESS: &str = "S3VIEWER_E2E_ACCESS_KEY";
+pub const ENV_SECRET: &str = "S3VIEWER_E2E_SECRET_KEY";
+pub const ENV_DOWNLOAD_DIR: &str = "S3VIEWER_E2E_DOWNLOAD_DIR";
+
+/// Name of the connection the harness creates for the run.
+pub const CONNECTION_NAME: &str = "E2E dev bucket";
+
+/// Preview ceiling used during e2e runs. Deliberately small: the suite ships a
+/// 1 MB+ fixture instead of a multi-gigabyte one.
+pub const E2E_PREVIEW_LIMIT: u64 = 1024 * 1024;
+
+/// Everything the scenario needs, read from the environment.
+#[derive(Debug, Clone)]
+pub struct TestPlan {
+    pub bucket: String,
+    pub prefix: String,
+    pub endpoint: String,
+    pub region: String,
+    pub access_key: String,
+    pub secret_key: String,
+    pub output: String,
+    pub download_dir: Option<String>,
+}
+
+impl TestPlan {
+    pub fn from_env() -> Option<TestPlan> {
+        if std::env::var(ENV_RUN).ok().as_deref() != Some("1") {
+            return None;
+        }
+        let need = |key: &str| std::env::var(key).ok().filter(|v| !v.is_empty());
+        Some(TestPlan {
+            bucket: need(ENV_BUCKET)?,
+            prefix: need(ENV_PREFIX).unwrap_or_else(|| "_s3viewer-e2e/".to_string()),
+            endpoint: need(ENV_ENDPOINT)?,
+            region: need(ENV_REGION).unwrap_or_else(|| "us-east-1".to_string()),
+            access_key: need(ENV_ACCESS)?,
+            secret_key: need(ENV_SECRET)?,
+            output: need(ENV_OUT).unwrap_or_else(|| "e2e-report.json".to_string()),
+            download_dir: need(ENV_DOWNLOAD_DIR),
+        })
+    }
+}
+
+/// The one thing the scenario needs from the host: run a string in the webview.
+pub trait ScriptHost {
+    fn eval_str(&self, script: &str) -> AppResult<()>;
+}
+
+/// Injects the scenario into the webview.
+///
+/// The page reports back by calling the `e2e_report` command (see
+/// [`crate::e2e::desktop`]), which avoids depending on eval return values —
+/// `WebviewWindow::eval` is fire-and-forget.
+pub fn start<H: ScriptHost>(host: &H, plan: &TestPlan) -> AppResult<()> {
+    host.eval_str(&scenario_script(plan))
+}
+
+/// How long the whole scenario may take before the harness gives up.
+pub const SCENARIO_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Strictly parse the report the page produced.
+pub fn parse_report(text: &str) -> AppResult<serde_json::Value> {
+    let value: serde_json::Value = serde_json::from_str(text)
+        .map_err(|e| crate::error::AppError::msg(format!("report is not valid JSON: {e}")))?;
+    if value.get("checks").and_then(|c| c.as_array()).is_none() {
+        return Err(crate::error::AppError::msg("report has no checks array"));
+    }
+    Ok(value)
+}
+
+pub fn report_passed(report: &serde_json::Value) -> bool {
+    report.get("ok").and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
+pub fn write_report(path: &str, report: &serde_json::Value) {
+    let text = serde_json::to_string_pretty(report).unwrap_or_else(|_| "{}".to_string());
+    if let Err(err) = std::fs::write(path, text) {
+        eprintln!("s3viewer e2e: cannot write {path}: {err}");
+    }
+}
+
+/// The script that drives the UI. One readable string, so a selector change has
+/// exactly one place to be fixed.
+pub fn scenario_script(plan: &TestPlan) -> String {
+    let json = |value: &str| serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string());
+    SCENARIO
+        .replace("__CONNECTION_NAME__", &json(CONNECTION_NAME))
+        .replace("__ENDPOINT__", &json(&plan.endpoint))
+        .replace("__REGION__", &json(&plan.region))
+        .replace("__ACCESS__", &json(&plan.access_key))
+        .replace("__SECRET__", &json(&plan.secret_key))
+        .replace("__BUCKET__", &json(&plan.bucket))
+        .replace("__PREFIX__", &json(&plan.prefix))
+}
+
+const SCENARIO: &str = r#"(async () => {
+  const REPORT = [];
+  const connectionName = __CONNECTION_NAME__;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const $ = (selector) => document.querySelector(selector);
+  const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+  const invoke = window.__TAURI__.core.invoke;
+
+  const wait = async (what, fn, timeout = 45000) => {
+    const deadline = Date.now() + timeout;
+    let last = null;
+    for (;;) {
+      try {
+        last = await fn();
+        if (last) return last;
+      } catch (error) {
+        last = error;
+      }
+      if (Date.now() > deadline) {
+        throw new Error('timeout waiting for ' + what + (last ? ' — ' + last : ''));
+      }
+      await sleep(120);
+    }
+  };
+
+  const check = async (name, fn) => {
+    const started = Date.now();
+    try {
+      const detail = await fn();
+      REPORT.push({ name, ok: true, detail: detail ? String(detail) : '', ms: Date.now() - started });
+    } catch (error) {
+      REPORT.push({
+        name,
+        ok: false,
+        detail: String((error && error.message) || error),
+        stack: String((error && error.stack) || '').split('\n').slice(0, 10),
+        ms: Date.now() - started,
+      });
+    }
+    publish(false);
+  };
+
+  // Partial reports are sent as the run progresses: if a later check hangs, the
+  // last reported check names the culprit instead of a bare timeout.
+  const publish = (final) => {
+    const report = {
+      ok: final && REPORT.every((entry) => entry.ok),
+      final: Boolean(final),
+      checks: REPORT.slice(),
+      updatedAt: new Date().toISOString(),
+    };
+    window.__S3VIEWER_E2E_REPORT = report;
+    try {
+      invoke('e2e_report', { report: JSON.stringify(report) });
+    } catch (error) {
+      console.error('e2e: could not publish the report', error);
+    }
+  };
+
+  const fire = (node, type) => node.dispatchEvent(new Event(type, { bubbles: true }));
+  const setInput = (selector, value) => {
+    const node = $(selector);
+    node.focus();
+    node.value = value;
+    fire(node, 'input');
+    fire(node, 'change');
+  };
+  const rowNames = () => $$('.object-row .row-label').map((n) => n.textContent);
+  const clickRow = (label) => {
+    const row = $$('.object-row').find((r) => r.querySelector('.row-label').textContent === label);
+    if (!row) throw new Error('row not found: ' + label);
+    row.click();
+    return row;
+  };
+  const closeModal = async () => {
+    const button = document.querySelector('[data-testid=modal] .modal__head .btn--ghost');
+    if (button) button.click();
+    await wait('the modal to close', async () => !$('[data-testid=modal]'), 5000);
+  };
+
+  window.__S3VIEWER_E2E_ERRORS = [];
+  window.addEventListener('error', (event) => {
+    window.__S3VIEWER_E2E_ERRORS.push('error: ' + (event.message || '') + ' @ ' + (event.filename || ''));
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    window.__S3VIEWER_E2E_ERRORS.push('rejection: ' + String((event.reason && event.reason.message) || event.reason));
+  });
+
+  const domDigest = () => {
+    const rowCount = $$('.object-row').length;
+    return 'rows=' + rowCount
+      + ' session=' + Boolean(window.__s3viewer.state.session)
+      + ' connections=' + window.__s3viewer.state.connections.length
+      + ' objectList=' + Boolean($('#object-list'))
+      + ' newFolderBtn=' + Boolean($('[data-testid=new-folder]'))
+      + ' errors=[' + window.__S3VIEWER_E2E_ERRORS.join(' | ') + ']'
+      + ' empty=' + (($('[data-testid=empty-folder]') || {}).textContent || '')
+      + ' noConn=' + (($('[data-testid=no-connection-state]') || {}).textContent || '').slice(0, 40)
+      + ' loading=' + Boolean($('[data-testid=loading-state]'))
+      + ' describe=' + JSON.stringify(window.__s3viewer.describe());
+  };
+
+  try {
+    await check('boot: the app shell rendered', async () => {
+      await wait('the connection list', () => $('#connection-list'));
+      return document.title + ' · ' + domDigest();
+    });
+
+    await check('boot: the IPC bridge answers', async () => {
+      const pong = await invoke('ping');
+      if (pong !== 'pong') throw new Error('unexpected ping reply: ' + pong);
+      return 'pong';
+    });
+
+    const connectionId = await invoke('e2e_setup');
+    await window.__s3viewer.refreshConnections();
+
+    await check('ui: the connection form produces a working boto3 snippet', async () => {
+      $('#new-connection').click();
+      await wait('the connection form', () => $('[data-testid=conn-name]'));
+      setInput('[data-testid=conn-name]', 'snippet probe');
+      setInput('[data-testid=conn-endpoint]', __ENDPOINT__);
+      setInput('[data-testid=conn-region]', __REGION__);
+      setInput('[data-testid=conn-access-key]', __ACCESS__);
+      setInput('[data-testid=conn-bucket]', __BUCKET__);
+      const snippet = $('[data-testid=boto3-snippet]').textContent;
+      const expected = [
+        'endpoint_url="' + __ENDPOINT__ + '"',
+        'region_name="' + __REGION__ + '"',
+        'aws_access_key_id="' + __ACCESS__ + '"',
+        'signature_version="s3v4"',
+        '"addressing_style": "virtual"',
+      ];
+      for (const line of expected) {
+        if (!snippet.includes(line)) throw new Error('snippet is missing: ' + line);
+      }
+      if (snippet.includes(__SECRET__)) throw new Error('the secret key was rendered into the snippet');
+      await closeModal();
+      return 'snippet mirrors the form';
+    });
+
+    await check('ui: the sidebar lists the connection with probed rights', async () => {
+      const cards = await wait('a connection card', () => {
+        const found = $$('#connection-list button[data-testid^="connection-"]');
+        return found.length ? found : null;
+      });
+      if (window.__S3VIEWER_E2E_ERRORS.length) {
+        throw new Error('page errors before opening: ' + window.__S3VIEWER_E2E_ERRORS.join(' | '));
+      }
+      const card = cards.find((c) => c.textContent.includes(connectionName));
+      if (!card) throw new Error('card for ' + connectionName + ' not found');
+      const text = card.textContent;
+      if (/not probed/.test(text)) throw new Error('capabilities were not probed: ' + text);
+      if (!/read-write/.test(text)) throw new Error('expected a read-write badge, got: ' + text);
+      return text.replace(/\s+/g, ' ').trim();
+    });
+
+    await check('ui: opening the connection lists every fixture', async () => {
+      const card = await wait('the connection card', () => {
+        const found = $$('#connection-list button[data-testid^="connection-"]')
+          .find((c) => c.textContent.includes(connectionName));
+        return found || null;
+      });
+      card.click();
+      try {
+        await wait('object rows', async () => ($$('.object-row').length >= 12 ? true : null), 30000);
+      } catch (error) {
+        throw new Error(error.message + ' :: ' + domDigest());
+      }
+      const names = rowNames();
+      const expected = ['image.png', 'tone.wav', 'clip.mp4', 'document.pdf', 'vector.svg', 'blob.bin',
+                        'readme.md', 'notes.txt', 'sample.json', 'sample.py', 'table.csv', 'too-big.txt'];
+      const missing = expected.filter((name) => !names.includes(name));
+      if (missing.length) throw new Error('missing rows: ' + missing.join(', '));
+      const rootCrumb = $('[data-testid=crumb-root]').textContent;
+      if (rootCrumb !== __BUCKET__) throw new Error('unexpected root crumb: ' + rootCrumb);
+      // The listing must be scoped to the connection prefix, not the bucket root.
+      const scoped = await invoke('list_objects', { input: { connectionId, prefix: null } });
+      if (scoped.prefix !== __PREFIX__) {
+        throw new Error('the listing is not scoped to the prefix: ' + scoped.prefix);
+      }
+      return names.length + ' rows · ' + $('[data-testid=folder-status]').textContent;
+    });
+
+    await check('navigation: folder rows are sorted before files', async () => {
+      const toolbarProbe = 'toolbar=' + Boolean($('#toolbar'))
+        + ' buttons=' + (($('#toolbar') || {}).querySelectorAll ? $('#toolbar').querySelectorAll('button').length : -1)
+        + ' testids=[' + $$('#toolbar button').map((b) => b.dataset.testid).join(',') + ']'
+        + ' allBtnIds=[' + $$('button').map((b) => b.id || b.dataset.testid || b.className.split(' ')[0]).slice(0, 24).join(',') + ']';
+      if (!$('[data-testid=new-folder]')) {
+        throw new Error('the toolbar lost its buttons: ' + toolbarProbe + ' :: ' + domDigest());
+      }
+      $('[data-testid=new-folder]').click();
+      await wait('the folder prompt', () => $('[data-testid=prompt-input]'));
+      const folder = 'aaa-sort-probe-' + Date.now();
+      setInput('[data-testid=prompt-input]', folder);
+      $('[data-testid=prompt-ok]').click();
+      await wait('the new folder', async () => (rowNames().includes(folder) ? true : null));
+      const first = rowNames()[0];
+      if (first !== folder) throw new Error('folders are not listed first: ' + first);
+      clickRow(folder);
+      const deleteState = 'selected=' + window.__s3viewer.state.selected.size
+        + ' disabled=' + $('[data-testid=delete]').disabled
+        + ' rows=' + rowNames().join(',');
+      $('[data-testid=delete]').click();
+      const confirm = await wait('the confirmation', () => $('[data-testid=confirm-ok]'), 8000)
+        .catch(() => null);
+      if (!confirm) throw new Error('no confirmation appeared after delete: ' + deleteState);
+      confirm.click();
+      try {
+        await wait('the folder to disappear', async () => (rowNames().includes(folder) ? null : true), 60000);
+      } catch (error) {
+        const progress = await invoke('transfer_progress');
+        throw new Error(error.message + ' :: rows=' + rowNames().join(',')
+          + ' transfers=' + JSON.stringify(progress).slice(0, 300));
+      }
+      return 'folders sort first';
+    });
+
+    await check('preview: image decodes through the s3stream protocol', async () => {
+      clickRow('image.png');
+      const image = await wait('the image element', () => $('[data-testid=preview-image]'));
+      const width = await wait('the image to decode', async () => (image.naturalWidth > 0 ? image.naturalWidth : null));
+      if (!image.src.startsWith('s3stream:')) throw new Error('unexpected src: ' + image.src);
+      return width + 'x' + image.naturalHeight;
+    });
+
+    await check('preview: audio metadata loads through ranged reads', async () => {
+      clickRow('tone.wav');
+      const audio = await wait('the audio element', () => $('[data-testid=preview-audio]'));
+      const duration = await wait('audio duration', async () => {
+        const value = audio.duration;
+        return Number.isFinite(value) && value > 0 ? value : null;
+      });
+      if (!(duration > 0.5)) throw new Error('suspicious duration: ' + duration);
+      return duration.toFixed(2) + 's';
+    });
+
+    await check('preview: video is wired to the ranged stream', async () => {
+      clickRow('clip.mp4');
+      const video = await wait('the video element', () => $('[data-testid=preview-video]'));
+      if (!video.src.startsWith('s3stream:')) throw new Error('unexpected src: ' + video.src);
+      if (!video.controls) throw new Error('the video has no controls');
+      // A metadata request proves the range plumbing; the fixture itself is not
+      // decodable on purpose, so no readyState assertion is made here.
+      await sleep(500);
+      return 'video element bound to ' + video.src.slice(0, 48);
+    });
+
+    await check('preview: PDF is embedded from the stream', async () => {
+      clickRow('document.pdf');
+      const frame = await wait('the PDF frame', () => $('[data-testid=preview-pdf]'));
+      if (!frame.src.startsWith('s3stream:')) throw new Error('unexpected src: ' + frame.src);
+      return frame.src.slice(0, 60);
+    });
+
+    await check('preview: SVG renders as an image', async () => {
+      clickRow('vector.svg');
+      const image = await wait('the SVG preview', () => $('[data-testid=preview-image]'));
+      const width = await wait('the SVG to decode', async () => (image.naturalWidth > 0 ? image.naturalWidth : null));
+      return width + 'px wide';
+    });
+
+    await check('preview: Markdown renders structure and toggles to raw', async () => {
+      clickRow('readme.md');
+      const rendered = await wait('the rendered markdown', () => $('[data-testid=preview-markdown]'));
+      const html = rendered.innerHTML;
+      for (const tag of ['<h1', '<table', '<strong>', '<code']) {
+        if (!html.includes(tag)) throw new Error('missing ' + tag + ' in the rendered output');
+      }
+      const rawButton = await wait('the raw toggle', () => $('[data-testid=md-view-raw]'), 10000);
+      rawButton.click();
+      const raw = await wait('the raw view', () => $('[data-testid=preview-code]'), 10000).catch((error) => {
+        throw new Error(error.message + ' :: view=' + window.__s3viewer.state.preview.view
+          + ' codeEl=' + Boolean($('[data-testid=preview-code]'))
+          + ' mdEl=' + Boolean($('[data-testid=preview-markdown]'))
+          + ' firstChildClass=' + (($('#preview-body').firstElementChild || {}).className)
+          + ' innerClasses=[' + $$('#preview-body div, #preview-body pre').map((n) => n.className).join(' | ') + ']');
+      });
+      if (!raw.textContent.includes('# Preview test document')) {
+        throw new Error('the raw view is not the source text');
+      }
+      // Switching views re-renders the panel, so the button must be re-queried.
+      const back = await wait('the rendered toggle', () => $('[data-testid=md-view-rendered]'), 10000);
+      back.click();
+      await wait('the rendered view again', () => $('[data-testid=preview-markdown]'), 10000);
+      return html.length + ' bytes of rendered markup';
+    });
+
+    await check('preview: Markdown output is sanitised', async () => {
+      const result = window.__s3viewerSanitizeProbe();
+      if (result.executed.script || result.executed.handler) throw new Error('injected code executed');
+      if (/<script/i.test(result.html)) throw new Error('script tag survived');
+      if (/onerror/i.test(result.html)) throw new Error('event handler survived');
+      if (/javascript:/i.test(result.html)) throw new Error('javascript: URL survived');
+      if (!result.html.includes('<h1')) throw new Error('legitimate markup was stripped');
+      return 'script, onerror and javascript: all removed';
+    });
+
+    await check('preview: JSON is highlighted and pretty-printed', async () => {
+      clickRow('sample.json');
+      const code = await wait('the code preview', () => $('[data-testid=preview-code]'));
+      const html = code.innerHTML;
+      if (!/hljs-(attr|string)/.test(html)) throw new Error('no highlighting: ' + html.slice(0, 160));
+      if (!html.includes('preview-fixture')) throw new Error('content missing');
+      if (!/\n\s{2}"/.test(code.textContent)) throw new Error('JSON was not pretty-printed');
+      return 'highlighted, ' + html.length + ' bytes';
+    });
+
+    await check('preview: Python is highlighted', async () => {
+      clickRow('sample.py');
+      const code = await wait('the code preview', () => $('[data-testid=preview-code]'));
+      const html = code.innerHTML;
+      if (!html.includes('hljs-keyword')) throw new Error('no keywords: ' + html.slice(0, 160));
+      if (!html.includes('Greeter')) throw new Error('content missing');
+      return 'highlighted, ' + html.length + ' bytes';
+    });
+
+    await check('preview: CSV becomes a table with quoted fields intact', async () => {
+      clickRow('table.csv');
+      const table = await wait('the table', () => $('[data-testid=preview-table] table'));
+      const rows = table.querySelectorAll('tbody tr').length;
+      if (rows !== 3) throw new Error('expected 3 data rows, found ' + rows);
+      if (!table.textContent.includes('quoted, value')) throw new Error('quoted field was mangled');
+      return rows + ' data rows';
+    });
+
+    await check('preview: unicode text is preserved', async () => {
+      clickRow('notes.txt');
+      const code = await wait('the text preview', () => $('[data-testid=preview-code]'));
+      if (!code.textContent.includes('привет мир — 你好 — 🎉')) throw new Error('unicode was mangled');
+      return code.textContent.length + ' chars';
+    });
+
+    await check('preview: binary content is refused with a reason', async () => {
+      clickRow('blob.bin');
+      const node = await wait('the refusal message', () => $('[data-testid=preview-unavailable]'));
+      const text = node.textContent;
+      if (!/preview/i.test(text)) throw new Error('unhelpful message: ' + text);
+      if (!/download/i.test(text)) throw new Error('no download hint: ' + text);
+      return text.replace(/\s+/g, ' ').trim().slice(0, 90);
+    });
+
+    await check('preview: an oversized file is refused with its size and limit', async () => {
+      clickRow('too-big.txt');
+      const node = await wait('the size refusal', () => $('[data-testid=preview-unavailable]'), 60000);
+      const text = node.textContent;
+      if (!/exceeds the preview limit/i.test(text)) throw new Error('wrong message: ' + text);
+      if (!/MB/.test(text)) throw new Error('the message does not name the sizes: ' + text);
+      return text.replace(/\s+/g, ' ').trim().slice(0, 120);
+    });
+
+    await check('preview: the panel can be hidden and shown again', async () => {
+      $('[data-testid=toggle-preview]').click();
+      if (!$('#preview').hidden) throw new Error('the panel did not hide');
+      $('[data-testid=toggle-preview]').click();
+      if ($('#preview').hidden) throw new Error('the panel did not come back');
+      return 'toggled';
+    });
+
+    const folderName = 'e2e-folder-' + Date.now();
+    await check('ops: create a folder, enter it, then delete it', async () => {
+      $('[data-testid=new-folder]').click();
+      await wait('the folder prompt', () => $('[data-testid=prompt-input]'));
+      setInput('[data-testid=prompt-input]', folderName);
+      $('[data-testid=prompt-ok]').click();
+      await wait('the new folder row', async () => (rowNames().includes(folderName) ? true : null));
+      const row = clickRow(folderName);
+      row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      await wait('the breadcrumb to follow', async () =>
+        $('[data-testid=breadcrumb]').textContent.includes(folderName) ? true : null);
+      $('[data-testid=crumb-root]').click();
+      await wait('the root listing again', async () => (rowNames().includes(folderName) ? true : null));
+      clickRow(folderName);
+      $('[data-testid=delete]').click();
+      const confirm = await wait('the confirmation', () => $('[data-testid=confirm-ok]'), 8000).catch(() => null);
+      if (!confirm) {
+        throw new Error('no confirmation appeared; selected=' + window.__s3viewer.state.selected.size
+          + ' buttonDisabled=' + $('[data-testid=delete]').disabled);
+      }
+      confirm.click();
+      try {
+        await wait('the folder to disappear', async () => (rowNames().includes(folderName) ? null : true), 40000);
+      } catch (error) {
+        const progress = await invoke('transfer_progress');
+        throw new Error(error.message + ' :: rows=' + rowNames().join(',')
+          + ' transfers=' + JSON.stringify(progress).slice(0, 400));
+      }
+      return folderName + ' created and removed';
+    });
+
+    await check('ops: the filter narrows the listing', async () => {
+      setInput('[data-testid=filter-input]', 'sample');
+      // The input is debounced, so poll rather than assume the render happened.
+      await wait('the filtered list', async () => ($$('.object-row').length === 2 ? true : null), 10000)
+        .catch((error) => {
+          throw new Error(error.message + ' :: rows=[' + rowNames().join(',')
+            + '] filterValue=' + $('[data-testid=filter-input]').value
+            + ' describe=' + JSON.stringify(window.__s3viewer.describe()).replace(/\s+/g, ''));
+        });
+      const names = rowNames();
+      if (names.length !== 2) throw new Error('expected 2 rows, got ' + names.length + ': ' + names);
+      if (!names.every((name) => name.includes('sample'))) {
+        throw new Error('the filter leaked unrelated rows: ' + names.join(', '));
+      }
+      setInput('[data-testid=filter-input]', '');
+      await wait('the full list', async () => ($$('.object-row').length >= 12 ? true : null), 10000);
+      return names.join(', ');
+    });
+
+    await check('ops: the boto3 snippet copies to the clipboard', async () => {
+      $('#new-connection').click();
+      await wait('the form', () => $('[data-testid=boto3-snippet]'));
+      const copied = await window.__s3viewer.copySnippet();
+      await closeModal();
+      if (!copied) throw new Error('clipboard write failed');
+      return 'copied';
+    });
+
+    await check('transfer: download writes the exact object bytes', async () => {
+      const outcome = await invoke('e2e_transfer_check');
+      if (!outcome.match) {
+        throw new Error('bytes differ (local ' + outcome.localSize + ', remote ' + outcome.remoteSize + ')');
+      }
+      return outcome.localSize + ' bytes identical';
+    });
+
+    await check('transfer: upload and delete round-trip through the UI commands', async () => {
+      const outcome = await invoke('e2e_roundtrip_check');
+      if (!outcome.uploaded) throw new Error('the upload did not produce the object');
+      if (!outcome.deleted) throw new Error('the delete did not remove the object');
+      return 'uploaded and removed ' + outcome.size + ' bytes';
+    });
+
+    await check('transfer: the Download button queues a download', async () => {
+      clickRow('image.png');
+      $('[data-testid=download]').click();
+      const settled = await wait('the download to finish', async () => {
+        const items = await invoke('transfer_progress');
+        const done = items.filter((item) => item.state === 'done' && /Downloading/i.test(item.label));
+        return done.length ? done[0] : null;
+      }, 60000);
+      if (!settled.resultPath) throw new Error('no destination reported');
+      return String(settled.resultPath).split('/').pop();
+    });
+
+    await check('transfer: copy duplicates an object inside the bucket', async () => {
+      clickRow('notes.txt');
+      $('[data-testid=copy]').click();
+      const prefixInput = await wait('the copy dialog', () => $('[data-testid=transfer-prefix]'), 10000);
+      const destination = __PREFIX__ + 'copies/';
+      prefixInput.value = destination;
+      prefixInput.dispatchEvent(new Event('input', { bubbles: true }));
+      $('[data-testid=transfer-confirm]').click();
+      const outcome = await wait('the transfer to settle', async () => {
+        const items = await invoke('transfer_progress');
+        const done = items.filter((item) => item.state !== 'running' && /Copying|Moving/i.test(item.label));
+        return done.length ? done[0] : null;
+      }, 60000);
+      if (outcome.state !== 'done') throw new Error('copy failed: ' + outcome.error);
+      // Verify through the API that the object exists, then remove it again.
+      const listing = await invoke('list_objects', { input: { connectionId, prefix: destination } });
+      const copied = listing.entries.find((entry) => (entry.name || '').indexOf('notes') === 0);
+      if (!copied) throw new Error('the copy is not on S3: ' + JSON.stringify(listing.entries.map((e) => e.name)));
+      await invoke('delete_objects', { input: { connectionId, keys: [copied.key] } });
+      return 'copied and cleaned up ' + copied.name;
+    });
+
+    await check('transfer: progress reporting is wired', async () => {
+      const items = await invoke('transfer_progress');
+      if (!Array.isArray(items)) throw new Error('transfer_progress did not return a list');
+      return items.length + ' tracked transfer(s)';
+    });
+
+    await check('security: secrets are sealed on disk, never in the clear', async () => {
+      const status = await invoke('e2e_config_audit');
+      if (!status.sealed) throw new Error('the stored secret is not sealed');
+      if (status.containsSecret) throw new Error('THE SECRET LEAKED INTO config.json');
+      if (status.mode !== '600') throw new Error('config.json mode is ' + status.mode + ', expected 600');
+      if (status.dirMode !== '700') throw new Error('the config dir mode is ' + status.dirMode + ', expected 700');
+      return 'sealed, file ' + status.mode + ', dir ' + status.dirMode;
+    });
+
+    await check('security: read-only mode blocks an upload', async () => {
+      const outcome = await invoke('e2e_readonly_check');
+      if (!outcome.blocked) throw new Error('read-only mode did not block the upload');
+      if (!/read-only/i.test(outcome.message)) throw new Error('unexpected error: ' + outcome.message);
+      return outcome.message;
+    });
+
+    await check('security: the permission probe reports read-write', async () => {
+      const caps = await invoke('detect_capabilities', { id: connectionId });
+      if (!caps.canList || !caps.canRead) throw new Error('listing or reading is denied: ' + JSON.stringify(caps));
+      if (!caps.canWrite || !caps.canDelete) throw new Error('write or delete is denied: ' + JSON.stringify(caps));
+      return 'list/read/write/delete all granted';
+    });
+
+    await check('settings: the dialog saves a new preview limit', async () => {
+      $('[data-testid=open-settings]').click();
+      const select = await wait('the settings dialog', () => $('[data-testid=settings-preview-limit]'), 15000);
+      const chosen = Array.from(select.options)
+        .map((option) => option.value)
+        .find((value) => value !== select.value);
+      if (!chosen) throw new Error('no alternative preview limit to choose');
+      select.value = chosen;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      $('[data-testid=settings-save]').click();
+      await wait('the dialog to close', async () => !$('[data-testid=modal]'), 15000).catch((error) => {
+        throw new Error(error.message
+          + ' :: toasts=[' + $$('[data-testid^=toast-]').map((n) => n.textContent).join(' | ') + ']'
+          + ' modalTitle=' + (($('[data-testid=modal-title]') || {}).textContent || 'none'));
+      });
+      const stored = await invoke('get_settings');
+      if (String(stored.previewMaxBytes) !== String(chosen)) {
+        throw new Error('the limit was not saved: wanted ' + chosen + ', stored ' + stored.previewMaxBytes);
+      }
+      // Put it back so later checks see the documented default.
+      const settings = await invoke('get_settings');
+      settings.previewMaxBytes = 1048576;
+      await invoke('update_settings', { settings });
+      return 'saved and restored ' + chosen + ' B';
+    });
+
+    await check('settings: the preview limit is exposed and configurable', async () => {
+      const settings = await invoke('get_settings');
+      if (typeof settings.previewMaxBytes !== 'number' || settings.previewMaxBytes <= 0) {
+        throw new Error('no preview limit in settings');
+      }
+      const security = await invoke('security_status');
+      if (!security.configPath) throw new Error('no config path reported');
+      return 'limit ' + settings.previewMaxBytes + ' B';
+    });
+  } catch (error) {
+    REPORT.push({
+      name: 'scenario crashed',
+      ok: false,
+      detail: String((error && error.message) || error),
+      stack: String((error && error.stack) || '').split('\n').slice(0, 6),
+      ms: 0,
+    });
+  }
+
+  publish(true);
+})();
+
+// Safety net: flush the partial report every 10s even if a check hangs.
+setInterval(() => {
+  if (window.__S3VIEWER_E2E_REPORT && !window.__S3VIEWER_E2E_REPORT.final) {
+    window.__TAURI__ && window.__TAURI__.core.invoke('e2e_report', {
+      report: JSON.stringify(window.__S3VIEWER_E2E_REPORT),
+    });
+  }
+}, 10000);"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan() -> TestPlan {
+        TestPlan {
+            bucket: "dev-bucket".into(),
+            prefix: "_s3viewer-e2e/".into(),
+            endpoint: "https://obs.example.ru".into(),
+            region: "us-east-1".into(),
+            access_key: "AKIATEST".into(),
+            secret_key: "SECRETTEST".into(),
+            output: "/tmp/report.json".into(),
+            download_dir: None,
+        }
+    }
+
+    #[test]
+    fn scenario_substitutes_every_placeholder() {
+        let script = scenario_script(&plan());
+        for placeholder in [
+            "__CONNECTION_NAME__",
+            "__ENDPOINT__",
+            "__REGION__",
+            "__ACCESS__",
+            "__SECRET__",
+            "__BUCKET__",
+            "__PREFIX__",
+        ] {
+            assert!(
+                !script.contains(placeholder),
+                "{placeholder} was not substituted"
+            );
+        }
+        assert!(script.contains("https://obs.example.ru"));
+        // The prefix reaches the page as a JSON literal.
+        assert!(script.contains("_s3viewer-e2e/"));
+        assert!(script.contains("\"E2E dev bucket\""));
+    }
+
+    #[test]
+    fn scenario_values_are_json_escaped() {
+        let mut plan = plan();
+        plan.bucket = "weird\"bucket\\name".into();
+        let script = scenario_script(&plan);
+        assert!(script.contains(r#""weird\"bucket\\name""#));
+    }
+
+    #[test]
+    fn report_parsing_is_strict() {
+        let good = r#"{"ok": true, "checks": []}"#;
+        assert!(parse_report(good).is_ok());
+        assert!(report_passed(&parse_report(good).unwrap()));
+
+        assert!(parse_report("not json").is_err());
+        assert!(parse_report(r#"{"ok": true}"#).is_err());
+    }
+
+    #[test]
+    fn failed_report_is_not_passing() {
+        let report = parse_report(r#"{"ok": false, "checks": [{"name":"x","ok":false}]}"#).unwrap();
+        assert!(!report_passed(&report));
+    }
+
+    #[test]
+    fn plan_requires_the_run_flag() {
+        std::env::remove_var(ENV_RUN);
+        assert!(TestPlan::from_env().is_none());
+    }
+
+    #[test]
+    fn write_report_creates_readable_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.json");
+        write_report(
+            path.to_str().unwrap(),
+            &serde_json::json!({"ok": true, "checks": []}),
+        );
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"ok\": true"));
+    }
+
+    #[test]
+    fn start_injects_the_scenario_into_the_host() {
+        use std::sync::Mutex;
+        struct Host {
+            seen: Mutex<Vec<String>>,
+        }
+        impl ScriptHost for Host {
+            fn eval_str(&self, script: &str) -> AppResult<()> {
+                self.seen.lock().unwrap().push(script.to_string());
+                Ok(())
+            }
+        }
+        let host = Host {
+            seen: Mutex::new(Vec::new()),
+        };
+        start(&host, &plan()).unwrap();
+        let seen = host.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].contains("__S3VIEWER_E2E_REPORT"));
+        assert!(
+            seen[0].contains("e2e_report"),
+            "the page must report back via IPC"
+        );
+    }
+
+    #[test]
+    fn start_propagates_host_failures() {
+        struct Failing;
+        impl ScriptHost for Failing {
+            fn eval_str(&self, _script: &str) -> AppResult<()> {
+                Err(crate::error::AppError::msg("eval unavailable"))
+            }
+        }
+        assert!(start(&Failing, &plan()).is_err());
+    }
+}

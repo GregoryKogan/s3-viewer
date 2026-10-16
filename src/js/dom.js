@@ -42,26 +42,56 @@ export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
 /**
- * Copy text to the clipboard, with a fallback for webviews that deny the async
- * clipboard API.
+ * Copy text to the clipboard.
+ *
+ * A webview often refuses `navigator.clipboard` when the window is not focused,
+ * so the native Tauri clipboard is tried first and the browser APIs are kept as
+ * fallbacks (they are what makes the UI usable in a plain browser during
+ * development).
  */
 export async function copyText(text) {
+  const native = await nativeClipboard(text);
+  if (native) return true;
   try {
     await navigator.clipboard.writeText(text);
     return true;
   } catch {
-    const area = el("textarea", { value: text, style: { position: "fixed", opacity: "0" } });
-    document.body.append(area);
-    area.select();
-    let ok = false;
-    try {
-      ok = document.execCommand("copy");
-    } catch {
-      ok = false;
-    }
-    area.remove();
-    return ok;
+    return legacyCopy(text);
   }
+}
+
+async function nativeClipboard(text) {
+  const globalWrite = globalThis.__TAURI__?.clipboardManager?.writeText;
+  if (typeof globalWrite === "function") {
+    try {
+      await globalWrite(text);
+      return true;
+    } catch {
+      /* fall through to the browser APIs */
+    }
+  }
+  try {
+    const mod = await import("@tauri-apps/plugin-clipboard-manager");
+    await mod.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function legacyCopy(text) {
+  const area = el("textarea", { value: text, style: { position: "fixed", opacity: "0" } });
+  document.body.append(area);
+  area.focus();
+  area.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  area.remove();
+  return ok;
 }
 
 /** Escape a string for safe interpolation into HTML. */

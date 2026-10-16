@@ -12,6 +12,9 @@
 !**/*secret*.ts
 !**/*secret*.js
 
+# --- build output (produced by `pnpm build:frontend` / tauri) ---
+dist/
+
 # --- rust / tauri ---
 target/
 src-tauri/target/

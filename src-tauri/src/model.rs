@@ -153,11 +153,16 @@ pub struct Capabilities {
     pub details: Vec<String>,
 }
 
+/// A stored connection plus what the app knows about it.
+///
+/// The connection is nested (not flattened) on purpose: the UI reads
+/// `view.connection.id`, and flattening would silently collide with the
+/// `capabilities` / `hasSecret` keys.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionView {
-    #[serde(flatten)]
     pub connection: Connection,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<Capabilities>,
     pub has_secret: bool,
 }

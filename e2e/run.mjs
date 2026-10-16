@@ -1,0 +1,239 @@
+// End-to-end acceptance run.
+//
+//   node e2e/run.mjs [--keep]
+//
+// Why the app drives itself: `tauri-driver` refuses to start on macOS because
+// WKWebView ships no WebDriver implementation, and clicking a real screen would
+// not test the app anyway. Instead the debug binary is launched with
+// S3VIEWER_E2E=1: the real window boots, a scripted scenario runs inside the real
+// webview against the real Rust backend and the real bucket, and the report is
+// written to a file. This runner seeds and cleans S3 and prints the report.
+//
+// Restraint: only the bucket named in creds.mjs is ever touched, and only under
+// the `_s3viewer-e2e/` prefix. Everything this run creates is deleted at the end,
+// even when checks fail.
+
+import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { S3 } from "./s3.mjs";
+import { devCreds, describeCreds, keyFor, E2E_PREFIX, ALLOWED_BUCKET } from "./creds.mjs";
+import { writeFixtures, SMALL_FILES } from "./fixtures.mjs";
+
+const root = path.resolve(import.meta.dirname, "..");
+// Two concurrent runs would delete each other's fixtures (they share one S3
+// prefix), so the suite refuses to start a second copy.
+const lockFile = path.join(os.tmpdir(), "s3viewer-e2e.lock");
+const args = process.argv.slice(2);
+const keep = args.includes("--keep");
+const timeoutSeconds = 420;
+
+let s3 = null;
+let workDir = null;
+
+const log = (message) => process.stdout.write(`${message}\n`);
+
+function acquireLock() {
+  try {
+    const existing = Number(fs.readFileSync(lockFile, "utf8").trim());
+    if (existing && existing !== process.pid) {
+      try {
+        process.kill(existing, 0); // throws when the process is gone
+        throw new Error(`another e2e run (pid ${existing}) is using the bucket prefix`);
+      } catch (error) {
+        if (String(error.message).includes("another e2e run")) throw error;
+      }
+    }
+  } catch (error) {
+    if (String(error.message).includes("another e2e run")) throw error;
+  }
+  fs.writeFileSync(lockFile, String(process.pid));
+}
+
+function releaseLock() {
+  try {
+    if (fs.readFileSync(lockFile, "utf8").trim() === String(process.pid)) fs.rmSync(lockFile, { force: true });
+  } catch {
+    /* nothing to release */
+  }
+}
+
+async function main() {
+  acquireLock();
+  const creds = devCreds();
+  log(`credentials: ${describeCreds(creds)}`);
+  if (creds.bucket !== ALLOWED_BUCKET) throw new Error(`refusing to run against ${creds.bucket}`);
+
+  s3 = new S3({
+    endpoint: creds.endpoint,
+    region: creds.region,
+    accessKey: creds.accessKey,
+    secretKey: creds.secretKey,
+    bucket: creds.bucket,
+  });
+
+  log(`\n▶ clean slate under ${E2E_PREFIX}`);
+  const stale = await s3.listAll(E2E_PREFIX);
+  if (stale.length) {
+    log(`  removed ${await s3.removePrefix(E2E_PREFIX)} leftover object(s) from a previous run`);
+  } else {
+    log("  the prefix is already empty");
+  }
+
+  const fixtureDir = writeFixtures();
+  log("\n▶ seed fixtures");
+  for (const name of SMALL_FILES) {
+    await s3.putFile(keyFor(name), path.join(fixtureDir, name), contentTypeFor(name));
+  }
+  await s3.putFile(keyFor("too-big.txt"), path.join(fixtureDir, "too-big.txt"), "text/plain");
+  log(`  uploaded ${SMALL_FILES.length + 1} fixture(s), including the oversized file`);
+
+  // A minified bundle keeps the webview fast; pass --debug to the build script
+  // by hand when a readable stack trace is needed.
+  log("\n▶ build the frontend");
+  const frontend = spawnSync("node", ["scripts/build-frontend.mjs"], {
+    cwd: root,
+    stdio: "inherit",
+  });
+  if (frontend.status !== 0) throw new Error("frontend build failed");
+
+  log("\n▶ build the app (debug)");
+  const built = spawnSync(
+    "cargo",
+    ["build", "--manifest-path", path.join(root, "src-tauri/Cargo.toml")],
+    {
+      cwd: root,
+      stdio: "inherit",
+      env: { ...process.env, PATH: `${os.homedir()}/.cargo/bin:${process.env.PATH}` },
+    },
+  );
+  if (built.status !== 0) throw new Error("cargo build failed");
+  const binary = path.join(root, "src-tauri/target/debug/s3viewer");
+  if (!fs.existsSync(binary)) throw new Error(`binary not found: ${binary}`);
+
+  workDir = fs.mkdtempSync(path.join(os.tmpdir(), "s3viewer-e2e-"));
+  const configDir = path.join(workDir, "config");
+  const downloadDir = path.join(workDir, "downloads");
+  const reportPath = path.join(workDir, "report.json");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.mkdirSync(downloadDir, { recursive: true });
+  log(`▶ work dir: ${workDir}`);
+
+  log("\n▶ run the in-app scenario");
+  const exitCode = await launch({
+    binary,
+    env: {
+      S3VIEWER_E2E: "1",
+      S3VIEWER_E2E_OUT: reportPath,
+      S3VIEWER_E2E_BUCKET: creds.bucket,
+      S3VIEWER_E2E_PREFIX: E2E_PREFIX,
+      S3VIEWER_E2E_ENDPOINT: creds.endpoint,
+      S3VIEWER_E2E_REGION: creds.region,
+      S3VIEWER_E2E_ACCESS_KEY: creds.accessKey,
+      S3VIEWER_E2E_SECRET_KEY: creds.secretKey,
+      S3VIEWER_E2E_DOWNLOAD_DIR: downloadDir,
+      // Isolated config: the run must not touch the user's real connections.
+      S3VIEWER_CONFIG_DIR: configDir,
+      // Deterministic master key: tests never touch the login keychain.
+      S3VIEWER_TEST_MASTER_KEY:
+        "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+    },
+  });
+
+  let report = null;
+  if (fs.existsSync(reportPath)) {
+    report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+    printReport(report, exitCode);
+  } else {
+    log(`\nFAIL: the app exited with code ${exitCode} and wrote no report`);
+  }
+
+  log(`\n▶ cleanup: removing everything under ${E2E_PREFIX}`);
+  log(`  removed ${await s3.removePrefix(E2E_PREFIX)} object(s)`);
+  const left = await s3.listAll(E2E_PREFIX);
+  if (left.length) {
+    log(`  FAIL: ${left.length} object(s) left behind: ${left.slice(0, 5).join(", ")}`);
+    process.exitCode = 1;
+  } else {
+    log("  the prefix is clean");
+  }
+
+  if (keep) log(`\n--keep: config and downloads kept in ${workDir}`);
+  else fs.rmSync(workDir, { recursive: true, force: true });
+
+  if (!report || !report.ok) process.exitCode = 1;
+}
+
+/** Launch the app and wait for it to exit on its own. */
+function launch({ binary, env }) {
+  return new Promise((resolve) => {
+    const child = spawn(binary, [], {
+      cwd: root,
+      env: { ...process.env, ...env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.stdout.on("data", (chunk) => process.stdout.write(`  [app] ${chunk}`));
+    child.stderr.on("data", (chunk) => process.stdout.write(`  [app] ${chunk}`));
+
+    const timer = setTimeout(() => {
+      process.stdout.write(`  [app] still running after ${timeoutSeconds}s — killing\n`);
+      child.kill("SIGKILL");
+    }, timeoutSeconds * 1000);
+
+    child.on("exit", (code, signal) => {
+      clearTimeout(timer);
+      if (signal) process.stdout.write(`  [app] killed by ${signal}\n`);
+      resolve(code ?? 1);
+    });
+  });
+}
+
+function printReport(report, exitCode) {
+  const checks = report.checks ?? [];
+  log("\n" + "=".repeat(72));
+  for (const check of checks) {
+    const mark = check.ok ? "PASS" : "FAIL";
+    const detail = check.detail
+      ? ` — ${String(check.detail).replace(/\s+/g, " ").slice(0, 420)}`
+      : "";
+    log(`[${mark}] ${check.name}${detail}`);
+    if (!check.ok && Array.isArray(check.stack)) {
+      for (const line of check.stack) log(`        ${line.trim()}`);
+    }
+  }
+  const failed = checks.filter((check) => !check.ok);
+  log("=".repeat(72));
+  log(
+    `e2e: ${checks.length - failed.length}/${checks.length} checks passed (app exit code ${exitCode})`,
+  );
+}
+
+function contentTypeFor(name) {
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".wav")) return "audio/wav";
+  if (name.endsWith(".svg")) return "image/svg+xml";
+  if (name.endsWith(".mp4")) return "video/mp4";
+  if (name.endsWith(".pdf")) return "application/pdf";
+  if (name.endsWith(".md")) return "text/markdown";
+  if (name.endsWith(".json")) return "application/json";
+  if (name.endsWith(".csv")) return "text/csv";
+  if (name.endsWith(".py")) return "text/x-python";
+  if (name.endsWith(".txt")) return "text/plain";
+  return "application/octet-stream";
+}
+
+main()
+  .finally(() => releaseLock())
+  .catch(async (error) => {
+  log(`\nFATAL: ${error.stack ?? error.message}`);
+  process.exitCode = 1;
+  if (s3) {
+    try {
+      log(`cleanup after failure: removed ${await s3.removePrefix(E2E_PREFIX)} object(s)`);
+    } catch (cleanupError) {
+      log(`cleanup also failed: ${cleanupError.message}`);
+    }
+  }
+});

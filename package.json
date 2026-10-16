@@ -7,12 +7,13 @@
   "type": "module",
   "scripts": {
     "build:frontend": "node scripts/build-frontend.mjs",
-    "dev": "pnpm build:frontend && cargo tauri dev --config src-tauri/tauri.conf.json",
-    "app:build": "pnpm build:frontend && cargo tauri build",
-    "app:build:debug": "pnpm build:frontend && cargo tauri build --debug",
+    "dev": "pnpm build:frontend && pnpm tauri dev",
+    "app:build": "pnpm build:frontend && pnpm tauri build",
+    "app:build:debug": "pnpm build:frontend && pnpm tauri build --debug",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:js": "node --test tests/js",
     "test:e2e": "node e2e/run.mjs",
-    "check": "pnpm build:frontend && cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml"
+    "check": "pnpm build:frontend && cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.1",
@@ -20,9 +21,7 @@
     "highlight.js": "^11.12.0",
     "marked": "^18.1.1"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
+  "dependencies": {
+    "@tauri-apps/plugin-clipboard-manager": "^2"
   }
 }

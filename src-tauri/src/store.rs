@@ -28,7 +28,8 @@ pub const CONFIG_VERSION: u32 = 1;
 pub struct AppSettings {
     /// Preview is refused above this size (bytes). Default 25 MiB.
     pub preview_max_bytes: u64,
-    /// Object listing is capped so a huge prefix cannot hang the UI.
+    /// Maximum number of *objects* listed per folder (folders are always
+    /// included, however many there are).
     pub list_page_limit: u32,
     /// Where downloads land. `None` -> the OS download directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,7 +51,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             preview_max_bytes: 25 * 1024 * 1024,
-            list_page_limit: 5000,
+            list_page_limit: 20_000,
             download_dir: None,
             show_system_objects: false,
             theme: Theme::Dark,

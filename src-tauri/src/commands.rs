@@ -348,8 +348,16 @@ pub fn list_objects(app: State<'_, Arc<AppCore>>, input: ListInput) -> CmdResult
     if !show_system {
         entries.retain(|e| !is_system_entry(e));
     }
-    if entries.len() > limit {
-        entries.truncate(limit);
+    if entries.iter().filter(|e| !e.is_folder).count() > limit {
+        // Keep every folder and only trim the file tail.
+        let mut kept = 0usize;
+        entries.retain(|entry| {
+            if entry.is_folder {
+                return true;
+            }
+            kept += 1;
+            kept <= limit
+        });
         truncated = true;
     }
     Ok(ListResult {
@@ -553,22 +561,30 @@ pub fn upload_files(
     input: UploadInput,
 ) -> CmdResult<Vec<UploadPlanItem>> {
     let ctx = Ctx(&app);
-    let core = ctx.core();
-    let conn = core.connection(&input.connection_id).map_err(err)?;
+    upload_files_impl(ctx.core(), input).map_err(err)
+}
+
+/// Implementation shared by the command and the e2e hooks: validates the
+/// connection, builds the upload plan and spawns the transfer.
+pub fn upload_files_impl(
+    core: &AppCore,
+    input: UploadInput,
+) -> crate::error::AppResult<Vec<UploadPlanItem>> {
+    let conn = core.connection(&input.connection_id)?;
     if conn.security.read_only_mode {
-        return Err(err(AppError::invalid(
+        return Err(AppError::invalid(
             "this connection is in read-only mode (connection settings)",
-        )));
+        ));
     }
     // Capabilities may be unknown; only block on an explicit, probed denial.
     if let Some(caps) = core.read(|store| store.capabilities(&input.connection_id)) {
         if caps.probed && !caps.can_write {
-            return Err(err(AppError::invalid(
+            return Err(AppError::invalid(
                 "credentials for this connection cannot write (detected). Adjust the connection or reconnect.",
-            )));
+            ));
         }
     }
-    let store = core.client(&input.connection_id).map_err(err)?;
+    let store = core.client(&input.connection_id)?;
     let prefix = as_folder_prefix(&input.prefix);
     let mut plan = Vec::new();
     for local in &input.local_paths {
@@ -576,7 +592,7 @@ pub fn upload_files(
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
-            .ok_or_else(|| err(AppError::invalid(format!("bad local path: {local}"))))?;
+            .ok_or_else(|| AppError::invalid(format!("bad local path: {local}")))?;
         plan.push(UploadPlanItem {
             id: uuid::Uuid::new_v4().to_string(),
             local_path: local.clone(),
@@ -659,15 +675,18 @@ fn ensure_writable(core: &AppCore, connection_id: &str) -> CmdResult<()> {
 #[tauri::command]
 pub fn transfer_progress(app: State<'_, Arc<AppCore>>) -> Vec<ProgressView> {
     let ctx = Ctx(&app);
-    let core = ctx.core();
-    let all = core.progress.all();
-    if all
-        .iter()
-        .all(|p| p.state != crate::model::ProgressState::Running)
-    {
-        core.progress.prune_finished();
-    }
-    all
+    // Finished entries are kept until the user clears them (or the app exits):
+    // pruning here would race with a poll that is waiting for a result.
+    ctx.core().progress.all()
+}
+
+/// Drops every finished transfer from the tracker and reports how many went.
+#[tauri::command]
+pub fn clear_transfers(app: State<'_, Arc<AppCore>>) -> usize {
+    let ctx = Ctx(&app);
+    let before = ctx.core().progress.all().len();
+    ctx.core().progress.prune_finished();
+    before - ctx.core().progress.all().len()
 }
 
 // ------------------------------------------------------------------- mutation
@@ -763,13 +782,15 @@ pub fn delete_objects(
     }
     let store = core.client(&input.connection_id).map_err(err)?;
 
-    // Expand folders into every key underneath, so deleting a folder actually
-    // removes its contents (S3 has no real folders).
+    // Expand folders into every key underneath *and the folder marker itself*.
+    // S3 has no real folders, so a folder is a key ending in `/`; leaving the
+    // marker behind would make the folder reappear right after being deleted.
     let mut keys: Vec<String> = Vec::new();
     let mut folders = 0usize;
     for key in &input.keys {
         if key.ends_with('/') {
             folders += 1;
+            keys.push(key.clone());
             let nested = core
                 .fetch
                 .run(objects::list_all_keys(&store, key))
