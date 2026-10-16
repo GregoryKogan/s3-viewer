@@ -160,7 +160,7 @@ Three layers, all runnable locally:
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml     # 80 tests: crypto, store, S3, SigV2, previews
-pnpm test:js                                        # 12 tests: formatting, CSV parsing
+pnpm test:js                                        # 17 tests: formatting, CSV parsing, boto3 snippet
 node e2e/run.mjs                                    # 33 checks against a real bucket
 ```
 
