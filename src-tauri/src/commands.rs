@@ -139,6 +139,8 @@ pub fn duplicate_connection(app: State<'_, Arc<AppCore>>, id: String) -> CmdResu
         addressing_style: Some(conn.addressing_style),
         signature_version: Some(conn.signature_version),
         payload_signing_enabled: Some(conn.payload_signing_enabled),
+        request_checksum_calculation: Some(conn.request_checksum_calculation),
+        response_checksum_validation: Some(conn.response_checksum_validation),
         security: Some(conn.security.clone()),
     };
     core.upsert_connection(input).map_err(err)
@@ -179,6 +181,10 @@ pub struct ConnectionDraft {
     pub addressing_style: Option<crate::model::AddressingStyle>,
     #[serde(default)]
     pub signature_version: Option<crate::model::SignatureVersion>,
+    #[serde(default)]
+    pub request_checksum_calculation: Option<crate::model::ChecksumCalculation>,
+    #[serde(default)]
+    pub response_checksum_validation: Option<crate::model::ChecksumValidation>,
 }
 
 #[derive(Serialize)]
@@ -241,6 +247,14 @@ impl Ctx<'_> {
                     .or_else(|| existing.as_ref().map(|c| c.signature_version))
                     .unwrap_or_default(),
                 payload_signing_enabled: false,
+                request_checksum_calculation: draft
+                    .request_checksum_calculation
+                    .or_else(|| existing.as_ref().map(|c| c.request_checksum_calculation))
+                    .unwrap_or_default(),
+                response_checksum_validation: draft
+                    .response_checksum_validation
+                    .or_else(|| existing.as_ref().map(|c| c.response_checksum_validation))
+                    .unwrap_or_default(),
                 use_path_style_for_list: true,
                 security: Default::default(),
                 last_used_at: None,

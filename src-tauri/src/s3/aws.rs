@@ -9,7 +9,9 @@ use super::{
     guess_content_type, kind::detect_kind, ByteRange, ObjectMeta, ObjectStore, ObjectStream, Page,
 };
 use crate::error::{AppError, AppResult};
-use crate::model::{AddressingStyle, Connection, ObjectEntry, StaticCreds};
+use crate::model::{
+    AddressingStyle, ChecksumCalculation, ChecksumValidation, Connection, ObjectEntry, StaticCreds,
+};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::config::Region;
 use aws_sdk_s3::error::ProvideErrorMetadata;
@@ -46,6 +48,25 @@ impl AwsStore {
             .region(Region::new(conn.region.clone()))
             .endpoint_url(conn.endpoint_url.clone())
             .force_path_style(force_path_style)
+            // Mirror botocore's two checksum switches. They are the difference
+            // between working and not working against some S3-compatible
+            // deployments, so they must be settable per connection.
+            .request_checksum_calculation(match conn.request_checksum_calculation {
+                ChecksumCalculation::WhenSupported => {
+                    aws_sdk_s3::config::RequestChecksumCalculation::WhenSupported
+                }
+                ChecksumCalculation::WhenRequired => {
+                    aws_sdk_s3::config::RequestChecksumCalculation::WhenRequired
+                }
+            })
+            .response_checksum_validation(match conn.response_checksum_validation {
+                ChecksumValidation::WhenSupported => {
+                    aws_sdk_s3::config::ResponseChecksumValidation::WhenSupported
+                }
+                ChecksumValidation::WhenRequired => {
+                    aws_sdk_s3::config::ResponseChecksumValidation::WhenRequired
+                }
+            })
             .build();
         AwsStore {
             client: Client::from_conf(cfg),

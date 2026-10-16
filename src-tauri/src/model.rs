@@ -61,6 +61,32 @@ fn default_auto_probe() -> bool {
     true
 }
 
+/// botocore: `Config(request_checksum_calculation=...)`.
+///
+/// Some S3-compatible deployments reject or mishandle the checksum headers newer
+/// AWS SDKs and botocore add by default; switching this to `whenRequired` is the
+/// documented workaround.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ChecksumCalculation {
+    /// Add a checksum whenever the operation supports one (the AWS default).
+    #[default]
+    WhenSupported,
+    /// Add a checksum only when the operation requires one.
+    WhenRequired,
+}
+
+/// botocore: `Config(response_checksum_validation=...)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ChecksumValidation {
+    /// Validate response checksums whenever the operation supports one.
+    #[default]
+    WhenSupported,
+    /// Validate only when the operation explicitly opts in.
+    WhenRequired,
+}
+
 /// Per-connection security switches. Read-only connections still get
 /// destructive-action guards; these only control whether the UI asks first.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +151,12 @@ pub struct Connection {
     pub payload_signing_enabled: bool,
     /// boto3 `Config(s3={"use_accelerate_endpoint": ...})` is intentionally absent:
     /// this client targets S3-compatible object storage, not AWS-only acceleration.
+    /// boto3 `Config(request_checksum_calculation=...)`
+    #[serde(default)]
+    pub request_checksum_calculation: ChecksumCalculation,
+    /// boto3 `Config(response_checksum_validation=...)`
+    #[serde(default)]
+    pub response_checksum_validation: ChecksumValidation,
     /// boto3 `Config(s3={"us_east_1_regional_endpoint": "regional"})` equivalent:
     #[serde(default = "default_true")]
     pub use_path_style_for_list: bool,

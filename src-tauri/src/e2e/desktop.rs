@@ -229,6 +229,8 @@ pub fn e2e_setup(core: tauri::State<'_, Arc<AppCore>>) -> Result<String, String>
         addressing_style: Some(AddressingStyle::Virtual),
         signature_version: Some(SignatureVersion::S3v4),
         payload_signing_enabled: Some(false),
+        request_checksum_calculation: None,
+        response_checksum_validation: None,
         // The scenario asserts the capability badge, so probing happens here
         // explicitly instead of on connect.
         security: Some(SecuritySettings {
@@ -403,6 +405,8 @@ pub fn e2e_readonly_check(
             addressing_style: Some(AddressingStyle::Virtual),
             signature_version: Some(SignatureVersion::S3v4),
             payload_signing_enabled: Some(false),
+            request_checksum_calculation: None,
+            response_checksum_validation: None,
             security: Some(SecuritySettings {
                 read_only_mode: true,
                 ..Default::default()

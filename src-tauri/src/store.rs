@@ -124,6 +124,10 @@ pub struct ConnectionInput {
     #[serde(default)]
     pub payload_signing_enabled: Option<bool>,
     #[serde(default)]
+    pub request_checksum_calculation: Option<crate::model::ChecksumCalculation>,
+    #[serde(default)]
+    pub response_checksum_validation: Option<crate::model::ChecksumValidation>,
+    #[serde(default)]
     pub security: Option<crate::model::SecuritySettings>,
 }
 
@@ -352,6 +356,14 @@ impl Store {
                 .payload_signing_enabled
                 .or_else(|| existing.as_ref().map(|c| c.payload_signing_enabled))
                 .unwrap_or(false),
+            request_checksum_calculation: input
+                .request_checksum_calculation
+                .or_else(|| existing.as_ref().map(|c| c.request_checksum_calculation))
+                .unwrap_or_default(),
+            response_checksum_validation: input
+                .response_checksum_validation
+                .or_else(|| existing.as_ref().map(|c| c.response_checksum_validation))
+                .unwrap_or_default(),
             use_path_style_for_list: existing
                 .as_ref()
                 .map(|c| c.use_path_style_for_list)
@@ -534,6 +546,8 @@ mod tests {
             addressing_style: Some(AddressingStyle::Virtual),
             signature_version: Some(SignatureVersion::S3v4),
             payload_signing_enabled: Some(false),
+            request_checksum_calculation: None,
+            response_checksum_validation: None,
             security: None,
         }
     }
