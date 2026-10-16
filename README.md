@@ -1,1 +1,201 @@
-# s3-viewer
+# S3 Viewer
+
+A focused desktop client for S3-compatible object storage: one connection list, one
+object browser, and a preview panel that shows you what is actually inside a file
+before you download it.
+
+Built for people whose buckets already work from boto3 and who are tired of
+clients that either cannot express their endpoint settings or drown them in
+features for storage backends they will never use.
+
+- **S3 only.** No FTP, no WebDAV, no SMB, no cloud-drive zoo.
+- **boto3-shaped settings.** Every connection field maps one-to-one onto a
+  `boto3.client("s3", ...)` call, and the form shows the equivalent snippet as you
+  type, so a working Python client can be transcribed by hand and will work.
+- **Preview first.** Images, audio, video and PDFs render in a side panel without
+  being downloaded; text, Markdown, JSON, CSV and code open rendered or
+  highlighted. When a preview is refused you get the reason, not a blank pane.
+- **Credentials stay local and encrypted.** See [Security](#security).
+- macOS (`.dmg`) and Linux (`.deb`, AppImage).
+
+## What it does
+
+**Connections.** Each saved connection pins one endpoint, one bucket and one
+prefix. Several connections can point at the same bucket with different prefixes,
+which is how most teams actually work. Connections can be edited at any time, and
+the ones you used most recently float to the top.
+
+On the first successful contact the app probes what your credentials may actually
+do — list, read, write, delete — and shows the result as a badge. The probe writes
+one uniquely named object and deletes it immediately; nothing of yours is touched.
+The write/delete part can be switched off per connection if your policy forbids
+even that.
+
+**Browsing.** A Finder-style list with breadcrumbs, sorting, filtering,
+multi-select, shift-click ranges and keyboard navigation (`↑`/`↓`, `Enter` to
+open, `Backspace` to go up, `⌘R` refresh, `⌘U` upload, `⌘N` new connection). The
+breadcrumb root is the root *of the connection*, so you cannot wander out of the
+prefix a connection was set up for.
+
+**Operations.** Upload (button or drag & drop), download with progress, create
+folder, create file, delete (folders recursively), copy and move — including
+between two saved connections. Downloads go to your Downloads folder under a
+non-colliding name; the transfer panel offers Open and Reveal.
+
+**Safety switches, per connection.** Read-only mode, "ask before deleting", "ask
+before overwriting", and the permission probe itself. On a scratch bucket you can
+turn the confirmations off; on anything that matters you can leave them on.
+
+**Import.** Paste the JSON credentials file you already have, or a boto3 snippet
+straight out of your code, and the app creates the connections for you.
+
+## Connection settings
+
+The editor is deliberately a thin skin over boto3:
+
+| App field | boto3 |
+| --- | --- |
+| Endpoint URL | `endpoint_url=` |
+| Region | `region_name=` |
+| Access key ID | `aws_access_key_id=` |
+| Secret access key | `aws_secret_access_key=` |
+| Session token | `aws_session_token=` |
+| Bucket | `Bucket=` (ListObjectsV2, PutObject, …) |
+| Prefix | `Prefix=` |
+| Addressing style | `Config(s3={"addressing_style": …})` |
+| Signature version | `Config(signature_version=…)` |
+
+Two notes that come up in practice:
+
+- **Addressing style.** Many S3-compatible deployments require virtual-host
+  addressing and answer path-style requests with `VirtualHostDomainRequired`. The
+  default is `virtual`; switch to `path` for providers that demand the bucket in
+  the URL path. The error itself carries a hint when this is the problem.
+- **Signature version.** `s3v4` (the boto3 default) and `v4` use the AWS SDK for
+  Rust. `s3v2`, the legacy HmacSHA1 scheme that some appliances still require, is
+  implemented in this repository because the AWS SDK no longer speaks it — see
+  `src-tauri/src/sigv2.rs`.
+
+## Preview support
+
+Previews never download a whole file just to decide whether they can show it: the
+app fetches at most 512 KB to classify the content, and media streams through a
+custom `s3stream://` protocol that supports HTTP ranges, so a 4 GB video starts
+playing immediately and seeking works.
+
+| Content | Behaviour |
+| --- | --- |
+| PNG, JPEG, GIF, WebP, BMP, ICO, AVIF, SVG | rendered inline |
+| MP3, WAV, OGG, Opus, M4A, AAC, FLAC | player inline, seeking works |
+| MP4, WebM, MOV, MKV | player inline, seeking works |
+| PDF | embedded viewer |
+| Markdown | rendered, with a **Rendered / Raw** switch |
+| JSON, JSONL | pretty-printed and highlighted |
+| CSV, TSV | parsed into a table (quotes and embedded newlines handled) |
+| code (Python, JS/TS, Rust, Go, Java, C/C++, YAML, TOML, SQL, shell, XML, CSS, …) | syntax highlighted |
+| plain text | shown as-is, UTF-8 |
+| everything else | refused with an explicit reason and a Download button |
+
+Anything above the size limit is refused with a message naming the file size and
+the current limit. The limit lives in Settings (default 25 MB, applied to
+non-media previews; media streams in ranges regardless).
+
+Markdown is rendered through `marked` and then sanitised by a small allow-list
+walker in `src/js/preview.js`: unknown tags are unwrapped, `script`/`iframe`/
+`object`/`embed`/`form` never survive, `on*` attributes are dropped and
+`javascript:` URLs are stripped. There is an end-to-end check for exactly this.
+
+## Security
+
+- Secret access keys and session tokens are **never written to disk in
+  cleartext**. Each is sealed with XChaCha20-Poly1305 under a random 32-byte
+  master key.
+- The master key lives in the OS keychain (macOS Keychain, Linux Secret Service).
+  If no keychain is reachable it falls back to a `0600` file inside the config
+  directory, and Settings says so explicitly rather than pretending otherwise.
+- The config file is written `0600` inside a `0700` directory, atomically (write
+  to a temporary file, then rename), and a corrupt file is backed up instead of
+  being silently discarded.
+- The app never logs secrets. `crypto::redact` exists so diagnostics can be shared
+  safely.
+- No telemetry, and no network calls other than the S3 endpoint you configure.
+
+Config location:
+
+- macOS: `~/Library/Application Support/dev.s3viewer.app/config.json`
+- Linux: `${XDG_CONFIG_HOME:-~/.config}/dev.s3viewer.app/config.json`
+
+Override it with `S3VIEWER_CONFIG_DIR` (handy for tests).
+
+## Building
+
+Requirements: Rust (stable), Node.js with pnpm, and the platform toolchain.
+
+```bash
+pnpm install
+pnpm build:frontend     # bundles src/ into dist/
+pnpm tauri dev          # run in development
+pnpm tauri build        # package for the current platform
+```
+
+Outputs land in `src-tauri/target/release/bundle/`:
+
+- macOS: `dmg/S3 Viewer_<version>_<arch>.dmg` and `macos/S3 Viewer.app`
+- Linux: `deb/` and `appimage/`
+
+The builds are unsigned. On macOS Gatekeeper warns on first launch (right-click →
+Open, or `xattr -dr com.apple.quarantine`). To sign properly, add a Developer ID
+and notarisation to `src-tauri/tauri.conf.json`.
+
+Linux packages are built by `.github/workflows/release.yml` on `ubuntu-22.04`,
+which is the practical baseline for a `.deb` users can install.
+
+## Testing
+
+Three layers, all runnable locally:
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml     # 80 tests: crypto, store, S3, SigV2, previews
+pnpm test:js                                        # 12 tests: formatting, CSV parsing
+node e2e/run.mjs                                    # 33 checks against a real bucket
+```
+
+### The end-to-end suite
+
+`tauri-driver` cannot drive the app on macOS: WKWebView ships no WebDriver
+implementation, so it refuses to start. Rather than fake the window, the app hosts
+the test itself — with `S3VIEWER_E2E=1` the real window boots, a scripted scenario
+runs inside the real webview against the real Rust backend and a real bucket, and
+the report is written to `$S3VIEWER_E2E_OUT`. Partial reports are published after
+every check, so a hang names the check that hung.
+
+`node e2e/run.mjs` seeds a disposable prefix, builds, launches, prints the report
+and **always** deletes everything it created — including after a failure. A lock
+file stops two concurrent runs from deleting each other's fixtures.
+
+Credentials come from `~/.secrets/s3/s3-creds.json` or from `S3VIEWER_TEST_*`
+environment variables. The suite is hard-wired to a single bucket (`e2e/creds.mjs`)
+and refuses to run against anything else.
+
+## Architecture
+
+```
+src/                     webview UI (no framework)
+  app.js                 entry point
+  js/app.js              state, rendering, every interaction
+  js/preview.js          preview renderers, Markdown sanitiser, CSV parser
+  js/connection-form.js  the boto3-shaped editor and its generated snippet
+  js/import.js           credential / snippet import
+src-tauri/src/
+  s3/aws.rs              ObjectStore over the AWS SDK (SigV4)
+  s3/v2.rs               ObjectStore for the legacy SigV2 scheme
+  sigv2.rs               the V2 canonical string and HmacSHA1 signature
+  preview.rs             the preview policy: what is shown, and why not
+  commands.rs            the Tauri command surface
+  store.rs, crypto.rs    connections and sealed secrets
+  e2e/                   the self-hosted end-to-end harness
+```
+
+The `ObjectStore` trait has two implementations, selected by the connection's
+signature version. Because `async fn` in traits is not dyn-compatible, dispatch
+goes through a small `AnyStore` enum rather than trait objects.

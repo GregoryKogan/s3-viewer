@@ -30,6 +30,7 @@ pnpm-lock.yaml.bak
 
 # --- test artifacts ---
 test-results/
+s3viewer-e2e.lock
 playwright-report/
 e2e/artifacts/
 e2e/fixtures/generated/
