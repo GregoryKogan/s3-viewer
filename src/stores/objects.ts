@@ -1,0 +1,333 @@
+import { defineStore } from "pinia";
+import { computed, ref, shallowRef } from "vue";
+import { api } from "@/lib/ipc";
+import { asFolderPrefix } from "@/lib/keys";
+import { useConnectionsStore } from "@/stores/connections";
+import { useUiStore } from "@/stores/ui";
+import { useToastsStore } from "@/stores/toasts";
+import type {
+  ListingDoneEvent,
+  ListingErrorEvent,
+  ListingPageEvent,
+  ObjectEntry,
+  PreviewData,
+  ProgressView,
+} from "@/types";
+
+export type SortKey = "name" | "size" | "modified" | "kind";
+
+/**
+ * One browsing session: the folder on screen, its objects, the selection, and the
+ * preview. Listings stream in, so `entries` is only replaced when a folder has
+ * finished loading — never partially, which previously let a cancelled load show
+ * an empty folder as fact.
+ */
+export const useObjectsStore = defineStore("objects", () => {
+  const prefix = ref("");
+  const entries = ref<ObjectEntry[]>([]);
+  const loading = ref(false);
+  const awaitingFirstPage = ref(false);
+  const truncated = ref(false);
+  const warning = ref<string | null>(null);
+  const error = ref<string | null>(null);
+
+  const selected = ref(new Set<string>());
+  const filter = ref("");
+  const sortKey = ref<SortKey>("name");
+  const sortAscending = ref(true);
+
+  const preview = shallowRef<PreviewData | null>(null);
+  const previewKey = ref<string | null>(null);
+  const previewLoading = ref(false);
+  const previewError = ref<string | null>(null);
+  const previewUnavailable = ref<string | null>(null);
+  const previewView = ref<"rendered" | "raw">("rendered");
+
+  const open = computed(() => prefix.value !== "" || entries.value.length > 0 || loading.value);
+
+  /** Monotonic ids so stale async work cannot write to the screen. */
+  let listingRequest = 0;
+  let previewRequest = 0;
+  let staged: ObjectEntry[] = [];
+
+  // ------------------------------------------------------------------ listing
+
+  async function loadFolder(targetPrefix: string) {
+    const connections = useConnectionsStore();
+    const connection = connections.active;
+    if (!connection) return;
+
+    prefix.value = asFolderPrefix(targetPrefix);
+    entries.value = [];
+    staged = [];
+    selected.value.clear();
+    filter.value = "";
+    loading.value = true;
+    awaitingFirstPage.value = true;
+    error.value = null;
+    warning.value = null;
+    truncated.value = false;
+
+    const requestId = String(++listingRequest);
+
+    const guard = setTimeout(() => {
+      if (String(listingRequest) === requestId && loading.value) {
+        loading.value = false;
+        awaitingFirstPage.value = false;
+        error.value = "The listing took too long to finish.";
+        useToastsStore().warn("The listing stalled. Press refresh to try again.", "Listing stalled");
+      }
+    }, 120_000);
+
+    try {
+      await api.listObjectsStream({ connectionId: connection.id, prefix: prefix.value, requestId });
+    } catch (failure) {
+      if (String(listingRequest) === requestId) {
+        loading.value = false;
+        awaitingFirstPage.value = false;
+        error.value = (failure as Error).message;
+        useToastsStore().error((failure as Error).message, "Cannot list this folder");
+      }
+    } finally {
+      clearTimeout(guard);
+    }
+  }
+
+  /** Reload the folder currently on screen. */
+  function reload() {
+    return loadFolder(prefix.value);
+  }
+
+  /** Re-open the session after a connection was edited. */
+  function reloadSession() {
+    const connection = useConnectionsStore().active;
+    if (!connection) return Promise.resolve();
+    return loadFolder(connection.prefix ?? "");
+  }
+
+  function onListingPage(event: ListingPageEvent) {
+    if (event.requestId !== String(listingRequest)) return;
+    if (!useConnectionsStore().active) return;
+    if (event.entries?.length) {
+      staged.push(...event.entries);
+    }
+  }
+
+  function onListingDone(event: ListingDoneEvent) {
+    if (event.requestId !== String(listingRequest)) return;
+    entries.value = staged;
+    staged = [];
+    loading.value = false;
+    awaitingFirstPage.value = false;
+    truncated.value = event.truncated;
+    warning.value = event.warning ?? null;
+    prefix.value = event.prefix ?? prefix.value;
+    selected.value.clear();
+  }
+
+  function onListingError(event: ListingErrorEvent) {
+    if (event.requestId !== String(listingRequest)) return;
+    staged = [];
+    loading.value = false;
+    awaitingFirstPage.value = false;
+    error.value = event.error?.message ?? "listing failed";
+    useToastsStore().error(event.error?.message ?? "listing failed", "Cannot list this folder");
+  }
+
+  async function navigate(targetPrefix: string) {
+    clearPreview();
+    await loadFolder(targetPrefix);
+  }
+
+  function navigateUp() {
+    if (!prefix.value) return Promise.resolve();
+    const parts = prefix.value.replace(/\/$/, "").split("/");
+    parts.pop();
+    return navigate(parts.length ? `${parts.join("/")}/` : "");
+  }
+
+  function close() {
+    listingRequest += 1;
+    prefix.value = "";
+    entries.value = [];
+    staged = [];
+    selected.value.clear();
+    loading.value = false;
+    awaitingFirstPage.value = false;
+    truncated.value = false;
+    warning.value = null;
+    error.value = null;
+    clearPreview();
+  }
+
+  // ---------------------------------------------------------------- selection
+
+  const visibleEntries = computed(() => {
+    const needle = filter.value.trim().toLowerCase();
+    const matched = needle
+      ? entries.value.filter((entry) => entry.name.toLowerCase().includes(needle))
+      : entries.value.slice();
+
+    const direction = sortAscending.value ? 1 : -1;
+    const key = sortKey.value;
+    matched.sort((a, b) => {
+      // Folders always come first: a folder list that mixes files in is unusable.
+      if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+      switch (key) {
+        case "size":
+          return (a.size - b.size) * direction;
+        case "modified":
+          return String(a.lastModified ?? "").localeCompare(String(b.lastModified ?? "")) * direction;
+        case "kind":
+          return a.kind.localeCompare(b.kind) * direction;
+        default:
+          return a.name.localeCompare(b.name, undefined, { numeric: true }) * direction;
+      }
+    });
+    return matched;
+  });
+
+  function setSort(key: SortKey) {
+    if (sortKey.value === key) {
+      sortAscending.value = !sortAscending.value;
+    } else {
+      sortKey.value = key;
+      sortAscending.value = key === "name";
+    }
+  }
+
+  function toggleSelected(key: string) {
+    const next = new Set(selected.value);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    selected.value = next;
+  }
+
+  function selectOnly(key: string, extend = false) {
+    const list = visibleEntries.value;
+    if (extend && selected.value.size) {
+      const anchor = [...selected.value][selected.value.size - 1];
+      const from = list.findIndex((entry) => entry.key === anchor);
+      const to = list.findIndex((entry) => entry.key === key);
+      if (from !== -1 && to !== -1) {
+        const next = new Set(selected.value);
+        const [lo, hi] = [from, to].sort((a, b) => a - b);
+        for (let index = lo; index <= hi; index += 1) next.add(list[index].key);
+        selected.value = next;
+        return;
+      }
+    }
+    selected.value = new Set([key]);
+  }
+
+  function selectAll(keys: string[]) {
+    selected.value = new Set(keys);
+  }
+
+  function clearSelection() {
+    selected.value = new Set();
+  }
+
+  const selectedEntries = computed(() =>
+    entries.value.filter((entry) => selected.value.has(entry.key)),
+  );
+
+  // ------------------------------------------------------------------ preview
+
+  function clearPreview() {
+    previewRequest += 1;
+    preview.value = null;
+    previewKey.value = null;
+    previewLoading.value = false;
+    previewError.value = null;
+    previewUnavailable.value = null;
+    previewView.value = "rendered";
+  }
+
+  async function previewEntry(entry: ObjectEntry, { force = false } = {}) {
+    if (entry.isFolder) {
+      clearPreview();
+      previewKey.value = entry.key;
+      previewUnavailable.value = "This is a folder, not a file.";
+      return;
+    }
+
+    const sameObject = previewKey.value === entry.key;
+    if (!force && sameObject && !previewLoading.value) return;
+
+    const request = ++previewRequest;
+    previewKey.value = entry.key;
+    previewLoading.value = true;
+    preview.value = null;
+    previewError.value = null;
+    previewUnavailable.value = null;
+    if (!sameObject) previewView.value = "rendered";
+
+    const connection = useConnectionsStore().active;
+    if (!connection) return;
+
+    let data: PreviewData | null = null;
+    let failure: string | null = null;
+    try {
+      data = await api.getPreview({ connectionId: connection.id, key: entry.key });
+    } catch (caught) {
+      failure = (caught as Error).message;
+    }
+
+    // A newer click wins; this response is stale.
+    if (request !== previewRequest || previewKey.value !== entry.key) return;
+
+    previewLoading.value = false;
+    if (failure) {
+      previewError.value = failure;
+      return;
+    }
+    preview.value = data;
+    previewUnavailable.value = data?.unavailableReason ?? null;
+  }
+
+  /** Re-render the current preview with a different view (Markdown raw/rendered). */
+  function setPreviewView(view: "rendered" | "raw") {
+    previewView.value = view;
+  }
+
+  return {
+    prefix,
+    entries,
+    loading,
+    awaitingFirstPage,
+    truncated,
+    warning,
+    error,
+    selected,
+    filter,
+    sortKey,
+    sortAscending,
+    preview,
+    previewKey,
+    previewLoading,
+    previewError,
+    previewUnavailable,
+    previewView,
+    open,
+    visibleEntries,
+    selectedEntries,
+    loadFolder,
+    reload,
+    reloadSession,
+    onListingPage,
+    onListingDone,
+    onListingError,
+    navigate,
+    navigateUp,
+    close,
+    setSort,
+    toggleSelected,
+    selectOnly,
+    selectAll,
+    clearSelection,
+    clearPreview,
+    previewEntry,
+    setPreviewView,
+  };
+});

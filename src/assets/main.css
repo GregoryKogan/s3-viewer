@@ -1,0 +1,371 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ theme
+   Semantic tokens rather than raw palette names, so components never mention a
+   colour value and both themes are defined in exactly one place. */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --c-bg: #0f1115;
+  --c-surface: #161920;
+  --c-surface-2: #1b1f27;
+  --c-elevated: #1e222b;
+  --c-inset: #0c0e12;
+  --c-hover: #232833;
+  --c-active: #2c323f;
+  --c-border: #262b35;
+  --c-border-strong: #363d4b;
+  --c-text: #e7e9ee;
+  --c-text-muted: #949cab;
+  --c-text-subtle: #6b7382;
+  --c-accent: #3b82f6;
+  --c-accent-hover: #2f74e6;
+  --c-accent-soft: #1d2a44;
+  --c-danger: #e5484d;
+  --c-danger-soft: #2a1a1c;
+  --c-ok: #3fb950;
+  --c-warn: #d29922;
+
+  --hl-keyword: #ff7b72;
+  --hl-string: #a5d6ff;
+  --hl-number: #79c0ff;
+  --hl-comment: #8b949e;
+  --hl-function: #d2a8ff;
+  --hl-type: #7ee787;
+  --hl-attr: #ffa657;
+  --hl-operator: #ff7b72;
+  --hl-builtin: #ffa657;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --c-bg: #f7f8fa;
+  --c-surface: #ffffff;
+  --c-surface-2: #f2f4f7;
+  --c-elevated: #ffffff;
+  --c-inset: #eef0f4;
+  --c-hover: #e9ecf1;
+  --c-active: #dde2ea;
+  --c-border: #e0e4ea;
+  --c-border-strong: #c8cfda;
+  --c-text: #151922;
+  --c-text-muted: #5d6675;
+  --c-text-subtle: #8b94a3;
+  --c-accent: #2563eb;
+  --c-accent-hover: #1d4ed8;
+  --c-accent-soft: #dbe6ff;
+  --c-danger: #dc2626;
+  --c-danger-soft: #fdeaea;
+  --c-ok: #16a34a;
+  --c-warn: #b45309;
+
+  --hl-keyword: #cf222e;
+  --hl-string: #0a3069;
+  --hl-number: #0550ae;
+  --hl-comment: #6e7781;
+  --hl-function: #8250df;
+  --hl-type: #116329;
+  --hl-attr: #953800;
+  --hl-operator: #cf222e;
+  --hl-builtin: #953800;
+}
+
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-elevated: var(--c-elevated);
+  --color-inset: var(--c-inset);
+  --color-hover: var(--c-hover);
+  --color-active: var(--c-active);
+  --color-line: var(--c-border);
+  --color-line-strong: var(--c-border-strong);
+  --color-content: var(--c-text);
+  --color-muted: var(--c-text-muted);
+  --color-subtle: var(--c-text-subtle);
+  --color-accent: var(--c-accent);
+  --color-accent-hover: var(--c-accent-hover);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-danger: var(--c-danger);
+  --color-danger-soft: var(--c-danger-soft);
+  --color-ok: var(--c-ok);
+  --color-warn: var(--c-warn);
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Ubuntu,
+    "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --radius-panel: 0.625rem;
+  --radius-control: 0.375rem;
+
+  --spacing-row: var(--row-height);
+}
+
+/* -------------------------------------------------------------------- base */
+
+@layer base {
+  :root {
+    --row-height: 1.875rem;
+    --sidebar-width: 16.5rem;
+    --preview-width: 26rem;
+    --titlebar-height: 1.875rem;
+  }
+
+  * {
+    min-width: 0;
+  }
+
+  html,
+  body,
+  #app {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  body {
+    background-color: var(--c-bg);
+    color: var(--c-text);
+    font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 1px;
+    border-radius: 3px;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--c-accent) 35%, transparent);
+  }
+}
+
+/* ------------------------------------------------------------- scrollbars */
+
+@layer utilities {
+  .scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: var(--c-border-strong) transparent;
+  }
+
+  .scrollbar::-webkit-scrollbar {
+    width: 0.625rem;
+    height: 0.625rem;
+  }
+
+  .scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar::-webkit-scrollbar-thumb {
+    background: var(--c-border-strong);
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+  }
+
+  .scrollbar::-webkit-scrollbar-thumb:hover {
+    background: var(--c-text-subtle);
+    background-clip: content-box;
+  }
+
+  /* The window is dragged from the title strip and nowhere else, so controls
+     inside it keep receiving their clicks. */
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ---------------------------------------------- syntax highlighting (hljs) */
+
+.hljs {
+  color: inherit;
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--hl-comment);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag,
+.hljs-name,
+.hljs-tag {
+  color: var(--hl-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-attribute,
+.hljs-meta .hljs-string {
+  color: var(--hl-string);
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-link {
+  color: var(--hl-number);
+}
+.hljs-title,
+.hljs-section,
+.hljs-title.class_,
+.hljs-title.function_ {
+  color: var(--hl-function);
+}
+.hljs-type,
+.hljs-class .hljs-title,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--hl-type);
+}
+.hljs-attr,
+.hljs-selector-attr,
+.hljs-selector-pseudo,
+.hljs-meta,
+.hljs-params {
+  color: var(--hl-attr);
+}
+.hljs-operator,
+.hljs-punctuation {
+  color: var(--hl-operator);
+}
+.hljs-deletion {
+  color: var(--c-danger);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}
+
+/* ------------------------------------------------- rendered markdown ----- */
+
+.markdown {
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+}
+.markdown > :first-child {
+  margin-top: 0;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  margin: 1.2em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.markdown h1 {
+  font-size: 1.4em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--c-border);
+}
+.markdown h2 {
+  font-size: 1.2em;
+}
+.markdown h3 {
+  font-size: 1.05em;
+}
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown blockquote,
+.markdown table,
+.markdown pre {
+  margin: 0.75em 0;
+}
+.markdown ul,
+.markdown ol {
+  padding-left: 1.4em;
+}
+.markdown li {
+  margin: 0.2em 0;
+}
+.markdown code {
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--c-hover);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+.markdown pre {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-control);
+  background: var(--c-inset);
+  overflow: auto;
+}
+.markdown pre code {
+  padding: 0;
+  background: none;
+}
+.markdown blockquote {
+  padding-left: 0.8rem;
+  border-left: 3px solid var(--c-border-strong);
+  color: var(--c-text-muted);
+}
+.markdown a {
+  color: var(--c-accent);
+  text-decoration: none;
+}
+.markdown a:hover {
+  text-decoration: underline;
+}
+.markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95em;
+}
+.markdown th,
+.markdown td {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--c-border);
+  text-align: left;
+}
+.markdown th {
+  background: var(--c-surface-2);
+  font-weight: 600;
+}
+.markdown img {
+  max-width: 100%;
+}
+.markdown hr {
+  border: 0;
+  border-top: 1px solid var(--c-border);
+}

@@ -49,3 +49,6 @@ Thumbs.db
 # --- binaries (never committed) ---
 *.dmg
 *.app/
+
+# --- the pre-Vue frontend, kept only while the rewrite is verified ---
+.legacy-frontend/
