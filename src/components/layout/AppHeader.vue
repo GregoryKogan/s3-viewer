@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { Search, RefreshCw, PanelRight } from "@lucide/vue";
-import AppBreadcrumb from "./AppBreadcrumb.vue";
+import AddressBar from "./AddressBar.vue";
 import AppToolbar from "./AppToolbar.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import { inputClass } from "@/components/ui/controls";
@@ -28,7 +28,7 @@ const previewOpen = computed(() => !ui.previewHidden);
 <template>
   <header class="flex shrink-0 flex-col border-b border-line">
     <div class="flex items-center gap-2 px-3.5 pt-2 pb-1.5">
-      <AppBreadcrumb class="min-w-0 flex-1" />
+      <AddressBar class="min-w-0 flex-1" />
 
       <div class="flex shrink-0 items-center gap-1">
         <div class="relative">

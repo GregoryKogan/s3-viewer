@@ -129,6 +129,27 @@ Override it with `S3VIEWER_CONFIG_DIR` (handy for tests).
 
 ## The interface
 
+**Browsing.** A single click focuses a row and previews it; a double click opens a
+folder. Checkboxes stay out of the way until you actually select something — they
+appear on hover and stay visible while a selection exists. Shift+click selects the
+range from the last row you touched, Cmd+click toggles one row, Cmd+A selects the
+folder.
+
+**Address bar.** The pencil at the end of the breadcrumb (or ⌘L) turns the path
+into an input that accepts `s3://bucket/key`, `bucket/key` or a bare key. An
+address that does not exist says so instead of failing silently; a bucket that is
+not this connection's is refused, because a connection is a scope.
+
+**Context menu.** Right-clicking a row offers Preview/Open, Download, Copy S3 URI,
+Copy name, Copy to…, Move to… and Delete. Right-clicking empty space offers
+Upload, New folder, New file and Refresh. Those actions are not repeated as
+toolbar buttons — the toolbar only shows the create actions, and switches to the
+bulk actions while a selection exists.
+
+**PDF.** Rendered with pdf.js, so zoom, fit-to-width and page navigation work.
+Pages are fetched with ranged reads rather than by downloading the whole file.
+
+
 Vue 3 with `<script setup>` and TypeScript, built by Vite, styled with Tailwind
 against semantic design tokens, and drawn with Lucide icons — no emoji anywhere.
 State lives in Pinia setup stores and every backend call goes through one typed

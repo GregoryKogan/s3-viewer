@@ -1,11 +1,12 @@
 import { computed } from "vue";
-import { api, copyText, pickFiles } from "@/lib/ipc";
+import { api, copyText, pickFiles, pickSavePath } from "@/lib/ipc";
 import { s3Uri, humanSize } from "@/lib/format";
 import { validateKey } from "@/lib/keys";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
 import { useToastsStore } from "@/stores/toasts";
 import { useProgressStore } from "@/stores/progress";
+import { useUiStore } from "@/stores/ui";
 import { useDialogs } from "@/composables/useDialogs";
 import CopyMoveDialog, { type CopyMoveResult } from "@/components/dialogs/CopyMoveDialog.vue";
 import type { ObjectEntry } from "@/types";
@@ -26,6 +27,7 @@ export function useObjectActions(options: Options = {}) {
   const objects = useObjectsStore();
   const connections = useConnectionsStore();
   const transfers = useProgressStore();
+  const ui = useUiStore();
   const toasts = useToastsStore();
   const dialogs = useDialogs();
 
@@ -40,8 +42,17 @@ export function useObjectActions(options: Options = {}) {
   async function downloadEntry(entry: ObjectEntry) {
     const connection = connections.active;
     if (!connection) return;
+
+    // "Ask every time" means exactly that: pick the destination first, and treat
+    // cancelling the dialog as cancelling the download.
+    let destPath: string | null = null;
+    if (ui.settings?.askDownloadLocation) {
+      destPath = await pickSavePath(entry.name);
+      if (!destPath) return;
+    }
+
     try {
-      await api.downloadObject({ connectionId: connection.id, key: entry.key });
+      await api.downloadObject({ connectionId: connection.id, key: entry.key, destPath });
       transfers.start();
     } catch (error) {
       toasts.error((error as Error).message, "Download failed");

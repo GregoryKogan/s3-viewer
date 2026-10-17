@@ -3,7 +3,6 @@ import { computed, onMounted, ref, watch } from "vue";
 import {
   AlertTriangle,
   Check,
-  ChevronsUpDown,
   ClipboardCopy,
   Copy,
   KeyRound,
@@ -235,9 +234,24 @@ async function removeConnection() {
   }
 }
 
+/**
+ * Copy feedback belongs on the button: a toast opened from inside a modal would
+ * be hidden behind it, which read as "nothing happened".
+ */
+const copied = ref(false);
+let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
 async function copySnippet() {
-  if (await copyText(snippet.value)) toasts.ok("The boto3 client was copied.");
-  else toasts.error("The clipboard is not available.");
+  const ok = await copyText(snippet.value);
+  if (!ok) {
+    toasts.error("The clipboard is not available.");
+    return;
+  }
+  copied.value = true;
+  if (copiedTimer) clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => {
+    copied.value = false;
+  }, 2000);
 }
 </script>
 
@@ -249,21 +263,20 @@ async function copySnippet() {
     @close="cancel"
   >
     <p class="text-[0.6875rem] leading-relaxed text-muted">
-      These fields map one-to-one onto a
-      <code class="rounded bg-hover px-1 py-px font-mono">boto3.client("s3", …)</code> call. Copy a
-      working Python client's settings in and it will work here.
+      Copy the settings from a working Python client and they will behave the same here — the
+      snippet at the bottom is exactly what these fields mean in code.
     </p>
 
     <div class="grid grid-cols-2 gap-3">
-      <AppField label="Connection name" :error="errors.name" hint="Shown in the sidebar.">
+      <AppField label="Name" :error="errors.name" hint="What this connection is called in the sidebar.">
         <input v-model="form.name" :class="inputClass" data-testid="conn-name" placeholder="Dev bucket" />
       </AppField>
 
-      <AppField label="Bucket" :error="errors.bucket" hint="boto3: Bucket=…">
+      <AppField label="Bucket" :error="errors.bucket" hint="The bucket this connection is scoped to.">
         <input v-model="form.bucket" :class="inputClass" data-testid="conn-bucket" :placeholder="PLACEHOLDER.bucket" />
       </AppField>
 
-      <AppField label="Endpoint URL" :error="errors.endpoint" hint="boto3: endpoint_url=…" wide>
+      <AppField label="Server address" :error="errors.endpoint" hint="The S3 endpoint, starting with https://" wide>
         <input
           v-model="form.endpointUrl"
           :class="inputClass"
@@ -273,13 +286,13 @@ async function copySnippet() {
         />
       </AppField>
 
-      <AppField label="Region" :error="errors.region" hint="boto3: region_name=…">
+      <AppField label="Region" :error="errors.region" hint="Usually dictated by the provider.">
         <input v-model="form.region" :class="inputClass" data-testid="conn-region" :placeholder="PLACEHOLDER.region" />
       </AppField>
 
       <AppField
-        label="Prefix inside the bucket"
-        hint="boto3: Prefix=… Matched literally."
+        label="Start folder"
+        hint="Optional. The connection opens here; it is matched literally."
       >
         <input v-model="form.prefix" :class="inputClass" data-testid="conn-prefix" :placeholder="PLACEHOLDER.prefix" />
       </AppField>
@@ -290,7 +303,7 @@ async function copySnippet() {
         Credentials
       </legend>
       <div class="grid grid-cols-2 gap-3">
-        <AppField label="Access key ID" :error="errors.accessKey" hint="boto3: aws_access_key_id">
+        <AppField label="Access key" :error="errors.accessKey" hint="The key ID, not the secret.">
           <input
             v-model="form.accessKeyId"
             :class="inputClass"
@@ -304,7 +317,11 @@ async function copySnippet() {
         <AppField
           label="Secret access key"
           :error="errors.secret"
-          :hint="isEdit && props.connection ? 'Leave empty to keep the stored secret.' : 'Encrypted before it touches the disk.'"
+          :hint="
+            isEdit && props.connection
+              ? 'Leave empty to keep the stored one.'
+              : 'Stored encrypted on this machine.'
+          "
         >
           <div class="flex gap-1">
             <input
@@ -326,7 +343,7 @@ async function copySnippet() {
           </div>
         </AppField>
 
-        <AppField label="Session token" hint="boto3: aws_session_token (temporary credentials)" wide>
+        <AppField label="Session token" hint="Only for temporary credentials." wide>
           <input
             v-model="form.sessionToken"
             type="password"
@@ -349,46 +366,46 @@ async function copySnippet() {
         S3 behaviour
       </legend>
       <div class="grid grid-cols-2 gap-3">
-        <AppField label="Addressing style" hint="boto3: Config(s3={&quot;addressing_style&quot;: …})">
+        <AppField label="Bucket in the address" hint="Most services put the bucket in the host name.">
           <select v-model="form.addressingStyle" :class="selectClass" data-testid="conn-addressing">
-            <option value="virtual">virtual — host style (most common)</option>
-            <option value="path">path — bucket in the URL path</option>
-            <option value="auto">auto — path unless the bucket is DNS-compatible</option>
+            <option value="virtual">In the host name (usual)</option>
+            <option value="path">In the URL path</option>
+            <option value="auto">Decide automatically</option>
           </select>
         </AppField>
 
-        <AppField label="Signature version" hint="boto3: Config(signature_version=…)">
+        <AppField label="Request signing" hint="How requests are signed. The newest is the default.">
           <select v-model="form.signatureVersion" :class="selectClass" data-testid="conn-signature">
-            <option value="s3v4">s3v4 — SigV4 (boto3 default)</option>
-            <option value="v4">v4 — plain SigV4</option>
-            <option value="s3v2">s3v2 — legacy HmacSHA1</option>
+            <option value="s3v4">Version 4 (usual)</option>
+            <option value="v4">Version 4, generic</option>
+            <option value="s3v2">Version 2 (legacy services)</option>
           </select>
         </AppField>
 
         <AppField
-          label="Request checksum calculation"
-          hint="boto3: Config(request_checksum_calculation=…)"
+          label="Checksums on upload"
+          hint="Only change this if the service rejects checksum headers."
         >
           <select v-model="form.requestChecksumCalculation" :class="selectClass">
-            <option value="whenSupported">whenSupported — AWS default</option>
-            <option value="whenRequired">whenRequired — only when required</option>
+            <option value="whenSupported">When the service supports it</option>
+            <option value="whenRequired">Only when required</option>
           </select>
         </AppField>
 
         <AppField
-          label="Response checksum validation"
-          hint="boto3: Config(response_checksum_validation=…)"
+          label="Checksums on download"
+          hint="Whether responses are checked against their checksum."
         >
           <select v-model="form.responseChecksumValidation" :class="selectClass">
-            <option value="whenSupported">whenSupported — AWS default</option>
-            <option value="whenRequired">whenRequired — only when required</option>
+            <option value="whenSupported">When the service supports it</option>
+            <option value="whenRequired">Only when required</option>
           </select>
         </AppField>
       </div>
       <p class="mt-2 flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-subtle">
         <AlertTriangle class="mt-0.5 size-3 shrink-0" />
-        Some S3-compatible deployments reject the checksum headers the SDK adds by default.
-        Switching both to <span class="font-mono">whenRequired</span> is the documented workaround.
+        Some S3-compatible services reject the checksum headers the client adds. Switching both
+        to “only when required” is the documented workaround.
       </p>
     </fieldset>
 
@@ -435,9 +452,18 @@ async function copySnippet() {
     <section class="flex flex-col gap-1.5">
       <div class="flex items-center justify-between gap-2">
         <span class="text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
-          Equivalent boto3 client
+          The equivalent Python client
         </span>
-        <AppButton size="sm" variant="ghost" :icon="ClipboardCopy" @click="copySnippet">Copy</AppButton>
+        <AppButton
+          size="sm"
+          :variant="copied ? 'primary' : 'ghost'"
+          :icon="copied ? Check : ClipboardCopy"
+          :class="copied ? '!bg-ok !border-ok text-white' : ''"
+          data-testid="copy-snippet"
+          @click="copySnippet"
+        >
+          {{ copied ? "Copied" : "Copy" }}
+        </AppButton>
       </div>
       <!-- eslint-disable-next-line vue/no-v-html -- highlight.js over escaped text -->
       <pre :class="codeClass" data-testid="boto3-snippet"><code class="hljs" v-html="snippetMarkup" /></pre>
@@ -446,11 +472,11 @@ async function copySnippet() {
     <section class="flex flex-col gap-2">
       <div class="flex items-center gap-2">
         <AppButton :icon="ShieldCheck" :loading="probing" data-testid="conn-test" @click="testConnection">
-          Test connection
+          {{ probing ? "Testing…" : "Test connection" }}
         </AppButton>
-        <AppButton :icon="ChevronsUpDown" :loading="probing" data-testid="conn-detect" @click="testConnection">
-          Detect permissions
-        </AppButton>
+        <span class="text-[0.6875rem] text-subtle">
+          Checks access and finds out what these credentials may do.
+        </span>
       </div>
 
       <div v-if="probeError" class="rounded-control border border-danger/40 bg-danger-soft px-2.5 py-1.5 text-[0.6875rem] leading-relaxed text-danger">
@@ -483,9 +509,6 @@ async function copySnippet() {
     <template #footer>
       <div v-if="isEdit" class="mr-auto flex items-center gap-1">
         <AppButton variant="ghost" size="sm" :icon="Copy" @click="duplicate">Duplicate</AppButton>
-        <AppButton variant="ghost" size="sm" :icon="ShieldCheck" :loading="probing" @click="testConnection">
-          Detect
-        </AppButton>
         <AppButton
           variant="ghost"
           size="sm"

@@ -87,6 +87,25 @@ pub async fn build_preview(
     let size = stat.size.unwrap_or(0);
     let url = stream_url(connection_id, key);
 
+    if size == 0 {
+        return Ok(PreviewData {
+            kind: detect_kind(key, stat.content_type.as_deref(), None),
+            key: key.to_string(),
+            size,
+            content_type: stat.content_type.unwrap_or_default(),
+            etag: stat.etag,
+            last_modified: stat.last_modified,
+            text: None,
+            base64: None,
+            table: None,
+            stream_url: url,
+            truncated: false,
+            unavailable_reason: Some(
+                "This file is empty (0 bytes), so there is nothing to preview.".to_string(),
+            ),
+        });
+    }
+
     // Sniff the head for classification regardless of size — it is cheap and
     // lets the "too large" message name the real file type.
     let head_range = ByteRange {

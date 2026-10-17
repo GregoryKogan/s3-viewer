@@ -24,6 +24,13 @@ pub fn detect_kind(key: &str, content_type: Option<&str>, head: Option<&[u8]>) -
     if let Some(kind) = kind_from_magic(head) {
         return kind;
     }
+    // Best effort for everything the tables above do not know: an unknown
+    // extension (`.pub`, `.pem`, `.conf`, none at all) is far more often text
+    // than something binary. S3 is full of text files with a useless extension,
+    // and refusing to show them is worse than occasionally showing mojibake.
+    if looks_like_text(head) {
+        return FileKind::Text;
+    }
     // Only consult the MIME type when the key carries no extension at all.
     if ext.is_empty() {
         if let Some(kind) = content_type.and_then(kind_from_mime) {
@@ -101,6 +108,35 @@ fn kind_from_mime(ct: &str) -> Option<FileKind> {
         return Some(FileKind::Text);
     }
     None
+}
+
+/// Whether the first bytes look like UTF-8 text.
+///
+/// The bar is deliberately low, because the alternative is telling the user
+/// "binary" about a file they can plainly read. What it rejects is what actually
+/// characterises a binary: a NUL byte, or a large share of control characters.
+pub fn looks_like_text(head: Option<&[u8]>) -> bool {
+    let Some(bytes) = head else { return false };
+    if bytes.is_empty() {
+        return true;
+    }
+    // Only the sniffed head is examined; a long run of text is already convincing.
+    let sample = &bytes[..bytes.len().min(4096)];
+    if sample.contains(&0) {
+        return false;
+    }
+    if std::str::from_utf8(sample).is_err() {
+        // A multi-byte character may be cut at the boundary; tolerate that one case.
+        let boundary = sample.len().saturating_sub(3);
+        if std::str::from_utf8(&sample[..boundary]).is_err() {
+            return false;
+        }
+    }
+    let control = sample
+        .iter()
+        .filter(|b| (**b < 0x20 && **b != b'\n' && **b != b'\r' && **b != b'\t') || **b == 0x7f)
+        .count();
+    control * 20 < sample.len()
 }
 
 /// Magic-byte sniffing, used when the key has no useful extension.
@@ -268,5 +304,63 @@ mod tests {
             Some("text/markdown")
         );
         assert_eq!(guess_content_type(Path::new("/tmp/README")), None);
+    }
+    #[test]
+    fn extensionless_text_is_text() {
+        assert_eq!(
+            detect_kind(
+                "keys/id_ed25519",
+                Some("application/octet-stream"),
+                Some(b"-----BEGIN OPENSSH PRIVATE KEY-----\n")
+            ),
+            FileKind::Text
+        );
+    }
+
+    #[test]
+    fn unknown_extension_with_text_content_is_text() {
+        // An SSH public key: a binary-looking extension, plain text inside.
+        assert_eq!(
+            detect_kind(
+                "keys/deploy.pub",
+                None,
+                Some(b"ssh-ed25519 AAAAC3Nza user@host\n")
+            ),
+            FileKind::Text
+        );
+        assert_eq!(
+            detect_kind("notes.weird", None, Some(b"line one\nline two\n")),
+            FileKind::Text
+        );
+    }
+
+    #[test]
+    fn binaries_stay_binary() {
+        assert_eq!(
+            detect_kind("blob.bin", None, Some(&[0x00, 0x01, 0x02, 0x00, 0x03])),
+            FileKind::Binary
+        );
+        // A PNG is an image by magic, not text by content.
+        assert_eq!(
+            detect_kind("picture", None, Some(&[0x89, b'P', b'N', b'G', 0x0d])),
+            FileKind::Image
+        );
+    }
+
+    #[test]
+    fn known_extensions_win_over_sniffing() {
+        assert_eq!(
+            detect_kind("a.json", None, Some(b"{\"a\":1}")),
+            FileKind::Json
+        );
+        assert_eq!(detect_kind("a.py", None, Some(b"print(1)")), FileKind::Code);
+    }
+
+    #[test]
+    fn utf8_text_is_recognised() {
+        assert_eq!(
+            detect_kind("pismo", None, Some("привет мир".as_bytes())),
+            FileKind::Text
+        );
     }
 }

@@ -3,18 +3,42 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useObjectsStore } from "@/stores/objects";
 import ObjectRow from "./ObjectRow.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
-import { useObjectActions } from "@/composables/useObjectActions";
 import Spinner from "@/components/ui/Spinner.vue";
+import type { ObjectEntry } from "@/types";
 
 const ROW_HEIGHT = 30;
 const OVERSCAN = 8;
 
+const emit = defineEmits<{
+  contextmenu: [entry: ObjectEntry, event: MouseEvent];
+  background: [event: MouseEvent];
+}>();
+
 const objects = useObjectsStore();
-const actions = useObjectActions();
 
 const scroller = ref<HTMLElement | null>(null);
 const scrollTop = ref(0);
 const viewportHeight = ref(600);
+const viewportWidth = ref(900);
+
+/**
+ * Columns are dropped as the list narrows rather than being squeezed: a TYPE
+ * column clipped to "Cod" and "Bin" is worse than no column at all.
+ */
+const showModified = computed(() => viewportWidth.value >= 620);
+const showType = computed(() => viewportWidth.value >= 760);
+
+const gridTemplate = computed(() =>
+  [
+    "34px",
+    "minmax(180px, 1fr)",
+    "88px",
+    showModified.value ? "150px" : null,
+    showType.value ? "86px" : null,
+  ]
+    .filter(Boolean)
+    .join(" "),
+);
 
 const rows = computed(() => objects.visibleEntries);
 
@@ -33,6 +57,9 @@ const selectedVisible = computed(() => {
   const some = !all && rows.value.some((entry) => objects.selected.has(entry.key));
   return { all, some };
 });
+
+/** Checkboxes are hidden until a selection exists, so the list stays quiet. */
+const selectionActive = computed(() => objects.selected.size > 0);
 
 /** Bring one row into view; keyboard navigation and the e2e suite both need it. */
 function scrollToRow(index: number) {
@@ -71,30 +98,54 @@ onMounted(() => {
   const element = scroller.value;
   if (!element) return;
   viewportHeight.value = element.clientHeight || 600;
+  viewportWidth.value = element.clientWidth || 900;
   observer = new ResizeObserver(() => {
     viewportHeight.value = element.clientHeight || 600;
+    viewportWidth.value = element.clientWidth || 900;
   });
   observer.observe(element);
 });
 
 onBeforeUnmount(() => observer?.disconnect());
 
-function onSelect(entry: (typeof rows.value)[number], event: MouseEvent) {
-  objects.selectOnly(entry.key, event.shiftKey);
+/**
+ * A plain click moves the focus and shows the preview; it never ticks a box.
+ * Shift extends the range, Cmd/Ctrl toggles a single row.
+ */
+function onClick(entry: (typeof rows.value)[number], event: MouseEvent) {
+  const extending = event.shiftKey;
+  // The range is computed from the anchor set by the previous click, so focus
+  // has to move without stealing it.
+  if (extending) objects.selectRange(entry.key);
+  objects.focus(entry.key, { keepAnchor: extending });
+  if (!extending && (event.metaKey || event.ctrlKey)) objects.toggleSelected(entry.key);
   void objects.previewEntry(entry);
+}
+
+/** Clicking the checkbox selects without moving focus to another row's preview. */
+function onToggleCheck(entry: (typeof rows.value)[number], event: MouseEvent) {
+  if (event.shiftKey) {
+    objects.selectRange(entry.key);
+    objects.toggleSelected(entry.key);
+  }
+}
+
+function onToggleCheckbox(entry: (typeof rows.value)[number]) {
+  objects.toggleSelected(entry.key);
+}
+
+function onContextMenu(entry: (typeof rows.value)[number], event: MouseEvent) {
+  // Right-clicking a row that is not selected acts on that row alone.
+  if (!objects.selected.has(entry.key)) {
+    objects.clearSelection();
+    objects.toggleSelected(entry.key);
+  }
+  emit("contextmenu", entry, event);
 }
 
 async function onActivate(entry: (typeof rows.value)[number]) {
   if (entry.isFolder) await objects.navigate(entry.key);
   else await objects.previewEntry(entry, { force: true });
-}
-
-function onToggleCheck(entry: (typeof rows.value)[number]) {
-  objects.toggleSelected(entry.key);
-}
-
-function onCopyUri(entry: (typeof rows.value)[number]) {
-  void actions.copyUri(entry);
 }
 
 defineExpose({ scrollToRow });
@@ -103,7 +154,8 @@ defineExpose({ scrollToRow });
 <template>
   <div class="flex min-h-0 flex-1 flex-col" data-testid="browser">
     <div
-      class="grid shrink-0 grid-cols-[34px_minmax(180px,1fr)_92px_168px_92px] items-center gap-1.5 border-b border-line px-3.5 text-[0.6875rem] tracking-wide text-subtle uppercase"
+      class="grid shrink-0 items-center gap-1.5 border-b border-line px-3.5 text-[0.6875rem] tracking-wide text-subtle uppercase"
+      :style="{ gridTemplateColumns: gridTemplate }"
       data-testid="table-head"
     >
       <label class="flex items-center">
@@ -118,11 +170,11 @@ defineExpose({ scrollToRow });
       </label>
       <button
         v-for="column in [
-          { key: 'name', label: 'Name' },
-          { key: 'size', label: 'Size' },
-          { key: 'modified', label: 'Modified' },
-          { key: 'kind', label: 'Type' },
-        ]"
+          { key: 'name', label: 'Name', shown: true },
+          { key: 'size', label: 'Size', shown: true },
+          { key: 'modified', label: 'Modified', shown: showModified },
+          { key: 'kind', label: 'Type', shown: showType },
+        ].filter((column) => column.shown)"
         :key="column.key"
         type="button"
         class="flex items-center gap-1 text-[0.6875rem] tracking-wide uppercase transition-colors hover:text-content"
@@ -147,6 +199,7 @@ defineExpose({ scrollToRow });
       id="object-list"
       data-testid="object-list"
       @scroll="onScroll"
+      @contextmenu.self.prevent="emit('background', $event)"
     >
       <div v-if="!rows.length" class="flex h-full items-center justify-center p-6">
         <Spinner v-if="objects.loading || objects.awaitingFirstPage" label="Loading…" />
@@ -177,11 +230,17 @@ defineExpose({ scrollToRow });
           :entry="row.entry"
           :index="row.index"
           :row-height="ROW_HEIGHT"
+          :grid-template="gridTemplate"
+          :show-modified="showModified"
+          :show-type="showType"
           :selected="objects.selected.has(row.entry.key)"
-          @select="onSelect"
+          :focused="objects.focusedKey === row.entry.key"
+          :selection-active="selectionActive"
+          @click="onClick"
           @activate="onActivate"
           @toggle-check="onToggleCheck"
-          @copy-uri="onCopyUri"
+          @toggle-checkbox="onToggleCheckbox"
+          @contextmenu="onContextMenu"
         />
       </div>
     </div>

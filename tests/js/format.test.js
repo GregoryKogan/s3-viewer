@@ -48,7 +48,11 @@ test("detectKind mirrors the Rust classification", () => {
   assert.equal(detectKind("a/app.py"), "code");
   assert.equal(detectKind("a/conf.yaml"), "code");
   assert.equal(detectKind("a/notes.txt"), "text");
-  assert.equal(detectKind("a/unknown.zzz"), "binary");
+  // An unknown extension is "unknown", not "binary": the backend sniffs the
+  // bytes, and the list must not claim more than it knows.
+  assert.equal(detectKind("a/unknown.zzz"), "unknown");
+  assert.equal(detectKind("keys/id_rsa"), "unknown");
+  assert.equal(detectKind("a/blob", { contentType: "application/octet-stream" }), "unknown");
   assert.equal(detectKind("Dockerfile"), "code");
   // No extension and no known type: the content type is the only hint left.
   assert.equal(detectKind("a/blob", { contentType: "application/pdf" }), "pdf");

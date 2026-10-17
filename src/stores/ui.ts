@@ -79,6 +79,7 @@ export const useUiStore = defineStore("ui", () => {
       previewMaxBytes: settings.value?.previewMaxBytes ?? 25 * 1024 * 1024,
       listPageLimit: settings.value?.listPageLimit ?? 20_000,
       downloadDir: settings.value?.downloadDir ?? null,
+      askDownloadLocation: settings.value?.askDownloadLocation ?? false,
       showSystemObjects: settings.value?.showSystemObjects ?? false,
       theme: settings.value?.theme ?? "dark",
       layout: layout.value,

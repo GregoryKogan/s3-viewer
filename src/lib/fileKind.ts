@@ -130,7 +130,9 @@ export function detectKind(
     const extension = name.slice(dot + 1);
     const known = EXTENSION_KINDS[extension];
     if (known) return known;
-    return "binary";
+    // Unknown extension: the backend sniffs the bytes and decides, so claiming
+    // "binary" here would be a guess presented as fact.
+    return kindFromContentType(options.contentType) ?? "unknown";
   }
 
   return kindFromContentType(options.contentType) ?? "unknown";

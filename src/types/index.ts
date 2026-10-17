@@ -161,6 +161,8 @@ export interface AppSettings {
   previewMaxBytes: number;
   listPageLimit: number;
   downloadDir?: string | null;
+  /** Ask for a destination on every download instead of using `downloadDir`. */
+  askDownloadLocation: boolean;
   showSystemObjects: boolean;
   theme: Theme;
   layout: LayoutSettings;

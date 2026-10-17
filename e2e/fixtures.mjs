@@ -157,6 +157,17 @@ def hello(name):
     return f"hello {name}"
 \`\`\`
 `,
+  // No extension at all: the classification has to fall back to the content.
+  "LICENSE": [
+    "MIT License",
+    "",
+    "Permission is hereby granted, free of charge, to any person obtaining a copy",
+    "of this software and associated documentation files.",
+    "",
+  ].join("\n"),
+  // A text file with an extension that suggests nothing: `.pub` is an SSH key,
+  // and S3 is full of files like this that are perfectly readable.
+  "deploy.pub": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFixtureOnlyKeyForPreview user@host\n",
   "notes.txt": [
     "Plain text preview fixture.",
     "Line two with unicode: привет мир — 你好 — 🎉",
@@ -222,6 +233,9 @@ export function writeFixtures({ bigBytes = 80 * 1024 * 1024 } = {}) {
   fs.writeFileSync(path.join(OUT, "clip.mp4"), makeShellScript());
   fs.writeFileSync(path.join(OUT, "document.pdf"), makePdf());
   fs.writeFileSync(path.join(OUT, "blob.bin"), makeBinary());
+  // Zero bytes: S3 answers a ranged read with InvalidRange, which used to surface
+  // as a protocol error instead of "this file is empty".
+  fs.writeFileSync(path.join(OUT, "empty.txt"), "");
   fs.writeFileSync(
     path.join(OUT, "vector.svg"),
     `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="60"><rect width="120" height="60" fill="#2b6ce0"/><circle cx="30" cy="30" r="20" fill="#ffffff"/></svg>`,
@@ -251,6 +265,7 @@ export const SMALL_FILES = [
   "document.pdf",
   "vector.svg",
   "blob.bin",
+  "empty.txt",
   ...SMALL_TEXT_FILE_NAMES,
 ];
 

@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watchEffect } from "vue";
+import { computed, defineAsyncComponent, onMounted, ref, watchEffect } from "vue";
 import { ImageOff, Info } from "@lucide/vue";
-import AppButton from "@/components/ui/AppButton.vue";
 import Spinner from "@/components/ui/Spinner.vue";
 import { useObjectsStore } from "@/stores/objects";
 import { useConnectionsStore } from "@/stores/connections";
 import { useUiStore } from "@/stores/ui";
-import { humanSize, s3Uri } from "@/lib/format";
+import { humanSize } from "@/lib/format";
 import { kindLabel } from "@/lib/fileKind";
-import { api, copyText } from "@/lib/ipc";
+import { api } from "@/lib/ipc";
 import { useToastsStore } from "@/stores/toasts";
 import PreviewImage from "./renderers/PreviewImage.vue";
 import PreviewMedia from "./renderers/PreviewMedia.vue";
+/** Loaded on demand: the PDF engine is large and most previews never need it. */
+const PreviewPdf = defineAsyncComponent(() => import("./renderers/PreviewPdf.vue"));
 import PreviewMarkdown from "./renderers/PreviewMarkdown.vue";
 import PreviewCode from "./renderers/PreviewCode.vue";
 import PreviewTable from "./renderers/PreviewTable.vue";
@@ -53,14 +54,6 @@ const shownName = computed(() => {
   return key.endsWith("/") ? key.replace(/\/$/, "").split("/").pop() || key : key.split("/").pop() || key;
 });
 
-async function copyUri() {
-  const connection = connections.active;
-  if (!connection || !objects.previewKey) return;
-  const uri = s3Uri(connection.bucket, objects.previewKey);
-  if (await copyText(uri)) toasts.ok(`Copied ${uri}`);
-  else toasts.error("The clipboard is not available.");
-}
-
 async function download() {
   const connection = connections.active;
   if (!connection || !objects.previewKey) return;
@@ -93,27 +86,6 @@ function onToggleView(view: "rendered" | "raw") {
         <span v-if="meta" class="tabular text-[0.6875rem] text-subtle" data-testid="preview-meta">
           {{ meta }}
         </span>
-      </div>
-      <div class="flex shrink-0 items-center gap-0.5">
-        <AppButton
-          variant="ghost"
-          size="sm"
-          :disabled="!objects.previewKey"
-          title="Copy the s3:// URI"
-          id="preview-copy-uri"
-          data-testid="preview-copy-uri"
-          @click="copyUri"
-        >
-          URI
-        </AppButton>
-        <AppButton
-          size="sm"
-          :disabled="!objects.previewKey"
-          data-testid="preview-download"
-          @click="download"
-        >
-          Download
-        </AppButton>
       </div>
     </header>
 
@@ -160,9 +132,11 @@ function onToggleView(view: "rendered" | "raw") {
         <PreviewMedia
           :key="objects.previewKey ?? 'none'"
           v-else-if="kind === 'audio' || kind === 'video'" :data="data" @download="download" />
-        <PreviewMedia
+        <PreviewPdf
           :key="objects.previewKey ?? 'none'"
-          v-else-if="kind === 'pdf'" :data="data" />
+          v-else-if="kind === 'pdf'"
+          :data="data"
+        />
         <PreviewMarkdown
           v-else-if="kind === 'markdown'"
           :data="data"

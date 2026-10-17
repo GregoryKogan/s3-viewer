@@ -233,6 +233,49 @@ const SCENARIO: &str = r#"(async () => {
     fire(node, 'change');
   };
   const rowNames = () => $$('.object-row .row-label').map((n) => n.textContent);
+  /** Right-click a row and hand back the menu. Both steps are real user input. */
+  const rowMenu = async (label) => {
+    const index = window.__s3viewer.state.visible.findIndex((e) => e.name === label);
+    if (index >= 0) window.__s3viewer.scrollToRow(index);
+    await frame();
+    const row = $$('.object-row').find((r) => r.querySelector('.row-label').textContent === label);
+    if (!row) throw new Error('row not found for the menu: ' + label + ' :: ' + rowNames().join(','));
+    const box = row.getBoundingClientRect();
+    row.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: Math.round(box.left + 40),
+      clientY: Math.round(box.top + 8),
+    }));
+    return wait('the context menu', () => $('[data-testid=context-menu]'), 8000);
+  };
+
+  /** Put the address bar into editing mode, whichever state it is in. */
+  const openAddress = async () => {
+    const existing = $('[data-testid=address-input]');
+    if (existing) return existing;
+    $('[data-testid=address-edit]').click();
+    return wait('the address input', () => $('[data-testid=address-input]'), 5000);
+  };
+
+  /** Leave editing mode without navigating. */
+  const closeAddress = () => {
+    const input = $('[data-testid=address-input]');
+    if (input) input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  };
+
+  /** Click one item of an open context menu by its label. */
+  const menuClick = (menu, label) => {
+    const items = Array.from(menu.querySelectorAll('button'));
+    const item = items.find((button) =>
+      (button.textContent || '').trim().toLowerCase().startsWith(label.toLowerCase()));
+    if (!item) {
+      throw new Error('menu item "' + label + '" not found in: '
+        + items.map((b) => b.textContent.trim()).join(' | '));
+    }
+    item.click();
+  };
   const clickRow = (label) => {
     // The list is virtualised: only the rows near the viewport exist in the DOM,
     // so scroll the target into the painted window before looking for it.
@@ -389,18 +432,10 @@ const SCENARIO: &str = r#"(async () => {
       await wait('the new folder', async () => (rowNames().includes(folder) ? true : null));
       const first = rowNames()[0];
       if (first !== folder) throw new Error('folders are not listed first: ' + first);
-      clickRow(folder);
-      // Reactive DOM updates land on the next tick, so the toolbar has to catch up
-      // before its button can be clicked.
-      const deleteButton = await wait('the delete button to enable', async () => {
-        const button = $('[data-testid=delete]');
-        return button && !button.disabled ? button : null;
-      }, 8000).catch(() => null);
+      const folderMenu = await rowMenu(folder);
       const deleteState = 'selected=' + window.__s3viewer.state.selected.size
-        + ' disabled=' + ($('[data-testid=delete]') || {}).disabled
         + ' rows=' + rowNames().join(',');
-      if (!deleteButton) throw new Error('the delete button never enabled: ' + deleteState);
-      deleteButton.click();
+      menuClick(folderMenu, 'Delete');
       const confirm = await wait('the confirmation', () => $('[data-testid=confirm-ok]'), 8000)
         .catch(() => null);
       if (!confirm) throw new Error('no confirmation appeared after delete: ' + deleteState);
@@ -445,11 +480,17 @@ const SCENARIO: &str = r#"(async () => {
       return 'video element bound to ' + video.src.slice(0, 48);
     });
 
-    await check('preview: PDF is embedded from the stream', async () => {
+    await check('preview: PDF is rendered from the stream', async () => {
       clickRow('document.pdf');
-      const frame = await wait('the PDF frame', () => $('[data-testid=preview-pdf]'));
-      if (!frame.src.startsWith('s3stream:')) throw new Error('unexpected src: ' + frame.src);
-      return frame.src.slice(0, 60);
+      const canvas = await wait('the rendered PDF page', async () => {
+        const node = $('[data-testid=preview-pdf]');
+        return node && node.width > 0 ? node : null;
+      }, 30000);
+      const page = $('[data-testid=pdf-page]');
+      if (!page || !/1 \//.test(page.textContent)) {
+        throw new Error('no page indicator: ' + (page ? page.textContent : 'missing'));
+      }
+      return canvas.width + 'x' + canvas.height + ' px, ' + page.textContent.trim();
     });
 
     await check('preview: SVG renders as an image', async () => {
@@ -615,6 +656,27 @@ const SCENARIO: &str = r#"(async () => {
       return 'highlighted, ' + html.length + ' bytes';
     });
 
+    await check('ui: at minimum width the sidebar label never covers the New button', async () => {
+      const ui = window.__s3viewer.state.ui;
+      const before = ui.layout.sidebar;
+      ui.setSidebarWidth(190);
+      await frame();
+      const label = $('#sidebar .sidebar-label');
+      const button = $('#new-connection');
+      if (!button) throw new Error('the New button disappeared');
+      if (label && label.offsetParent !== null) {
+        const l = label.getBoundingClientRect();
+        const b = button.getBoundingClientRect();
+        const overlap = Math.min(l.right, b.right) - Math.max(l.left, b.left);
+        if (overlap > 1) {
+          throw new Error('the label overlaps the button by ' + Math.round(overlap) + 'px');
+        }
+      }
+      ui.setSidebarWidth(before);
+      await frame();
+      return 'no overlap at 190px';
+    });
+
     await check('ui: the layout can be collapsed and resized', async () => {
       const sidebar = $('#sidebar');
       const before = sidebar.getBoundingClientRect().width;
@@ -648,10 +710,8 @@ const SCENARIO: &str = r#"(async () => {
     });
 
     await check('ui: an object S3 URI can be copied', async () => {
-      clickRow('image.png');
-      const uri = $('#preview-copy-uri');
-      if (uri.disabled) throw new Error('the URI button is disabled for a selected object');
-      uri.click();
+      const menu = await rowMenu('image.png');
+      menuClick(menu, 'Copy S3 URI');
       await wait('the confirmation toast', () => $$('[data-testid^=toast-]').find((t) => /s3:\/\//.test(t.textContent)), 10000);
       const toast = $$('[data-testid^=toast-]').find((t) => /s3:\/\//.test(t.textContent));
       const expected = 's3://' + __BUCKET__ + '/';
@@ -659,6 +719,159 @@ const SCENARIO: &str = r#"(async () => {
         throw new Error('unexpected URI in the toast: ' + toast.textContent);
       }
       return toast.textContent.replace(/\s+/g, ' ').slice(0, 80);
+    });
+
+    await check('ui: a single click focuses a row without ticking its checkbox', async () => {
+      window.__s3viewer.state.objects.clearSelection();
+      await frame();
+      clickRow('sample.json');
+      await frame();
+      const selected = window.__s3viewer.state.objects.selected.size;
+      if (selected !== 0) throw new Error('a plain click selected ' + selected + ' row(s)');
+      const previewKey = window.__s3viewer.state.objects.previewKey;
+      if (!previewKey || !previewKey.includes('sample.json')) {
+        throw new Error('the click did not open the preview: ' + previewKey);
+      }
+      return 'focused without selecting';
+    });
+
+    await check('ui: checkboxes are hidden until something is selected', async () => {
+      window.__s3viewer.state.objects.clearSelection();
+      // Hover is real state, so reset it: a row the pointer passed over earlier
+      // legitimately still shows its checkbox.
+      for (const row of $$('.object-row')) {
+        row.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+      }
+      await frame();
+      const boxes = $$('[data-testid^=row-check-]');
+      if (!boxes.length) throw new Error('no checkbox elements at all');
+      const visible = boxes.filter((box) => box.offsetParent !== null);
+      if (visible.length) {
+        throw new Error(
+          visible.length + ' checkbox(es) visible at rest: '
+          + visible.map((box) => box.dataset.testid).join(', ')
+          + ' | selected=' + window.__s3viewer.state.objects.selected.size,
+        );
+      }
+
+      const row = $$('.object-row')[0];
+      row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      const check = row.querySelector('input[type=checkbox]');
+      check.click();
+      await frame();
+      const after = $$('[data-testid^=row-check-]').filter((box) => box.offsetParent !== null);
+      if (!after.length) throw new Error('checkboxes stayed hidden after selecting');
+      return 'hidden at rest, ' + after.length + ' visible in selection mode';
+    });
+
+    await check('ui: shift-click selects a contiguous range', async () => {
+      window.__s3viewer.state.objects.clearSelection();
+      await frame();
+      const rows = $$('.object-row');
+      if (rows.length < 3) throw new Error('not enough rows: ' + rows.length);
+      const names = rows.slice(0, 3).map((r) => r.querySelector('.row-label').textContent);
+
+      const click = (row, init = {}) =>
+        row.dispatchEvent(new MouseEvent('click', { bubbles: true, view: window, ...init }));
+      click(rows[0]);
+      click(rows[2], { shiftKey: true });
+      await frame();
+
+      const selected = Array.from(window.__s3viewer.state.objects.selected);
+      if (selected.length !== 3) {
+        throw new Error('expected 3 rows, got ' + selected.length + ' (' + selected.join(', ') + ')');
+      }
+      return names.join(' → ');
+    });
+
+    await check('ui: the row context menu offers the row actions', async () => {
+      window.__s3viewer.state.objects.clearSelection();
+      await frame();
+      const menu = await rowMenu('image.png');
+      const labels = Array.from(menu.querySelectorAll('button')).map((b) => b.textContent.trim());
+      for (const wanted of ['Preview', 'Download', 'Copy S3 URI', 'Delete']) {
+        if (!labels.some((label) => label.startsWith(wanted))) {
+          throw new Error('missing "' + wanted + '" in: ' + labels.join(' | '));
+        }
+      }
+      menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await wait('the menu to close', async () => ($('[data-testid=context-menu]') ? null : true), 4000);
+      return labels.length + ' items';
+    });
+
+    await check('ui: the address bar opens an s3:// URI', async () => {
+      const target = __PREFIX__ + 'sample.json';
+      const input = await openAddress();
+      input.value = 's3://' + window.__s3viewer.state.connections.active.bucket + '/' + target;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      const previewKey = await wait('the preview to follow the address', async () => {
+        const key = window.__s3viewer.state.objects.previewKey;
+        return key && key.endsWith('sample.json') ? key : null;
+      }, 20000);
+      return previewKey.split('/').pop();
+    });
+
+    await check('ui: an address that does not exist says so', async () => {
+      const input = await openAddress();
+      input.value = 's3://' + window.__s3viewer.state.connections.active.bucket + '/' + __PREFIX__ + 'no-such-object-' + Date.now();
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      const error = await wait('the address error', () => $('[data-testid=address-error]'), 20000);
+      const text = error.textContent.trim();
+      if (!/nothing found/i.test(text)) throw new Error('unhelpful message: ' + text);
+      closeAddress();
+      await frame();
+      return text.slice(0, 60);
+    });
+
+    await check('preview: an empty file explains itself', async () => {
+      clickRow('empty.txt');
+      const node = await wait('the empty-file message', () => $('[data-testid=preview-unavailable]'), 20000);
+      const text = node.textContent;
+      if (/InvalidRange|not satisfiable/i.test(text)) {
+        throw new Error('a protocol error leaked through: ' + text);
+      }
+      if (!/empty/i.test(text)) throw new Error('unhelpful message: ' + text);
+      return text.trim().slice(0, 60);
+    });
+
+    await check('preview: a file with no extension is previewed as text', async () => {
+      clickRow('LICENSE');
+      const code = await wait('the text preview', () => $('[data-testid=preview-code]'), 20000);
+      if (!code.textContent.includes('MIT License')) {
+        throw new Error('LICENSE was not previewed: ' + code.textContent.slice(0, 80));
+      }
+      return 'no extension, still readable';
+    });
+
+    await check('preview: a .pub key is previewed as text', async () => {
+      clickRow('deploy.pub');
+      const code = await wait('the key preview', () => $('[data-testid=preview-code]'), 20000);
+      if (!code.textContent.includes('ssh-ed25519')) {
+        throw new Error('.pub was not previewed as text: ' + code.textContent.slice(0, 80));
+      }
+      return 'best-effort text for .pub';
+    });
+
+    await check('preview: PDF zoom changes the rendered page size', async () => {
+      clickRow('document.pdf');
+      const canvas = await wait('the rendered page', async () => {
+        const node = $('[data-testid=preview-pdf]');
+        return node && node.width > 0 ? node : null;
+      }, 30000);
+      const before = canvas.width;
+      $('[data-testid=pdf-zoom-in]').click();
+      const grew = await wait('the page to zoom in', async () => {
+        const node = $('[data-testid=preview-pdf]');
+        return node && node.width > before ? node.width : null;
+      }, 10000);
+      $('[data-testid=pdf-zoom-out]').click();
+      const shrank = await wait('the page to zoom out', async () => {
+        const node = $('[data-testid=preview-pdf]');
+        return node && node.width < grew ? node.width : null;
+      }, 10000);
+      return before + ' → ' + grew + ' → ' + shrank + ' px';
     });
 
     await check('preview: the panel can be hidden and shown again', async () => {
@@ -674,6 +887,8 @@ const SCENARIO: &str = r#"(async () => {
 
     const folderName = 'e2e-folder-' + Date.now();
     await check('ops: create a folder, enter it, then delete it', async () => {
+      window.__s3viewer.state.objects.clearSelection();
+      await frame();
       $('[data-testid=new-folder]').click();
       await wait('the folder prompt', () => $('[data-testid=prompt-input]'));
       setInput('[data-testid=prompt-input]', folderName);
@@ -685,16 +900,11 @@ const SCENARIO: &str = r#"(async () => {
         $('[data-testid=breadcrumb]').textContent.includes(folderName) ? true : null);
       $('[data-testid=crumb-root]').click();
       await wait('the root listing again', async () => (rowNames().includes(folderName) ? true : null));
-      clickRow(folderName);
-      await wait('the delete button to enable', async () => {
-        const button = $('[data-testid=delete]');
-        return button && !button.disabled ? button : null;
-      }, 8000).catch(() => null);
-      $('[data-testid=delete]').click();
+      const opsMenu = await rowMenu(folderName);
+      menuClick(opsMenu, 'Delete');
       const confirm = await wait('the confirmation', () => $('[data-testid=confirm-ok]'), 8000).catch(() => null);
       if (!confirm) {
-        throw new Error('no confirmation appeared; selected=' + window.__s3viewer.state.selected.size
-          + ' buttonDisabled=' + $('[data-testid=delete]').disabled);
+        throw new Error('no confirmation appeared; selected=' + window.__s3viewer.state.selected.size);
       }
       confirm.click();
       try {
@@ -751,12 +961,8 @@ const SCENARIO: &str = r#"(async () => {
     });
 
     await check('transfer: the Download button queues a download', async () => {
-      clickRow('image.png');
-      const downloadButton = await wait('the download button to enable', async () => {
-        const button = $('[data-testid=download]');
-        return button && !button.disabled ? button : null;
-      }, 8000);
-      downloadButton.click();
+      const downloadMenu = await rowMenu('image.png');
+      menuClick(downloadMenu, 'Download');
       const settled = await wait('the download to finish', async () => {
         const items = await invoke('transfer_progress');
         const done = items.filter((item) => item.state === 'done' && /Downloading/i.test(item.label));
@@ -767,8 +973,8 @@ const SCENARIO: &str = r#"(async () => {
     });
 
     await check('transfer: copy duplicates an object inside the bucket', async () => {
-      clickRow('notes.txt');
-      $('[data-testid=copy]').click();
+      const copyMenu = await rowMenu('notes.txt');
+      menuClick(copyMenu, 'Copy to');
       const prefixInput = await wait('the copy dialog', () => $('[data-testid=transfer-prefix]'), 10000);
       const destination = __PREFIX__ + 'copies/';
       prefixInput.value = destination;
@@ -815,6 +1021,66 @@ const SCENARIO: &str = r#"(async () => {
       if (!caps.canList || !caps.canRead) throw new Error('listing or reading is denied: ' + JSON.stringify(caps));
       if (!caps.canWrite || !caps.canDelete) throw new Error('write or delete is denied: ' + JSON.stringify(caps));
       return 'list/read/write/delete all granted';
+    });
+
+    await check('connection: one button tests the connection and its permissions', async () => {
+      $('#new-connection').click();
+      await wait('the connection dialog', () => $('[data-testid=conn-test]'), 10000);
+      if ($('[data-testid=conn-detect]')) {
+        throw new Error('the separate Detect permissions button is back');
+      }
+      const dialog = $('[data-testid=modal]');
+      const text = dialog.textContent;
+      // Labels describe the setting; they do not point at another tool's API.
+      if (/boto3:/i.test(text)) {
+        throw new Error('a field still refers to boto3: ' + text.match(/[^.]*boto3:[^.]*/i)[0].slice(0, 80));
+      }
+      const testButtons = Array.from(dialog.querySelectorAll('button'))
+        .filter((button) => /test connection/i.test(button.textContent));
+      if (testButtons.length !== 1) {
+        throw new Error('expected exactly one Test connection button, found ' + testButtons.length);
+      }
+      return 'one button, no boto3 references';
+    });
+
+    await check('connection: copying the snippet confirms on the button', async () => {
+      const copy = $('[data-testid=copy-snippet]');
+      if (!copy) throw new Error('the copy button is missing');
+      copy.click();
+      const confirmed = await wait('the button to confirm', async () => {
+        const button = $('[data-testid=copy-snippet]');
+        return button && /copied/i.test(button.textContent) ? button.textContent.trim() : null;
+      }, 8000);
+      await closeModal();
+      return 'button said "' + confirmed + '"';
+    });
+
+    await check('settings: downloads can ask for a destination every time', async () => {
+      $('[data-testid=open-settings]').click();
+      const toggle = await wait('the ask-location setting', () => $('[data-testid=settings-ask-location]'), 10000);
+      const before = toggle.checked;
+      toggle.click();
+      await frame();
+      $('[data-testid=settings-save]').click();
+      await wait('the dialog to close', async () => ($('[data-testid=modal]') ? null : true), 10000);
+
+      $('[data-testid=open-settings]').click();
+      const reopened = await wait('the setting to persist', () => $('[data-testid=settings-ask-location]'), 10000);
+      if (reopened.checked === before) throw new Error('the setting did not persist');
+      // Put it back the way it was.
+      reopened.click();
+      await frame();
+      $('[data-testid=settings-save]').click();
+      await wait('the dialog to close', async () => ($('[data-testid=modal]') ? null : true), 10000);
+      return 'toggled and persisted';
+    });
+
+    await check('transfers: a finished download hides itself', async () => {
+      const panel = $('[data-testid=transfers]');
+      if (!panel) return 'no transfer panel left open';
+      await wait('the finished transfer to disappear', async () =>
+        ($('[data-testid=transfer-done]') ? null : true), 20000);
+      return 'cleared without pressing Clear';
     });
 
     await check('settings: the dialog saves a new preview limit', async () => {

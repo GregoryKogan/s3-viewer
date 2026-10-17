@@ -33,6 +33,7 @@ const form = ref({
   listPageLimit: ui.settings?.listPageLimit ?? 20_000,
   theme: (ui.settings?.theme ?? "dark") as Theme,
   downloadDir: ui.settings?.downloadDir ?? "",
+  askDownloadLocation: ui.settings?.askDownloadLocation ?? false,
   showSystemObjects: ui.settings?.showSystemObjects ?? false,
 });
 
@@ -70,6 +71,7 @@ async function save() {
       listPageLimit: Number(form.value.listPageLimit) || 20_000,
       theme: form.value.theme,
       downloadDir: form.value.downloadDir.trim() || null,
+      askDownloadLocation: form.value.askDownloadLocation,
       showSystemObjects: form.value.showSystemObjects,
     });
     toasts.ok("Settings saved.");
@@ -152,6 +154,22 @@ async function save() {
           <AppButton :icon="FolderOpen" @click="chooseDownloadDir">Choose…</AppButton>
         </div>
       </AppField>
+
+      <label class="mt-3 flex items-start gap-2 text-xs">
+        <input
+          v-model="form.askDownloadLocation"
+          type="checkbox"
+          :class="checkboxClass"
+          class="mt-0.5"
+          data-testid="settings-ask-location"
+        />
+        <span>
+          Ask where to save each download
+          <span class="block text-[0.6875rem] text-muted">
+            When this is off, files go straight to the folder above.
+          </span>
+        </span>
+      </label>
     </fieldset>
 
     <fieldset v-if="ui.security" class="rounded-control border border-line p-3" data-testid="security-summary">

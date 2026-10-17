@@ -1,13 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import {
-  ChevronLeft,
-  ChevronRight,
-  HardDrive,
-  Plus,
-  Settings,
-  Upload,
-} from "@lucide/vue";
+import { ChevronsLeft, ChevronsRight, HardDrive, Plus, Settings, Upload } from "@lucide/vue";
 import AppBadge from "@/components/ui/AppBadge.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import { useConnectionsStore, describeCapabilities } from "@/stores/connections";
@@ -27,6 +20,12 @@ const ui = useUiStore();
 
 const collapsed = computed(() => ui.layout.collapsed);
 
+/**
+ * Below this width the header cannot hold both the text label and the actions, so
+ * the label gives way instead of overlapping the button beside it.
+ */
+const narrow = computed(() => collapsed.value || ui.layout.sidebar < 232);
+
 function toneFor(connection: Connection): "ok" | "warn" | "danger" {
   const summary = describeCapabilities(connections.capabilitiesOf(connection.id));
   if (summary.badgeClass === "ok") return "ok";
@@ -37,42 +36,46 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
 
 <template>
   <aside
-    class="flex h-full shrink-0 flex-col overflow-hidden border-r border-line bg-surface"
-    :style="{
-      width: ui.layout.collapsed ? '64px' : 'var(--sidebar-width)',
-      minWidth: ui.layout.collapsed ? '64px' : undefined,
-    }"
     id="sidebar"
+    class="flex h-full min-w-0 shrink-0 flex-col overflow-hidden border-r border-line bg-surface"
+    :style="{ width: collapsed ? '4rem' : 'var(--sidebar-width)' }"
     data-testid="sidebar"
   >
     <div class="drag-region h-[var(--titlebar-height)] shrink-0" aria-hidden="true" />
 
-    <div class="flex items-center justify-between gap-1.5 px-3 pt-1 pb-1.5">
-      <span class="sidebar-label text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+    <div class="flex min-h-9 shrink-0 items-center gap-1 px-2 pt-1 pb-1.5">
+      <span
+        v-if="!narrow"
+        class="sidebar-label min-w-0 flex-1 truncate text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase"
+      >
         Connections
       </span>
-      <div class="no-drag ml-auto flex items-center gap-0.5">
-        <AppButton
-          variant="primary"
-          size="sm"
-          :icon="Plus"
-          title="Add a connection (⌘N)"
-          id="new-connection"
-          data-testid="new-connection"
-          @click="emit('create')"
-        >
-          <span class="sidebar-label">New</span>
-        </AppButton>
-        <button
-          type="button"
-          class="grid size-6 place-items-center rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
-          :title="collapsed ? 'Expand the sidebar (⌘B)' : 'Collapse the sidebar (⌘B)'"
-          data-testid="collapse-sidebar"
-          @click="ui.toggleSidebar()"
-        >
-          <component :is="collapsed ? ChevronRight : ChevronLeft" class="size-3.5" />
-        </button>
-      </div>
+      <span v-else class="flex-1" />
+
+      <AppButton
+        v-if="!collapsed"
+        variant="primary"
+        size="sm"
+        :icon="Plus"
+        id="new-connection"
+        data-testid="new-connection"
+        class="shrink-0"
+        :title="narrow ? 'Add a connection (⌘N)' : undefined"
+        @click="emit('create')"
+      >
+        <span v-if="!narrow">New</span>
+      </AppButton>
+      <button
+        v-else
+        type="button"
+        class="grid size-9 shrink-0 place-items-center rounded-control bg-accent text-white transition-colors hover:bg-accent-hover"
+        title="Add a connection (⌘N)"
+        id="new-connection"
+        data-testid="new-connection"
+        @click="emit('create')"
+      >
+        <Plus class="size-4" />
+      </button>
     </div>
 
     <div
@@ -85,68 +88,113 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
         Add one, or import the credentials file you already use.
       </p>
 
-      <button
-        v-for="view in connections.views"
-        :key="view.connection.id"
-        type="button"
-        class="flex w-full min-w-0 shrink-0 flex-col items-stretch gap-1 rounded-control border px-2 py-1.5 text-left transition-colors"
-        :class="
-          view.connection.id === connections.activeId
-            ? 'border-line-strong bg-active'
-            : 'border-transparent hover:bg-hover'
-        "
-        :aria-selected="view.connection.id === connections.activeId"
-        :data-testid="`connection-${view.connection.id}`"
-        :title="`${view.connection.bucket}/${view.connection.prefix}`"
-        @click="emit('open', view.connection)"
-        @contextmenu.prevent="emit('contextmenu', view.connection, $event)"
-      >
-        <div class="flex min-w-0 items-center gap-1.5">
-          <HardDrive class="size-3.5 shrink-0 text-subtle" />
-          <span class="min-w-0 flex-1 truncate text-xs font-medium text-content">
-            {{ view.connection.name }}
-          </span>
+      <!-- Collapsed: a rail of large, centred targets instead of squeezed cards. -->
+      <template v-if="collapsed">
+        <button
+          v-for="view in connections.views"
+          :key="view.connection.id"
+          type="button"
+          class="relative grid size-11 shrink-0 place-items-center rounded-control border transition-colors"
+          :class="
+            view.connection.id === connections.activeId
+              ? 'border-line-strong bg-active text-content'
+              : 'border-transparent text-muted hover:bg-hover hover:text-content'
+          "
+          :title="`${view.connection.name} — ${view.connection.bucket}/${view.connection.prefix}`"
+          :data-testid="`connection-${view.connection.id}`"
+          @click="emit('open', view.connection)"
+          @contextmenu.prevent="emit('contextmenu', view.connection, $event)"
+        >
+          <HardDrive class="size-4" />
           <span
-            class="size-1.5 shrink-0 rounded-full"
+            class="absolute right-1 bottom-1 size-1.5 rounded-full"
             :class="{
               'bg-ok': toneFor(view.connection) === 'ok',
               'bg-warn': toneFor(view.connection) === 'warn',
               'bg-danger': toneFor(view.connection) === 'danger',
             }"
-            :title="describeCapabilities(view.capabilities).summary"
           />
-        </div>
+        </button>
+      </template>
 
-        <div class="sidebar-label min-w-0 truncate text-[0.6875rem] leading-snug text-subtle" dir="ltr">
-          {{ view.connection.bucket }}<span class="text-muted">/{{ view.connection.prefix }}</span>
-        </div>
-        <div class="sidebar-label flex flex-wrap gap-1">
-          <AppBadge :tone="toneFor(view.connection)">
-            {{ describeCapabilities(view.capabilities).badge }}
-          </AppBadge>
-          <AppBadge v-if="view.connection.signatureVersion !== 's3v4'" tone="accent">
-            {{ view.connection.signatureVersion }}
-          </AppBadge>
-          <AppBadge v-if="view.connection.security.readOnlyMode" tone="danger">
-            read-only
-          </AppBadge>
-        </div>
-      </button>
+      <template v-else>
+        <button
+          v-for="view in connections.views"
+          :key="view.connection.id"
+          type="button"
+          class="flex w-full shrink-0 flex-col items-stretch gap-1 rounded-control border px-2 py-1.5 text-left transition-colors"
+          :class="
+            view.connection.id === connections.activeId
+              ? 'border-line-strong bg-active'
+              : 'border-transparent hover:bg-hover'
+          "
+          :aria-selected="view.connection.id === connections.activeId"
+          :data-testid="`connection-${view.connection.id}`"
+          :title="`${view.connection.bucket}/${view.connection.prefix}`"
+          @click="emit('open', view.connection)"
+          @contextmenu.prevent="emit('contextmenu', view.connection, $event)"
+        >
+          <div class="flex min-w-0 items-center gap-1.5">
+            <HardDrive class="size-3.5 shrink-0 text-subtle" />
+            <span class="min-w-0 flex-1 truncate text-xs font-medium text-content">
+              {{ view.connection.name }}
+            </span>
+            <span
+              class="size-1.5 shrink-0 rounded-full"
+              :class="{
+                'bg-ok': toneFor(view.connection) === 'ok',
+                'bg-warn': toneFor(view.connection) === 'warn',
+                'bg-danger': toneFor(view.connection) === 'danger',
+              }"
+              :title="describeCapabilities(view.capabilities).summary"
+            />
+          </div>
+
+          <div class="min-w-0 truncate text-[0.6875rem] leading-snug text-subtle" dir="ltr">
+            {{ view.connection.bucket }}<span class="text-muted">/{{ view.connection.prefix }}</span>
+          </div>
+          <div class="flex flex-wrap gap-1">
+            <AppBadge :tone="toneFor(view.connection)">
+              {{ describeCapabilities(view.capabilities).badge }}
+            </AppBadge>
+            <AppBadge v-if="view.connection.signatureVersion !== 's3v4'" tone="accent">
+              {{ view.connection.signatureVersion }}
+            </AppBadge>
+            <AppBadge v-if="view.connection.security.readOnlyMode" tone="danger">
+              read-only
+            </AppBadge>
+          </div>
+        </button>
+      </template>
 
       <button
         v-if="connections.views.length"
         type="button"
-        class="mt-1 flex items-center gap-1.5 rounded-control px-2 py-1.5 text-[0.6875rem] text-muted transition-colors hover:bg-hover hover:text-content"
+        class="flex shrink-0 items-center gap-1.5 rounded-control text-[0.6875rem] text-muted transition-colors hover:bg-hover hover:text-content"
+        :class="collapsed ? 'mx-auto size-9 justify-center' : 'mt-1 px-2 py-1.5'"
+        title="Import connections from JSON"
         data-testid="import-connections"
         @click="emit('import')"
       >
-        <Upload class="size-3.5 shrink-0" />
-        <span class="sidebar-label">Import from JSON…</span>
+        <Upload class="size-4 shrink-0" />
+        <span v-if="!collapsed">Import from JSON…</span>
       </button>
     </div>
 
-    <div class="shrink-0 border-t border-line p-1.5">
+    <!-- Footer: the collapse toggle is a full-width 36px target in both states. -->
+    <div class="flex shrink-0 flex-col gap-0.5 border-t border-line p-1.5">
+      <button
+        v-if="collapsed"
+        type="button"
+        class="grid h-9 w-full place-items-center rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
+        title="Settings"
+        data-testid="open-settings"
+        @click="emit('settings')"
+      >
+        <Settings class="size-4" />
+      </button>
       <AppButton
+        v-else
         variant="ghost"
         block
         :icon="Settings"
@@ -154,8 +202,20 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
         data-testid="open-settings"
         @click="emit('settings')"
       >
-        <span class="sidebar-label">Settings</span>
+        Settings
       </AppButton>
+
+      <button
+        type="button"
+        class="flex h-9 w-full items-center gap-2 rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
+        :class="collapsed ? 'justify-center' : 'px-2.5'"
+        :title="collapsed ? 'Expand the sidebar (⌘B)' : 'Collapse the sidebar (⌘B)'"
+        data-testid="collapse-sidebar"
+        @click="ui.toggleSidebar()"
+      >
+        <component :is="collapsed ? ChevronsRight : ChevronsLeft" class="size-4 shrink-0" />
+        <span v-if="!collapsed" class="text-xs">Collapse</span>
+      </button>
     </div>
   </aside>
 </template>

@@ -8,7 +8,6 @@ import type { PreviewData } from "@/types";
 const props = defineProps<{ data: PreviewData }>();
 const emit = defineEmits<{ download: [] }>();
 
-const isPdf = computed(() => props.data.kind === "pdf");
 const isAudio = computed(() => props.data.kind === "audio");
 </script>
 
@@ -21,16 +20,7 @@ const isAudio = computed(() => props.data.kind === "audio");
       </AppButton>
     </div>
 
-    <div v-if="isPdf" class="min-h-0 flex-1 p-2">
-      <iframe
-        :src="props.data.streamUrl"
-        :title="props.data.key"
-        class="size-full rounded-control border border-line bg-white"
-        data-testid="preview-pdf"
-      />
-    </div>
-
-    <div v-else class="flex min-h-0 flex-1 items-center justify-center p-3">
+    <div class="flex min-h-0 flex-1 items-center justify-center p-3">
       <audio
         v-if="isAudio"
         :src="props.data.streamUrl"

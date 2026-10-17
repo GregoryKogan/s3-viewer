@@ -52,7 +52,9 @@ test("each kind reaches the renderer that understands it", () => {
   assert.equal(map.get("image"), "PreviewImage");
   assert.equal(map.get("audio"), "PreviewMedia");
   assert.equal(map.get("video"), "PreviewMedia");
-  assert.equal(map.get("pdf"), "PreviewMedia");
+  // PDF has its own renderer: it needs zoom and page navigation, which an
+  // embedded frame cannot provide.
+  assert.equal(map.get("pdf"), "PreviewPdf");
   assert.equal(map.get("markdown"), "PreviewMarkdown");
   assert.equal(map.get("parquet"), "PreviewTable");
   assert.equal(map.get("csv"), "PreviewTable");

@@ -29,7 +29,12 @@ export const useObjectsStore = defineStore("objects", () => {
   const warning = ref<string | null>(null);
   const error = ref<string | null>(null);
 
+  /** Bulk selection: what the toolbar acts on. */
   const selected = ref(new Set<string>());
+  /** The row whose preview is open; independent of the selection. */
+  const focusedKey = ref<string | null>(null);
+  /** Where a Shift+click range starts. */
+  const selectionAnchor = ref<string | null>(null);
   const filter = ref("");
   const sortKey = ref<SortKey>("name");
   const sortAscending = ref(true);
@@ -71,6 +76,8 @@ export const useObjectsStore = defineStore("objects", () => {
     entries.value = [];
     staged = [];
     selected.value.clear();
+    selectionAnchor.value = null;
+    focusedKey.value = null;
     filter.value = "";
     loading.value = true;
     awaitingFirstPage.value = true;
@@ -101,7 +108,7 @@ export const useObjectsStore = defineStore("objects", () => {
         useToastsStore().error((failure as Error).message, "Cannot list this folder");
       }
     } finally {
-      clearTimeout(guard);
+      clearTimeout(guard!);
     }
   }
 
@@ -137,6 +144,7 @@ export const useObjectsStore = defineStore("objects", () => {
     warning.value = event.warning ?? null;
     prefix.value = event.prefix ?? prefix.value;
     selected.value.clear();
+    selectionAnchor.value = null;
   }
 
   function onListingError(event: ListingErrorEvent) {
@@ -167,6 +175,8 @@ export const useObjectsStore = defineStore("objects", () => {
     entries.value = [];
     staged = [];
     selected.value.clear();
+    selectionAnchor.value = null;
+    focusedKey.value = null;
     loading.value = false;
     awaitingFirstPage.value = false;
     truncated.value = false;
@@ -216,31 +226,51 @@ export const useObjectsStore = defineStore("objects", () => {
     if (next.has(key)) next.delete(key);
     else next.add(key);
     selected.value = next;
+    selectionAnchor.value = key;
   }
 
-  function selectOnly(key: string, extend = false) {
+  /**
+   * Select every row between the anchor and `key`, inclusive.
+   *
+   * The anchor is the last row the user acted on, so repeated Shift+clicks widen
+   * and narrow the same range instead of starting a new one each time.
+   */
+  function selectRange(key: string) {
     const list = visibleEntries.value;
-    if (extend && selected.value.size) {
-      const anchor = [...selected.value][selected.value.size - 1];
-      const from = list.findIndex((entry) => entry.key === anchor);
-      const to = list.findIndex((entry) => entry.key === key);
-      if (from !== -1 && to !== -1) {
-        const next = new Set(selected.value);
-        const [lo, hi] = [from, to].sort((a, b) => a - b);
-        for (let index = lo; index <= hi; index += 1) next.add(list[index].key);
-        selected.value = next;
-        return;
-      }
+    const to = list.findIndex((entry) => entry.key === key);
+    if (to === -1) return;
+    const anchorKey = selectionAnchor.value ?? key;
+    const from = list.findIndex((entry) => entry.key === anchorKey);
+    if (from === -1) {
+      selected.value = new Set([key]);
+      selectionAnchor.value = key;
+      return;
     }
-    selected.value = new Set([key]);
+    const [lo, hi] = from <= to ? [from, to] : [to, from];
+    const next = new Set(selected.value);
+    for (let index = lo; index <= hi; index += 1) next.add(list[index].key);
+    selected.value = next;
   }
 
-  function selectAll(keys: string[]) {
-    selected.value = new Set(keys);
+  /**
+   * Move the focus (and the preview) without touching the selection.
+   *
+   * It also becomes the range anchor: clicking a row and then Shift+clicking
+   * another is the normal way to select everything in between.
+   */
+  function focus(key: string | null, { keepAnchor = false } = {}) {
+    focusedKey.value = key;
+    if (key && !keepAnchor) selectionAnchor.value = key;
   }
 
   function clearSelection() {
     selected.value = new Set();
+    selectionAnchor.value = null;
+  }
+
+  function selectAll(keys: string[]) {
+    selected.value = new Set(keys);
+    selectionAnchor.value = keys[0] ?? null;
   }
 
   const selectedEntries = computed(() =>
@@ -326,6 +356,8 @@ export const useObjectsStore = defineStore("objects", () => {
     warning,
     error,
     selected,
+    focusedKey,
+    selectionAnchor,
     filter,
     sortKey,
     sortAscending,
@@ -349,7 +381,8 @@ export const useObjectsStore = defineStore("objects", () => {
     close,
     setSort,
     toggleSelected,
-    selectOnly,
+    selectRange,
+    focus,
     selectAll,
     clearSelection,
     clearPreview,

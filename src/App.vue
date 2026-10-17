@@ -1,6 +1,19 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { PanelLeft } from "@lucide/vue";
+import {
+  Copy,
+  Download,
+  Eye,
+  FilePlus,
+  FolderOpen,
+  FolderPlus,
+  Link2,
+  MoveRight,
+  PanelLeft,
+  RefreshCw,
+  Trash2,
+  Upload,
+} from "@lucide/vue";
 import AppSidebar from "@/components/layout/AppSidebar.vue";
 import AppHeader from "@/components/layout/AppHeader.vue";
 import Resizer from "@/components/layout/Resizer.vue";
@@ -12,10 +25,11 @@ import ToastStack from "@/components/ui/ToastStack.vue";
 import DialogHost from "@/components/ui/DialogHost.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
+import ContextMenu, { type MenuItem } from "@/components/ui/ContextMenu.vue";
 import ConnectionDialog from "@/components/dialogs/ConnectionDialog.vue";
 import SettingsDialog from "@/components/dialogs/SettingsDialog.vue";
 import ImportDialog from "@/components/dialogs/ImportDialog.vue";
-import { listen } from "@/lib/ipc";
+import { copyText, listen } from "@/lib/ipc";
 import { clamp } from "@/lib/format";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
@@ -40,6 +54,71 @@ const toasts = useToastsStore();
 const actions = useObjectActions();
 
 const objectList = ref<InstanceType<typeof ObjectList> | null>(null);
+
+/** Right-click menu: either on one row, or on the empty background. */
+const menu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null);
+
+function rowMenu(entry: (typeof objects.entries)[number], event: MouseEvent) {
+  const connection = connections.active;
+  if (!connection) return;
+  const writable = connections.canWriteActive;
+  menu.value = {
+    x: event.clientX,
+    y: event.clientY,
+    items: [
+      entry.isFolder
+        ? { label: "Open", icon: FolderOpen, run: () => void objects.navigate(entry.key) }
+        : { label: "Preview", icon: Eye, run: () => {
+            objects.focus(entry.key);
+            void objects.previewEntry(entry, { force: true });
+          } },
+      ...(entry.isFolder
+        ? []
+        : [
+            { label: "Download", icon: Download, run: () => void actions.downloadEntry(entry) },
+            { label: "Copy S3 URI", icon: Link2, run: () => void actions.copyUri(entry) },
+            {
+              label: "Copy name",
+              icon: Copy,
+              run: () => void copyText(entry.name).then((ok) =>
+                ok ? toasts.ok(`Copied “${entry.name}”`) : toasts.error("The clipboard is not available."),
+              ),
+            },
+          ]),
+      ...(writable
+        ? [
+            {
+              label: "Copy to…",
+              icon: MoveRight,
+              separatorBefore: true,
+              run: () => void actions.transferSelection(false),
+            },
+            { label: "Move to…", icon: MoveRight, run: () => void actions.transferSelection(true) },
+            {
+              label: "Delete",
+              icon: Trash2,
+              danger: true,
+              separatorBefore: true,
+              run: () => void actions.deleteSelection(),
+            },
+          ]
+        : []),
+    ] as MenuItem[],
+  };
+}
+
+function backgroundMenu(event: MouseEvent) {
+  menu.value = {
+    x: event.clientX,
+    y: event.clientY,
+    items: [
+      { label: "Upload files…", icon: Upload, run: () => void actions.upload() },
+      { label: "New folder…", icon: FolderPlus, run: () => void actions.createFolder() },
+      { label: "New file…", icon: FilePlus, run: () => void actions.createFile() },
+      { label: "Refresh", icon: RefreshCw, separatorBefore: true, run: () => void objects.reload() },
+    ],
+  };
+}
 const unsubscribers: Array<() => void> = [];
 
 const hasConnection = computed(() => Boolean(connections.active));
@@ -89,7 +168,7 @@ async function editConnection() {
 
 async function openSettings() {
   await dialogs.open(SettingsDialog, (settle) => ({ resolve: settle }), "normal");
-  await objects.reload();
+  // Nothing about the folder changed, so there is nothing to re-list.
 }
 
 async function openImport() {
@@ -135,6 +214,16 @@ async function onKeydown(event: KeyboardEvent) {
     await editConnection();
     return;
   }
+  if (meta && event.key.toLowerCase() === "l") {
+    event.preventDefault();
+    document.querySelector<HTMLButtonElement>('[data-testid=address-edit]')?.click();
+    return;
+  }
+  if (meta && event.key.toLowerCase() === "a" && !editingTarget() && hasConnection.value) {
+    event.preventDefault();
+    objects.selectAll(objects.visibleEntries.map((entry) => entry.key));
+    return;
+  }
   if (dialogs.isOpen() || editingTarget()) return;
 
   const rows = objects.visibleEntries;
@@ -147,16 +236,16 @@ async function onKeydown(event: KeyboardEvent) {
     const next = clamp(current + delta, 0, rows.length - 1);
     const entry = rows[next];
     if (!entry) return;
-    if (!event.shiftKey) objects.selectOnly(entry.key);
-    else objects.toggleSelected(entry.key);
+    objects.focus(entry.key);
+    if (event.shiftKey) objects.selectRange(entry.key);
     objectList.value?.scrollToRow(next);
     void objects.previewEntry(entry);
     return;
   }
 
-  if (event.key === "Enter" && objects.selected.size === 1) {
+  if (event.key === "Enter" && objects.focusedKey) {
     event.preventDefault();
-    const key = [...objects.selected][0];
+    const key = objects.focusedKey;
     const entry = rows.find((item) => item.key === key);
     if (!entry) return;
     if (entry.isFolder) await objects.navigate(entry.key);
@@ -250,7 +339,8 @@ onMounted(async () => {
     createConnection,
     editConnection,
     select: (key: string) => {
-      objects.selectOnly(key);
+      objects.focus(key);
+      objects.selectAll([key]);
       const entry = objects.entries.find((item) => item.key === key);
       if (entry) void objects.previewEntry(entry, { force: true });
     },
@@ -314,7 +404,7 @@ function onDrop(paths: string[]) {
 
         <div class="flex min-h-0 flex-1">
           <div v-if="hasConnection" class="flex min-h-0 min-w-0 flex-1 flex-col">
-            <ObjectList ref="objectList" />
+            <ObjectList ref="objectList" @contextmenu="rowMenu" @background="backgroundMenu" />
           </div>
 
           <div v-else class="flex flex-1 items-center justify-center p-8">
@@ -346,6 +436,14 @@ function onDrop(paths: string[]) {
         <DropZone @drop="onDrop" />
       </main>
     </div>
+
+    <ContextMenu
+      v-if="menu"
+      :x="menu.x"
+      :y="menu.y"
+      :items="menu.items"
+      @close="menu = null"
+    />
 
     <TransferPanel />
     <ToastStack />

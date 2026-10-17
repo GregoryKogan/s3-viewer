@@ -15,7 +15,7 @@ const TONES: Record<Toast["level"], string> = {
 <template>
   <Teleport to="body">
     <div
-      class="pointer-events-none fixed bottom-4 left-1/2 z-40 flex w-max max-w-[min(40rem,80vw)] -translate-x-1/2 flex-col gap-2"
+      class="pointer-events-none fixed bottom-4 left-1/2 z-[80] flex w-max max-w-[min(40rem,80vw)] -translate-x-1/2 flex-col gap-2"
       data-testid="toasts"
     >
       <div

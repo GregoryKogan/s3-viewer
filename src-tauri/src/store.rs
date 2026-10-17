@@ -54,6 +54,9 @@ pub struct AppSettings {
     /// Where downloads land. `None` -> the OS download directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub download_dir: Option<String>,
+    /// Ask for a destination on every download instead of using `download_dir`.
+    #[serde(default)]
+    pub ask_download_location: bool,
     /// Show hidden-ish entries (dotfiles, `_SUCCESS`, `_temporary`).
     pub show_system_objects: bool,
     pub theme: Theme,
@@ -75,6 +78,7 @@ impl Default for AppSettings {
             preview_max_bytes: 25 * 1024 * 1024,
             list_page_limit: 20_000,
             download_dir: None,
+            ask_download_location: false,
             show_system_objects: false,
             theme: Theme::Dark,
             layout: LayoutSettings::default(),
