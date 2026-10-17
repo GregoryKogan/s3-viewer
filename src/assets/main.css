@@ -161,6 +161,24 @@
   }
 }
 
+/* ------------------------------------------------------------ shell layout
+   Collapsing and hiding are expressed on the root element, the way the shell is
+   actually laid out. Template branches are not involved, so these two cannot get
+   out of step with the store. */
+
+[data-sidebar-collapsed] #sidebar {
+  width: 4rem !important;
+  min-width: 4rem !important;
+}
+
+[data-sidebar-collapsed] #sidebar .sidebar-label {
+  display: none;
+}
+
+[data-preview-hidden] #preview {
+  display: none !important;
+}
+
 /* ------------------------------------------------------------- scrollbars */
 
 @layer utilities {

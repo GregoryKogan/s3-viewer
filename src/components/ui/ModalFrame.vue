@@ -1,9 +1,16 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, type Component } from "vue";
 import { X } from "@lucide/vue";
-import { MODAL_WIDTH, type ModalProps } from "./types";
+import { MODAL_WIDTH } from "./types";
 
-const props = withDefaults(defineProps<ModalProps>(), { size: "normal" });
+const props = withDefaults(
+  defineProps<{
+    title: string;
+    size?: "normal" | "narrow" | "wide";
+    icon?: Component;
+  }>(),
+  { size: "normal" },
+);
 const emit = defineEmits<{ close: [] }>();
 
 const width = computed(() => MODAL_WIDTH[props.size]);
@@ -27,6 +34,7 @@ const width = computed(() => MODAL_WIDTH[props.size]);
         type="button"
         class="grid size-6 shrink-0 place-items-center rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
         aria-label="Close"
+        data-testid="modal-close"
         @click="emit('close')"
       >
         <X class="size-3.5" />

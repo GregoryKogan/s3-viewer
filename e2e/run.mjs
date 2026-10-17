@@ -118,10 +118,9 @@ async function main() {
   );
   log(`  uploaded ${SMALL_FILES.length + 2} fixture(s), including the oversized file`);
 
-  // A minified bundle keeps the webview fast; pass --debug to the build script
-  // by hand when a readable stack trace is needed.
+  // Vite builds the Vue app; the output lands in dist/, which Tauri loads.
   log("\n▶ build the frontend");
-  const frontend = spawnSync("node", ["scripts/build-frontend.mjs"], {
+  const frontend = spawnSync("pnpm", ["build:frontend"], {
     cwd: root,
     stdio: "inherit",
   });

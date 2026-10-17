@@ -1,14 +1,7 @@
-import type { Component } from "vue";
+/** Shared modal geometry. Values only — prop shapes live in their components. */
 
 export type ModalSize = "normal" | "narrow" | "wide";
 
-export interface ModalProps {
-  title: string;
-  size?: ModalSize;
-  icon?: Component;
-}
-
-/** Shared sizing for the modal shell, used by the stack and the frame. */
 export const MODAL_WIDTH: Record<ModalSize, string> = {
   narrow: "max-w-md",
   normal: "max-w-2xl",

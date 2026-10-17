@@ -883,6 +883,8 @@ pub struct DeleteInput {
 pub struct DeleteOutcome {
     pub deleted: usize,
     pub summary: String,
+    /// Id of the queued progress entry, so the UI can wait for completion.
+    pub id: String,
 }
 
 #[tauri::command]
@@ -897,6 +899,7 @@ pub async fn delete_objects(
         return Ok(DeleteOutcome {
             deleted: 0,
             summary: "nothing selected".into(),
+            id: String::new(),
         });
     }
     let store = core.client(&input.connection_id).map_err(err)?;
@@ -923,6 +926,7 @@ pub async fn delete_objects(
         return Ok(DeleteOutcome {
             deleted: 0,
             summary: format!("{folders} empty folder(s) — nothing to delete"),
+            id: String::new(),
         });
     }
 
@@ -932,16 +936,18 @@ pub async fn delete_objects(
     let tracker = core.progress.clone();
     let store_task = store.clone();
     let keys_task = keys.clone();
+    let progress_id_task = progress_id.clone();
     tauri::async_runtime::spawn(async move {
         match store_task.delete_many(&keys_task).await {
-            Ok(()) => tracker.finish(&progress_id, None),
-            Err(e) => tracker.fail(&progress_id, crate::model::describe_error(&e)),
+            Ok(()) => tracker.finish(&progress_id_task, None),
+            Err(e) => tracker.fail(&progress_id_task, crate::model::describe_error(&e)),
         }
     });
 
     Ok(DeleteOutcome {
         deleted: keys.len(),
         summary: format!("deleting {} object(s)", keys.len()),
+        id: progress_id,
     })
 }
 

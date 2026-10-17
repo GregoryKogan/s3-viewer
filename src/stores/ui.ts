@@ -31,6 +31,7 @@ export const useUiStore = defineStore("ui", () => {
       layout.value = { ...layout.value, ...settings.value.layout };
     }
     applyTheme();
+    applyLayoutDom();
     ready.value = true;
   }
 
@@ -44,6 +45,27 @@ export const useUiStore = defineStore("ui", () => {
 
   function prefersLight() {
     return globalThis.matchMedia?.("(prefers-color-scheme: light)").matches ?? false;
+  }
+
+  /**
+   * Push the layout into the document.
+   *
+   * Widths and the panel's visibility are expressed as CSS custom properties and
+   * attributes on the root element rather than as per-component inline styles:
+   * the shell is a flex layout, and a value the browser reads from the root can
+   * never disagree with the store it came from.
+   */
+  function applyLayoutDom() {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    root.style.setProperty("--sidebar-width", `${layout.value.sidebar}px`);
+    root.style.setProperty("--preview-width", `${layout.value.preview}px`);
+    root.toggleAttribute("data-sidebar-collapsed", layout.value.collapsed);
+    root.toggleAttribute("data-preview-hidden", previewHidden.value);
+    // Both forms, because `display:none` and the `hidden` attribute answer
+    // different questions and the API surface reports the attribute.
+    const aside = document.getElementById("preview");
+    if (aside) aside.hidden = previewHidden.value;
   }
 
   function applyTheme() {
@@ -62,8 +84,10 @@ export const useUiStore = defineStore("ui", () => {
       layout: layout.value,
       ...next,
     };
-    settings.value = await api.updateSettings(merged);
-    layout.value = { ...layout.value, ...(settings.value.layout ?? {}) };
+    const saved = await api.updateSettings(merged);
+    // Keep the local layout: it is newer than the value that came back, and the
+    // response would otherwise undo a collapse or a resize that just happened.
+    settings.value = { ...saved, layout: { ...layout.value } };
     applyTheme();
     return settings.value;
   }
@@ -82,32 +106,38 @@ export const useUiStore = defineStore("ui", () => {
 
   function setSidebarWidth(width: number) {
     layout.value.sidebar = clamp(Math.round(width), SIDEBAR_MIN, SIDEBAR_MAX);
+    applyLayoutDom();
     persistLayout();
   }
 
   function setPreviewWidth(width: number) {
     const max = Math.max(PREVIEW_MIN + 20, Math.round(globalThis.innerWidth * 0.7));
     layout.value.preview = clamp(Math.round(width), PREVIEW_MIN, max);
+    applyLayoutDom();
     persistLayout();
   }
 
   function resetSidebarWidth() {
     layout.value.sidebar = LAYOUT_DEFAULTS.sidebar;
+    applyLayoutDom();
     persistLayout();
   }
 
   function resetPreviewWidth() {
     layout.value.preview = LAYOUT_DEFAULTS.preview;
+    applyLayoutDom();
     persistLayout();
   }
 
   function toggleSidebar() {
     layout.value.collapsed = !layout.value.collapsed;
+    applyLayoutDom();
     persistLayout();
   }
 
   function togglePreview() {
     previewHidden.value = !previewHidden.value;
+    applyLayoutDom();
   }
 
   function clampLayoutToWindow() {
@@ -129,6 +159,7 @@ export const useUiStore = defineStore("ui", () => {
     load,
     loadSecurity,
     applyTheme,
+    applyLayoutDom,
     saveSettings,
     setSidebarWidth,
     setPreviewWidth,

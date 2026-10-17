@@ -30,7 +30,7 @@ function onClick(event: MouseEvent) {
 
 <template>
   <div
-    class="group absolute inset-x-0 grid h-[var(--row-height)] cursor-default grid-cols-[34px_minmax(180px,1fr)_92px_168px_92px] items-center gap-1.5 px-3.5 select-none"
+    class="object-row group absolute inset-x-0 grid h-[var(--row-height)] cursor-default grid-cols-[34px_minmax(180px,1fr)_92px_168px_92px] items-center gap-1.5 px-3.5 select-none"
     :class="[
       props.selected ? 'bg-accent/20' : 'hover:bg-hover',
       props.entry.isFolder ? 'text-content' : 'text-content/90',
@@ -56,7 +56,7 @@ function onClick(event: MouseEvent) {
 
     <div class="flex min-w-0 items-center gap-1.5">
       <component :is="style.icon" class="size-3.5 shrink-0" :class="style.className" />
-      <span class="truncate" :title="props.entry.key">{{ props.entry.name }}</span>
+      <span class="row-label truncate" :title="props.entry.key">{{ props.entry.name }}</span>
       <button
         type="button"
         class="ml-auto grid size-5 shrink-0 place-items-center rounded-[4px] text-subtle opacity-0 transition-opacity hover:bg-active hover:text-content group-hover:opacity-100 focus-visible:opacity-100"

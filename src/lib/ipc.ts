@@ -218,7 +218,7 @@ export const api = {
   createFile: (input: { connectionId: string; prefix: string; name: string; content?: string }) =>
     invoke<string>("create_file", { input }),
   deleteObjects: (input: DeleteInput) =>
-    invoke<{ deleted: number; summary: string }>("delete_objects", { input }),
+    invoke<{ deleted: number; summary: string; id: string }>("delete_objects", { input }),
   copyObjects: (input: CopyInput) =>
     invoke<{ copied: number; summary: string; id: string }>("copy_objects", { input }),
 

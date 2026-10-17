@@ -38,7 +38,7 @@ const status = computed(() => {
 </script>
 
 <template>
-  <div class="flex flex-wrap items-center gap-1 px-3.5 pb-2" data-testid="toolbar">
+  <div id="toolbar" class="flex flex-wrap items-center gap-1 px-3.5 pb-2" data-testid="toolbar">
     <AppButton
       :icon="Upload"
       :disabled="!canWrite"

@@ -50,5 +50,3 @@ export const useProgressStore = defineStore("transfers", () => {
 
   return { items, running, poll, start, stop, clear, waitFor };
 });
-
-export { useUiStore };

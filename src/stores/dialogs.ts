@@ -1,12 +1,13 @@
 import { defineStore } from "pinia";
 import { markRaw, ref, type Component } from "vue";
-import type { ModalProps } from "@/components/ui/ModalFrame.vue";
+/** Kept local so the store does not import from a component module. */
+type DialogSize = "normal" | "narrow" | "wide";
 
 export interface DialogRequest<P = Record<string, unknown>> {
   id: number;
   component: Component;
   props: P;
-  size: ModalProps["size"];
+  size: DialogSize;
   /** Reject-free cancellation: everything resolves, `null` means "cancelled". */
   onCancel?: () => void;
 }
@@ -26,7 +27,7 @@ export const useDialogsStore = defineStore("dialogs", () => {
   function open<R>(
     component: Component,
     buildProps: (settle: (value: R) => void) => Record<string, unknown>,
-    size: ModalProps["size"] = "normal",
+    size: DialogSize = "normal",
   ): Promise<R> {
     const id = nextId++;
     return new Promise<R>((resolve) => {

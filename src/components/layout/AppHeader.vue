@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { Search, RefreshCw, PanelRight, Upload } from "@lucide/vue";
+import { Search, RefreshCw, PanelRight } from "@lucide/vue";
 import AppBreadcrumb from "./AppBreadcrumb.vue";
 import AppToolbar from "./AppToolbar.vue";
 import AppButton from "@/components/ui/AppButton.vue";

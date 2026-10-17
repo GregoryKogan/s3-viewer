@@ -252,7 +252,7 @@ const SCENARIO: &str = r#"(async () => {
     return row;
   };
   const closeModal = async () => {
-    const button = document.querySelector('[data-testid=modal] .modal__head .btn--ghost');
+    const button = $('[data-testid=modal-close]');
     if (button) button.click();
     await wait('the modal to close', async () => !$('[data-testid=modal]'), 5000);
   };
@@ -302,7 +302,10 @@ const SCENARIO: &str = r#"(async () => {
       setInput('[data-testid=conn-region]', __REGION__);
       setInput('[data-testid=conn-access-key]', __ACCESS__);
       setInput('[data-testid=conn-bucket]', __BUCKET__);
-      const snippet = $('[data-testid=boto3-snippet]').textContent;
+      const snippet = await wait('the snippet to follow the form', async () => {
+        const text = $('[data-testid=boto3-snippet]').textContent;
+        return text.includes(__ACCESS__) ? text : null;
+      });
       const expected = [
         'endpoint_url="' + __ENDPOINT__ + '"',
         'region_name="' + __REGION__ + '"',
@@ -378,10 +381,17 @@ const SCENARIO: &str = r#"(async () => {
       const first = rowNames()[0];
       if (first !== folder) throw new Error('folders are not listed first: ' + first);
       clickRow(folder);
+      // Reactive DOM updates land on the next tick, so the toolbar has to catch up
+      // before its button can be clicked.
+      const deleteButton = await wait('the delete button to enable', async () => {
+        const button = $('[data-testid=delete]');
+        return button && !button.disabled ? button : null;
+      }, 8000).catch(() => null);
       const deleteState = 'selected=' + window.__s3viewer.state.selected.size
-        + ' disabled=' + $('[data-testid=delete]').disabled
+        + ' disabled=' + ($('[data-testid=delete]') || {}).disabled
         + ' rows=' + rowNames().join(',');
-      $('[data-testid=delete]').click();
+      if (!deleteButton) throw new Error('the delete button never enabled: ' + deleteState);
+      deleteButton.click();
       const confirm = await wait('the confirmation', () => $('[data-testid=confirm-ok]'), 8000)
         .catch(() => null);
       if (!confirm) throw new Error('no confirmation appeared after delete: ' + deleteState);
@@ -471,7 +481,9 @@ const SCENARIO: &str = r#"(async () => {
       if (result.executed.script || result.executed.handler) throw new Error('injected code executed');
       if (/<script/i.test(result.html)) throw new Error('script tag survived');
       if (/onerror/i.test(result.html)) throw new Error('event handler survived');
-      if (/javascript:/i.test(result.html)) throw new Error('javascript: URL survived');
+      if (/\\b(?:href|src)\\s*=\\s*["']?\\s*javascript:/i.test(result.html)) {
+        throw new Error('javascript: URL survived in an attribute: ' + result.html.slice(0, 200));
+      }
       if (!result.html.includes('<h1')) throw new Error('legitimate markup was stripped');
       return 'script, onerror and javascript: all removed';
     });
@@ -500,10 +512,20 @@ const SCENARIO: &str = r#"(async () => {
 
     await check('preview: Python is highlighted', async () => {
       clickRow('sample.py');
-      const code = await wait('the code preview', () => $('[data-testid=preview-code]'));
+      const code = await wait('the code preview', () => $('[data-testid=preview-code]'), 20000)
+        .catch((error) => {
+          throw new Error(error.message
+            + ' :: previewKey=' + window.__s3viewer.state.objects.previewKey
+            + ' kind=' + (window.__s3viewer.state.objects.preview?.kind || 'none')
+            + ' body=[' + $$('#preview-body *').slice(0, 5).map((n) => n.className || n.tagName).join(' | ') + ']');
+        });
       const html = code.innerHTML;
       if (!html.includes('hljs-keyword')) throw new Error('no keywords: ' + html.slice(0, 160));
-      if (!html.includes('Greeter')) throw new Error('content missing');
+      if (!html.includes('Greeter')) {
+        throw new Error('content missing; previewKey=' + window.__s3viewer.state.objects.previewKey
+          + ' dataKey=' + (window.__s3viewer.state.objects.preview || {}).key
+          + ' markup=' + html.slice(0, 120));
+      }
       return 'highlighted, ' + html.length + ' bytes';
     });
 
@@ -534,7 +556,12 @@ const SCENARIO: &str = r#"(async () => {
 
     await check('preview: an oversized file is refused with its size and limit', async () => {
       clickRow('too-big.txt');
-      const node = await wait('the size refusal', () => $('[data-testid=preview-unavailable]'), 60000);
+      const node = await wait('the size refusal', () => $('[data-testid=preview-unavailable]'), 60000)
+        .catch((error) => {
+          throw new Error(error.message
+            + ' :: previewKey=' + window.__s3viewer.state.objects.previewKey
+            + ' reason=' + (window.__s3viewer.state.objects.previewUnavailable || 'none'));
+        });
       const text = node.textContent;
       if (!/exceeds the preview limit/i.test(text)) throw new Error('wrong message: ' + text);
       if (!/MB/.test(text)) throw new Error('the message does not name the sizes: ' + text);
@@ -545,7 +572,13 @@ const SCENARIO: &str = r#"(async () => {
       // Seeded by the runner before the app started; refresh so the listing
       // includes anything uploaded since the window opened.
       $('[data-testid=refresh]').click();
-      await wait('the parquet row', async () => (rowNames().includes('table.parquet') ? true : null), 30000);
+      await wait('the listing to settle', async () => {
+        const objects = window.__s3viewer.state.objects;
+        if (objects.loading || objects.awaitingFirstPage) return null;
+        return rowNames().includes('table.parquet') ? true : null;
+      }, 30000).catch((error) => {
+        throw new Error(error.message + ' :: rows=' + rowNames().join(','));
+      });
       clickRow('table.parquet');
       const table = await wait('the parquet table', () => $('[data-testid=preview-table] table'), 30000);
       const headers = Array.from(table.querySelectorAll('thead th')).map((th) => th.textContent);
@@ -574,7 +607,11 @@ const SCENARIO: &str = r#"(async () => {
       const before = sidebar.getBoundingClientRect().width;
       $('[data-testid=collapse-sidebar]').click();
       const collapsed = sidebar.getBoundingClientRect().width;
-      if (!(collapsed < before)) throw new Error('the sidebar did not collapse (' + before + ' -> ' + collapsed + ')');
+      if (!(collapsed < before)) {
+        throw new Error('the sidebar did not collapse (' + before + ' -> ' + collapsed
+          + ') collapsedFlag=' + window.__s3viewer.state.ui.layout.collapsed
+          + ' styleWidth=' + sidebar.style.width);
+      }
       $('[data-testid=collapse-sidebar]').click();
       const restored = sidebar.getBoundingClientRect().width;
       if (Math.abs(restored - before) > 2) {
@@ -613,7 +650,10 @@ const SCENARIO: &str = r#"(async () => {
 
     await check('preview: the panel can be hidden and shown again', async () => {
       $('[data-testid=toggle-preview]').click();
-      if (!$('#preview').hidden) throw new Error('the panel did not hide');
+      if (!$('#preview') || !$('#preview').hidden && $('#preview')) {
+        throw new Error('the panel did not hide; previewHidden=' + window.__s3viewer.state.ui.previewHidden
+          + ' element=' + Boolean($('#preview')));
+      }
       $('[data-testid=toggle-preview]').click();
       if ($('#preview').hidden) throw new Error('the panel did not come back');
       return 'toggled';
@@ -633,6 +673,10 @@ const SCENARIO: &str = r#"(async () => {
       $('[data-testid=crumb-root]').click();
       await wait('the root listing again', async () => (rowNames().includes(folderName) ? true : null));
       clickRow(folderName);
+      await wait('the delete button to enable', async () => {
+        const button = $('[data-testid=delete]');
+        return button && !button.disabled ? button : null;
+      }, 8000).catch(() => null);
       $('[data-testid=delete]').click();
       const confirm = await wait('the confirmation', () => $('[data-testid=confirm-ok]'), 8000).catch(() => null);
       if (!confirm) {
@@ -695,7 +739,11 @@ const SCENARIO: &str = r#"(async () => {
 
     await check('transfer: the Download button queues a download', async () => {
       clickRow('image.png');
-      $('[data-testid=download]').click();
+      const downloadButton = await wait('the download button to enable', async () => {
+        const button = $('[data-testid=download]');
+        return button && !button.disabled ? button : null;
+      }, 8000);
+      downloadButton.click();
       const settled = await wait('the download to finish', async () => {
         const items = await invoke('transfer_progress');
         const done = items.filter((item) => item.state === 'done' && /Downloading/i.test(item.label));

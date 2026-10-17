@@ -3,7 +3,6 @@ import { computed, ref, shallowRef } from "vue";
 import { api } from "@/lib/ipc";
 import { asFolderPrefix } from "@/lib/keys";
 import { useConnectionsStore } from "@/stores/connections";
-import { useUiStore } from "@/stores/ui";
 import { useToastsStore } from "@/stores/toasts";
 import type {
   ListingDoneEvent,
@@ -11,7 +10,6 @@ import type {
   ListingPageEvent,
   ObjectEntry,
   PreviewData,
-  ProgressView,
 } from "@/types";
 
 export type SortKey = "name" | "size" | "modified" | "kind";
@@ -258,6 +256,7 @@ export const useObjectsStore = defineStore("objects", () => {
     const request = ++previewRequest;
     previewKey.value = entry.key;
     previewLoading.value = true;
+    // Drop the previous object's payload before the request even starts.
     preview.value = null;
     previewError.value = null;
     previewUnavailable.value = null;

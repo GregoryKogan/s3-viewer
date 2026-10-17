@@ -55,10 +55,20 @@ export const useConnectionsStore = defineStore("connections", () => {
 
   const activeSummary = computed(() => describeCapabilities(activeCapabilities.value));
 
+  /**
+   * Whether the open connection may be written to.
+   *
+   * Only two things block a write: the per-connection read-only switch, and a
+   * probe that positively found the credentials cannot write. "Not probed yet"
+   * must not disable the toolbar — that made the whole app read-only until the
+   * probe happened to run.
+   */
   const canWriteActive = computed(() => {
     if (!active.value) return false;
     if (active.value.security.readOnlyMode) return false;
-    return activeSummary.value.level !== "ro";
+    const capabilities = activeCapabilities.value;
+    if (!capabilities?.probed) return true;
+    return capabilities.canWrite;
   });
 
   async function load() {

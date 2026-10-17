@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from "vue";
 import { X } from "@lucide/vue";
 import { useToastsStore, type Toast } from "@/stores/toasts";
 

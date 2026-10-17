@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, ref, watchEffect } from "vue";
 import { ImageOff, Info } from "@lucide/vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import Spinner from "@/components/ui/Spinner.vue";
@@ -21,7 +21,21 @@ const connections = useConnectionsStore();
 const ui = useUiStore();
 const toasts = useToastsStore();
 
-const panelWidth = computed(() => `${ui.layout.preview}px`);
+const panelWidth = computed(() => "var(--preview-width)");
+
+/**
+ * The aside owns its own visibility attribute.
+ *
+ * `v-if` alone left the element on screen during a re-render; writing the
+ * attribute here means the DOM cannot outlive the store value.
+ */
+const aside = ref<HTMLElement | null>(null);
+watchEffect(() => {
+  if (aside.value) aside.value.hidden = ui.previewHidden;
+});
+onMounted(() => {
+  if (aside.value) aside.value.hidden = ui.previewHidden;
+});
 
 const data = computed(() => objects.preview);
 const kind = computed(() => data.value?.kind ?? "unknown");
@@ -68,6 +82,7 @@ function onToggleView(view: "rendered" | "raw") {
   <aside
     class="flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-l border-line bg-surface"
     :style="{ width: panelWidth }"
+    id="preview"
     data-testid="preview"
   >
     <header class="flex shrink-0 items-start gap-2 border-b border-line px-3 py-2">
@@ -85,6 +100,7 @@ function onToggleView(view: "rendered" | "raw") {
           size="sm"
           :disabled="!objects.previewKey"
           title="Copy the s3:// URI"
+          id="preview-copy-uri"
           data-testid="preview-copy-uri"
           @click="copyUri"
         >
@@ -101,7 +117,7 @@ function onToggleView(view: "rendered" | "raw") {
       </div>
     </header>
 
-    <div class="scrollbar flex min-h-0 flex-1 flex-col overflow-auto" data-testid="preview-body">
+    <div id="preview-body" class="scrollbar flex min-h-0 flex-1 flex-col overflow-auto" data-testid="preview-body">
       <Spinner v-if="objects.previewLoading" label="Loading preview…" data-testid="preview-loading" />
 
       <div v-else-if="objects.previewError" class="p-4" data-testid="preview-unavailable">
@@ -138,9 +154,15 @@ function onToggleView(view: "rendered" | "raw") {
       </div>
 
       <template v-else-if="data">
-        <PreviewImage v-if="kind === 'image'" :data="data" />
-        <PreviewMedia v-else-if="kind === 'audio' || kind === 'video'" :data="data" @download="download" />
-        <PreviewMedia v-else-if="kind === 'pdf'" :data="data" />
+        <PreviewImage
+          :key="objects.previewKey ?? 'none'"
+          v-if="kind === 'image'" :data="data" />
+        <PreviewMedia
+          :key="objects.previewKey ?? 'none'"
+          v-else-if="kind === 'audio' || kind === 'video'" :data="data" @download="download" />
+        <PreviewMedia
+          :key="objects.previewKey ?? 'none'"
+          v-else-if="kind === 'pdf'" :data="data" />
         <PreviewMarkdown
           v-else-if="kind === 'markdown'"
           :data="data"
@@ -148,8 +170,12 @@ function onToggleView(view: "rendered" | "raw") {
           @toggle-view="onToggleView"
           @download="download"
         />
-        <PreviewTable v-else-if="kind === 'parquet' || kind === 'csv'" :data="data" @download="download" />
-        <PreviewCode v-else :data="data" @download="download" />
+        <PreviewTable
+          :key="objects.previewKey ?? 'none'"
+          v-else-if="kind === 'parquet' || kind === 'csv'" :data="data" @download="download" />
+        <PreviewCode
+          :key="objects.previewKey ?? 'none'"
+          v-else :data="data" @download="download" />
       </template>
     </div>
   </aside>

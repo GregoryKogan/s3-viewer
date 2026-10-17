@@ -6,6 +6,8 @@ import tailwindcss from "@tailwindcss/vite";
 // `pnpm tauri dev` runs `build:frontend` first and then loads the built assets,
 // which keeps a single build path for both development and packaging.
 export default defineConfig({
+  // Relative asset URLs: Tauri serves the bundle from a custom protocol root.
+  base: "./",
   plugins: [vue(), tailwindcss()],
   clearScreen: false,
   build: {

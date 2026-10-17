@@ -38,7 +38,11 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
 <template>
   <aside
     class="flex h-full shrink-0 flex-col overflow-hidden border-r border-line bg-surface"
-    :style="{ width: `${ui.layout.sidebar}px` }"
+    :style="{
+      width: ui.layout.collapsed ? '64px' : 'var(--sidebar-width)',
+      minWidth: ui.layout.collapsed ? '64px' : undefined,
+    }"
+    id="sidebar"
     data-testid="sidebar"
   >
     <div class="drag-region flex h-[var(--titlebar-height)] shrink-0 items-center justify-center">
@@ -46,34 +50,21 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
     </div>
 
     <div class="flex items-center justify-between gap-1.5 px-3 pt-1 pb-1.5">
-      <span
-        v-if="!collapsed"
-        class="text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase"
-      >
+      <span class="sidebar-label text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
         Connections
       </span>
       <div class="no-drag ml-auto flex items-center gap-0.5">
         <AppButton
-          v-if="!collapsed"
           variant="primary"
           size="sm"
           :icon="Plus"
           title="Add a connection (⌘N)"
+          id="new-connection"
           data-testid="new-connection"
           @click="emit('create')"
         >
-          New
+          <span class="sidebar-label">New</span>
         </AppButton>
-        <button
-          v-else
-          type="button"
-          class="grid size-6 place-items-center rounded-control bg-accent text-white transition-colors hover:bg-accent-hover"
-          title="Add a connection (⌘N)"
-          data-testid="new-connection"
-          @click="emit('create')"
-        >
-          <Plus class="size-3.5" />
-        </button>
         <button
           type="button"
           class="grid size-6 place-items-center rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
@@ -86,8 +77,12 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
       </div>
     </div>
 
-    <div class="scrollbar flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-2">
-      <p v-if="!connections.views.length && !collapsed" class="px-2 py-4 text-xs leading-relaxed text-muted">
+    <div
+      id="connection-list"
+      class="scrollbar flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-2"
+      data-testid="connection-list"
+    >
+      <p v-if="!connections.views.length" class="sidebar-label px-2 py-4 text-xs leading-relaxed text-muted">
         No connections yet.<br />
         Add one, or import the credentials file you already use.
       </p>
@@ -114,7 +109,6 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
             {{ view.connection.name }}
           </span>
           <span
-            v-if="!collapsed"
             class="size-1.5 shrink-0 rounded-full"
             :class="{
               'bg-ok': toneFor(view.connection) === 'ok',
@@ -125,11 +119,11 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
           />
         </div>
 
-        <template v-if="!collapsed">
-          <div class="truncate text-[0.6875rem] text-subtle" dir="ltr">
+        <template>
+          <div class="sidebar-label truncate text-[0.6875rem] text-subtle" dir="ltr">
             {{ view.connection.bucket }}<span class="text-muted">/{{ view.connection.prefix }}</span>
           </div>
-          <div class="flex flex-wrap gap-1">
+          <div class="sidebar-label flex flex-wrap gap-1">
             <AppBadge :tone="toneFor(view.connection)">
               {{ describeCapabilities(view.capabilities).badge }}
             </AppBadge>
@@ -151,7 +145,7 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
         @click="emit('import')"
       >
         <Upload class="size-3.5 shrink-0" />
-        <span v-if="!collapsed">Import from JSON…</span>
+        <span class="sidebar-label">Import from JSON…</span>
       </button>
     </div>
 
@@ -164,7 +158,7 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
         data-testid="open-settings"
         @click="emit('settings')"
       >
-        <span v-if="!collapsed">Settings</span>
+        <span class="sidebar-label">Settings</span>
       </AppButton>
     </div>
   </aside>

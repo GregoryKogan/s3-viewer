@@ -3,12 +3,14 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useObjectsStore } from "@/stores/objects";
 import ObjectRow from "./ObjectRow.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
+import { useObjectActions } from "@/composables/useObjectActions";
 import Spinner from "@/components/ui/Spinner.vue";
 
 const ROW_HEIGHT = 30;
 const OVERSCAN = 8;
 
 const objects = useObjectsStore();
+const actions = useObjectActions();
 
 const scroller = ref<HTMLElement | null>(null);
 const scrollTop = ref(0);
@@ -77,6 +79,24 @@ onMounted(() => {
 
 onBeforeUnmount(() => observer?.disconnect());
 
+function onSelect(entry: (typeof rows.value)[number], event: MouseEvent) {
+  objects.selectOnly(entry.key, event.shiftKey);
+  void objects.previewEntry(entry);
+}
+
+async function onActivate(entry: (typeof rows.value)[number]) {
+  if (entry.isFolder) await objects.navigate(entry.key);
+  else await objects.previewEntry(entry, { force: true });
+}
+
+function onToggleCheck(entry: (typeof rows.value)[number]) {
+  objects.toggleSelected(entry.key);
+}
+
+function onCopyUri(entry: (typeof rows.value)[number]) {
+  void actions.copyUri(entry);
+}
+
 defineExpose({ scrollToRow });
 </script>
 
@@ -124,6 +144,7 @@ defineExpose({ scrollToRow });
     <div
       ref="scroller"
       class="scrollbar relative min-h-0 flex-1 overflow-y-auto"
+      id="object-list"
       data-testid="object-list"
       @scroll="onScroll"
     >
@@ -149,7 +170,7 @@ defineExpose({ scrollToRow });
         />
       </div>
 
-      <div v-else :style="{ height: `${totalHeight}px` }" class="relative">
+      <div v-else id="object-rows" :style="{ height: `${totalHeight}px` }" class="relative">
         <ObjectRow
           v-for="row in windowed"
           :key="row.entry.key"
@@ -157,6 +178,10 @@ defineExpose({ scrollToRow });
           :index="row.index"
           :row-height="ROW_HEIGHT"
           :selected="objects.selected.has(row.entry.key)"
+          @select="onSelect"
+          @activate="onActivate"
+          @toggle-check="onToggleCheck"
+          @copy-uri="onCopyUri"
         />
       </div>
     </div>
