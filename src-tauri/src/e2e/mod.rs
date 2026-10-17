@@ -142,9 +142,13 @@ const SCENARIO: &str = r#"(async () => {
   const $$ = (selector) => Array.from(document.querySelectorAll(selector));
   const invoke = window.__TAURI__.core.invoke;
 
+  /** One animation frame: enough for a framework to apply pending updates. */
+  const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+
   const wait = async (what, fn, timeout = 15000) => {
     const deadline = Date.now() + timeout;
     let last = null;
+    await frame();
     for (;;) {
       try {
         last = await fn();
@@ -156,6 +160,7 @@ const SCENARIO: &str = r#"(async () => {
         throw new Error('timeout waiting for ' + what + (last ? ' — ' + last : ''));
       }
       await sleep(120);
+      await frame();
     }
   };
 
@@ -245,7 +250,11 @@ const SCENARIO: &str = r#"(async () => {
         + ' scrollerHeight=' + (($('#object-list') || {}).clientHeight)
         + ' rowsLayer=' + Boolean($('#object-rows'))
         + ' empty=' + (($('[data-testid=empty-folder]') || {}).textContent || '')
-        + ' loadingEl=' + Boolean($('[data-testid=loading-state]')),
+        + ' loadingEl=' + Boolean($('[data-testid=loading-state]'))
+        + ' prefix=' + JSON.stringify(window.__s3viewer.state.objects.prefix)
+        + ' awaiting=' + window.__s3viewer.state.objects.awaitingFirstPage
+        + ' listingLog=' + window.__s3viewer.logs.listing.slice(-10).join(' | ')
+        + ' errors=' + JSON.stringify(window.__s3viewerErrors.slice(-2)),
       );
     }
     row.click();
@@ -524,6 +533,8 @@ const SCENARIO: &str = r#"(async () => {
       if (!html.includes('Greeter')) {
         throw new Error('content missing; previewKey=' + window.__s3viewer.state.objects.previewKey
           + ' dataKey=' + (window.__s3viewer.state.objects.preview || {}).key
+          + ' previewLog=' + window.__s3viewer.logs.preview.slice(-8).join(' | ')
+          + ' errors=' + JSON.stringify(window.__s3viewerErrors.slice(-2))
           + ' markup=' + html.slice(0, 120));
       }
       return 'highlighted, ' + html.length + ' bytes';
@@ -560,7 +571,9 @@ const SCENARIO: &str = r#"(async () => {
         .catch((error) => {
           throw new Error(error.message
             + ' :: previewKey=' + window.__s3viewer.state.objects.previewKey
-            + ' reason=' + (window.__s3viewer.state.objects.previewUnavailable || 'none'));
+            + ' reason=' + (window.__s3viewer.state.objects.previewUnavailable || 'none')
+            + ' previewLog=' + window.__s3viewer.logs.preview.slice(-8).join(' | ')
+            + ' errors=' + JSON.stringify(window.__s3viewerErrors.slice(-2)));
         });
       const text = node.textContent;
       if (!/exceeds the preview limit/i.test(text)) throw new Error('wrong message: ' + text);

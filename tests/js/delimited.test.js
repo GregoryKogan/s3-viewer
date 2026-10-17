@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseDelimited } from "../../src/js/preview.js";
+import { loadTs } from "./loadTs.mjs";
+
+const { parseDelimited, detectDelimiter } = await loadTs("src/lib/previewText.ts");
 
 test("parses a simple CSV", () => {
   assert.deepEqual(parseDelimited("a,b\n1,2\n", ","), [
@@ -10,28 +12,33 @@ test("parses a simple CSV", () => {
 });
 
 test("handles quoted fields, escaped quotes and embedded newlines", () => {
-  const csv = 'name,note\n"Smith, John","line1\nline2"\n"say ""hi""",ok\n';
-  assert.deepEqual(parseDelimited(csv, ","), [
-    ["name", "note"],
-    ["Smith, John", "line1\nline2"],
-    ['say "hi"', "ok"],
+  assert.deepEqual(parseDelimited('a,"b,still b"\n"x""y",z\n', ","), [
+    ["a", "b,still b"],
+    ['x"y', "z"],
+  ]);
+  assert.deepEqual(parseDelimited('id,note\n1,"line1\nline2"\n', ","), [
+    ["id", "note"],
+    ["1", "line1\nline2"],
   ]);
 });
 
-test("parses TSV with tabs", () => {
-  assert.deepEqual(parseDelimited("a\tb\n1\t2", "\t"), [
+test("keeps empty trailing fields and drops empty rows", () => {
+  assert.deepEqual(parseDelimited("a,b\n1,\n", ","), [
     ["a", "b"],
-    ["1", "2"],
+    ["1", ""],
   ]);
+  assert.deepEqual(parseDelimited("a,b", ","), [["a", "b"]]);
 });
 
-test("keeps a trailing empty field", () => {
-  assert.deepEqual(parseDelimited("a,b,\n", ","), [["a", "b", ""]]);
-});
-
-test("handles CRLF", () => {
+test("handles CRLF line endings", () => {
   assert.deepEqual(parseDelimited("a,b\r\n1,2\r\n", ","), [
     ["a", "b"],
     ["1", "2"],
   ]);
+});
+
+test("detects the delimiter from the first line", () => {
+  assert.equal(detectDelimiter("a,b,c\n1,2,3"), ",");
+  assert.equal(detectDelimiter("a\tb\tc\n1\t2\t3"), "\t");
+  assert.equal(detectDelimiter("single\ncolumn"), ",");
 });

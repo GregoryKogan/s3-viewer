@@ -101,7 +101,7 @@ the current limit. The limit lives in Settings (default 25 MB, applied to
 non-media previews; media streams in ranges regardless).
 
 Markdown is rendered through `marked` and then sanitised by a small allow-list
-walker in `src/js/preview.js`: unknown tags are unwrapped, `script`/`iframe`/
+walker in `src/lib/previewText.ts`: unknown tags are unwrapped, `script`/`iframe`/
 `object`/`embed`/`form` never survive, `on*` attributes are dropped and
 `javascript:` URLs are stripped. There is an end-to-end check for exactly this.
 
@@ -127,13 +127,48 @@ Config location:
 
 Override it with `S3VIEWER_CONFIG_DIR` (handy for tests).
 
+## The interface
+
+Vue 3 with `<script setup>` and TypeScript, built by Vite, styled with Tailwind
+against semantic design tokens, and drawn with Lucide icons — no emoji anywhere.
+State lives in Pinia setup stores and every backend call goes through one typed
+bridge, so a change in Rust surfaces as a type error in the UI rather than a
+runtime surprise.
+
+```
+src/
+  types/         wire types, mirroring the Rust Serialize shapes
+  lib/           ipc bridge, formatting, key arithmetic, file-kind detection,
+                 highlight.js setup, Markdown sanitiser, boto3 snippet
+  stores/        ui (settings, theme, panel geometry), connections, objects
+                 (folder, streamed listing, selection, preview), progress,
+                 toasts, dialogs
+  composables/   useDialogs (promise confirm/prompt), useObjectActions
+  components/
+    ui/          button, badge, field, modal frame, dialog host, toasts, …
+    layout/      sidebar, header, breadcrumb, toolbar, resizers, transfers
+    browser/     virtualised object list and row
+    preview/     panel + one renderer per media type
+    dialogs/     connection editor, settings, import, copy/move
+```
+
+Two rules worth knowing before editing:
+
+- **A listing is swapped in only when it finishes.** Pages arrive as events and
+  accumulate off-screen; the visible list changes once, so a cancelled load can
+  never be mistaken for an empty folder.
+- **Geometry is applied to the document, not through template branches.** The
+  panel widths and the sidebar's collapsed state are CSS custom properties and
+  attributes on the root element. That is what the shell is laid out from, so the
+  DOM cannot drift from the store.
+
 ## Building
 
 Requirements: Rust (stable), Node.js with pnpm, and the platform toolchain.
 
 ```bash
 pnpm install
-pnpm build:frontend     # bundles src/ into dist/ (readable; --minify to shrink)
+pnpm build:frontend     # vite build → dist/
 pnpm tauri dev          # run in development
 CI=true pnpm tauri build   # package for the current platform
 ```

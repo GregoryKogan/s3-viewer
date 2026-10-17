@@ -1,15 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  humanSize,
-  humanDate,
-  kindIcon,
-  kindLabel,
-  prefixSegments,
-  fileName,
-  extensionOf,
-  pluralize,
-} from "../../src/js/format.js";
+import { loadTs } from "./loadTs.mjs";
+
+const { humanSize, humanDate, prefixSegments, extensionOf, leafName, pluralize, s3Uri } =
+  await loadTs("src/lib/format.ts");
+const { kindLabel, detectKind, kindFromPath } = await loadTs("src/lib/fileKind.ts");
 
 test("humanSize covers the unit ladder", () => {
   assert.equal(humanSize(0), "0 B");
@@ -37,12 +32,27 @@ test("humanDate is relative for recent values and absolute for old ones", () => 
   assert.equal(humanDate("not a date"), "not a date");
 });
 
-test("kindLabel and kindIcon have sensible fallbacks", () => {
+test("kindLabel has a fallback for anything unrecognised", () => {
   assert.equal(kindLabel("image"), "Image");
-  assert.equal(kindLabel("something-new"), "something-new");
-  assert.equal(kindIcon("folder", true), "📁");
-  assert.equal(kindIcon("image", false), "🖼");
-  assert.equal(kindIcon("something-new", false), "📄");
+  assert.equal(kindLabel("parquet"), "Parquet");
+  assert.equal(kindLabel("something-new"), "File");
+});
+
+test("detectKind mirrors the Rust classification", () => {
+  assert.equal(detectKind("a/b/"), "folder");
+  assert.equal(detectKind("x", { isFolder: true }), "folder");
+  assert.equal(detectKind("a/photo.JPG"), "image");
+  assert.equal(detectKind("a/table.parquet"), "parquet");
+  assert.equal(detectKind("a/data.csv"), "csv");
+  assert.equal(detectKind("a/doc.md"), "markdown");
+  assert.equal(detectKind("a/app.py"), "code");
+  assert.equal(detectKind("a/conf.yaml"), "code");
+  assert.equal(detectKind("a/notes.txt"), "text");
+  assert.equal(detectKind("a/unknown.zzz"), "binary");
+  assert.equal(detectKind("Dockerfile"), "code");
+  // No extension and no known type: the content type is the only hint left.
+  assert.equal(detectKind("a/blob", { contentType: "application/pdf" }), "pdf");
+  assert.equal(kindFromPath("/tmp/holiday.png"), "image");
 });
 
 test("prefixSegments builds cumulative prefixes", () => {
@@ -54,15 +64,16 @@ test("prefixSegments builds cumulative prefixes", () => {
   ]);
 });
 
-test("fileName and extensionOf handle folders and dotted names", () => {
-  assert.equal(fileName("a/b/c.png"), "c.png");
-  assert.equal(fileName("a/b/"), "b");
+test("leafName and extensionOf handle folders and dotted names", () => {
+  assert.equal(leafName("a/b/c.png"), "c.png");
+  assert.equal(leafName("a/b/"), "b");
   assert.equal(extensionOf("a/b/c.PNG"), "png");
   assert.equal(extensionOf("Makefile"), "");
   assert.equal(extensionOf(".env"), "");
 });
 
-test("pluralize picks the right form", () => {
+test("s3Uri and pluralize", () => {
+  assert.equal(s3Uri("bucket", "path/to/key"), "s3://bucket/path/to/key");
   assert.equal(pluralize(1, "file", "files"), "file");
   assert.equal(pluralize(0, "file", "files"), "files");
 });

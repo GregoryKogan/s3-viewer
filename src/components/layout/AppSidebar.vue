@@ -45,9 +45,7 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
     id="sidebar"
     data-testid="sidebar"
   >
-    <div class="drag-region flex h-[var(--titlebar-height)] shrink-0 items-center justify-center">
-      <span class="text-[0.6875rem] font-medium tracking-wide text-subtle">S3 Viewer</span>
-    </div>
+    <div class="drag-region h-[var(--titlebar-height)] shrink-0" aria-hidden="true" />
 
     <div class="flex items-center justify-between gap-1.5 px-3 pt-1 pb-1.5">
       <span class="sidebar-label text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
@@ -91,7 +89,7 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
         v-for="view in connections.views"
         :key="view.connection.id"
         type="button"
-        class="flex w-full min-w-0 flex-col gap-1 rounded-control border px-2 py-1.5 text-left transition-colors"
+        class="flex w-full min-w-0 shrink-0 flex-col items-stretch gap-1 rounded-control border px-2 py-1.5 text-left transition-colors"
         :class="
           view.connection.id === connections.activeId
             ? 'border-line-strong bg-active'
@@ -119,22 +117,20 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
           />
         </div>
 
-        <template>
-          <div class="sidebar-label truncate text-[0.6875rem] text-subtle" dir="ltr">
-            {{ view.connection.bucket }}<span class="text-muted">/{{ view.connection.prefix }}</span>
-          </div>
-          <div class="sidebar-label flex flex-wrap gap-1">
-            <AppBadge :tone="toneFor(view.connection)">
-              {{ describeCapabilities(view.capabilities).badge }}
-            </AppBadge>
-            <AppBadge v-if="view.connection.signatureVersion !== 's3v4'" tone="accent">
-              {{ view.connection.signatureVersion }}
-            </AppBadge>
-            <AppBadge v-if="view.connection.security.readOnlyMode" tone="danger">
-              read-only
-            </AppBadge>
-          </div>
-        </template>
+        <div class="sidebar-label min-w-0 truncate text-[0.6875rem] leading-snug text-subtle" dir="ltr">
+          {{ view.connection.bucket }}<span class="text-muted">/{{ view.connection.prefix }}</span>
+        </div>
+        <div class="sidebar-label flex flex-wrap gap-1">
+          <AppBadge :tone="toneFor(view.connection)">
+            {{ describeCapabilities(view.capabilities).badge }}
+          </AppBadge>
+          <AppBadge v-if="view.connection.signatureVersion !== 's3v4'" tone="accent">
+            {{ view.connection.signatureVersion }}
+          </AppBadge>
+          <AppBadge v-if="view.connection.security.readOnlyMode" tone="danger">
+            read-only
+          </AppBadge>
+        </div>
       </button>
 
       <button

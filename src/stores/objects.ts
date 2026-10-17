@@ -48,6 +48,18 @@ export const useObjectsStore = defineStore("objects", () => {
   let previewRequest = 0;
   let staged: ObjectEntry[] = [];
 
+  /**
+   * Short transition logs. A hung listing or a stale preview is otherwise
+   * invisible from the outside: the state just says "loading" forever. These
+   * rings are exposed on the harness surface and printed by failing checks.
+   */
+  const listingLog: string[] = [];
+  const previewLog: string[] = [];
+  function note(target: string[], entry: string) {
+    target.push(entry);
+    if (target.length > 24) target.shift();
+  }
+
   // ------------------------------------------------------------------ listing
 
   async function loadFolder(targetPrefix: string) {
@@ -66,7 +78,9 @@ export const useObjectsStore = defineStore("objects", () => {
     warning.value = null;
     truncated.value = false;
 
+    if (loading.value) note(listingLog, `superseded#${listingRequest}`);
     const requestId = String(++listingRequest);
+    note(listingLog, `start#${requestId} "${prefix.value}"`);
 
     const guard = setTimeout(() => {
       if (String(listingRequest) === requestId && loading.value) {
@@ -104,6 +118,7 @@ export const useObjectsStore = defineStore("objects", () => {
   }
 
   function onListingPage(event: ListingPageEvent) {
+    note(listingLog, `page#${event.requestId}+${event.entries?.length ?? 0}`);
     if (event.requestId !== String(listingRequest)) return;
     if (!useConnectionsStore().active) return;
     if (event.entries?.length) {
@@ -112,6 +127,7 @@ export const useObjectsStore = defineStore("objects", () => {
   }
 
   function onListingDone(event: ListingDoneEvent) {
+    note(listingLog, `done#${event.requestId} total=${event.total}`);
     if (event.requestId !== String(listingRequest)) return;
     entries.value = staged;
     staged = [];
@@ -124,6 +140,7 @@ export const useObjectsStore = defineStore("objects", () => {
   }
 
   function onListingError(event: ListingErrorEvent) {
+    note(listingLog, `error#${event.requestId} ${event.error?.message ?? ""}`);
     if (event.requestId !== String(listingRequest)) return;
     staged = [];
     loading.value = false;
@@ -254,6 +271,7 @@ export const useObjectsStore = defineStore("objects", () => {
     if (!force && sameObject && !previewLoading.value) return;
 
     const request = ++previewRequest;
+    note(previewLog, `start#${request} ${entry.key}`);
     previewKey.value = entry.key;
     previewLoading.value = true;
     // Drop the previous object's payload before the request even starts.
@@ -273,8 +291,16 @@ export const useObjectsStore = defineStore("objects", () => {
       failure = (caught as Error).message;
     }
 
+    note(
+      previewLog,
+      `got#${request} ${failure ? `fail:${failure.slice(0, 40)}` : `${data?.kind}:${data?.key}`}`,
+    );
+
     // A newer click wins; this response is stale.
-    if (request !== previewRequest || previewKey.value !== entry.key) return;
+    if (request !== previewRequest || previewKey.value !== entry.key) {
+      note(previewLog, `drop#${request}`);
+      return;
+    }
 
     previewLoading.value = false;
     if (failure) {
@@ -291,6 +317,7 @@ export const useObjectsStore = defineStore("objects", () => {
   }
 
   return {
+    logging: { listing: listingLog, preview: previewLog },
     prefix,
     entries,
     loading,

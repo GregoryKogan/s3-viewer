@@ -515,18 +515,12 @@ pub async fn get_preview(
 ) -> CmdResult<PreviewData> {
     let ctx = Ctx(&app);
     let core = ctx.core();
-    if std::env::var("S3VIEWER_E2E_TRACE").is_ok() {
-        eprintln!("s3viewer e2e: get_preview entered {}", input.key);
-    }
     let max = core.settings().preview_max_bytes;
     let store = core.client(&input.connection_id).map_err(err)?;
     let mut data: PreviewData =
         preview::build_preview(&store, &input.connection_id, &input.key, max)
             .await
             .map_err(err)?;
-    if std::env::var("S3VIEWER_E2E_TRACE").is_ok() {
-        eprintln!("s3viewer e2e: get_preview finished {}", input.key);
-    }
     if let Some(hint) = input.kind_hint {
         // The UI may re-open the same bytes rendered differently (markdown vs
         // plain text); keep the classification consistent with the toggle.

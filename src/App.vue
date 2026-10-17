@@ -257,6 +257,7 @@ onMounted(async () => {
     objects,
     connections,
     toasts,
+    logs: objects.logging,
     copySnippet: async () => {
       // Used by the suite to prove the clipboard path works end to end.
       const { copyText } = await import("@/lib/ipc");
