@@ -36,6 +36,10 @@ const absolute = computed(() =>
 
 const upTitle = computed(() => `Up one level (${shortcutLabel("ArrowUp")})`);
 
+const addressPlaceholder = computed(
+  () => `s3://bucket/path/to/object  (${shortcutLabel("L")})`,
+);
+
 /**
  * The free space of the crumb row is the address editor's target (NAV-2).
  *
@@ -245,7 +249,7 @@ watch(
           :class="invalid ? 'border-danger' : 'border-accent'"
           spellcheck="false"
           autocomplete="off"
-          placeholder="s3://bucket/path/to/object"
+          :placeholder="addressPlaceholder"
           data-testid="address-input"
           @keydown.enter.prevent="submit"
           @keydown.esc.prevent="cancel"

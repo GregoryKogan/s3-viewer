@@ -213,6 +213,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
             title="Connection menu"
             :data-testid="`connection-menu-${view.connection.id}`"
             @click.stop="menuAtButton(view.connection, $event)"
+            @contextmenu.prevent="menuAtPointer(view.connection, $event)"
           >
             <Ellipsis class="size-3.5" />
           </button>

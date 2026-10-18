@@ -183,9 +183,16 @@ export const useObjectsStore = defineStore("objects", () => {
 
   function navigateUp() {
     if (!prefix.value) return Promise.resolve();
+    const root = useConnectionsStore().active?.prefix ?? "";
     const parts = prefix.value.replace(/\/$/, "").split("/");
     parts.pop();
-    return navigate(parts.length ? `${parts.join("/")}/` : "");
+    const parent = parts.length ? `${parts.join("/")}/` : "";
+    // The connection prefix is the scope root. Climbing above it, whether from
+    // the Up button or the keyboard shortcut, would contradict the promise that
+    // a connection pins one folder (NAV-1 / scope clamp).
+    const target = parent.startsWith(root) ? parent : root;
+    if (target === prefix.value) return Promise.resolve();
+    return navigate(target);
   }
 
   function close() {

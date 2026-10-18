@@ -209,8 +209,8 @@ async function editConnection(connection: Connection | undefined = connections.a
     "wide",
   );
   if (!saved) return;
-  await connections.load();
-  // The saved credentials may differ from the ones the badge was probed with.
+  // `connections.save` already reloaded the list; probe again because the saved
+  // credentials may differ from the ones the badge was probed with.
   await connections.refreshCapabilities(saved.id);
   // Only the active session holds a snapshot of the edited connection. Editing
   // another connection must leave the open folder, its filter and its selection

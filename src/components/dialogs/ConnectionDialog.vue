@@ -20,6 +20,7 @@ import { highlight } from "@/lib/highlight";
 import { copyText } from "@/lib/ipc";
 import { useConnectionsStore } from "@/stores/connections";
 import { useToastsStore } from "@/stores/toasts";
+import { useDialogs } from "@/composables/useDialogs";
 import type {
   AddressingStyle,
   Capabilities,
@@ -38,6 +39,7 @@ const props = defineProps<{
 
 const connections = useConnectionsStore();
 const toasts = useToastsStore();
+const confirmations = useDialogs();
 
 const isEdit = computed(() => Boolean(props.connection?.id));
 
@@ -206,8 +208,6 @@ async function save() {
   }
 }
 
-const confirmingDelete = ref(false);
-
 async function duplicate() {
   if (!props.connection) return;
   try {
@@ -220,17 +220,24 @@ async function duplicate() {
 }
 
 async function removeConnection() {
-  if (!props.connection) return;
-  if (!confirmingDelete.value) {
-    confirmingDelete.value = true;
-    return;
-  }
+  const connection = props.connection;
+  if (!connection) return;
+  // Removing a connection is a destructive, irreversible action and deserves
+  // the same explicit confirmation as deleting objects (CON-7).
+  const confirmed = await confirmations.confirm({
+    title: `Remove “${connection.name}”?`,
+    message:
+      "This removes the connection and its saved credentials from this computer. Objects in the bucket are unaffected.",
+    confirmLabel: "Remove",
+    danger: true,
+  });
+  if (!confirmed) return;
   try {
-    await connections.remove(props.connection.id);
-    toasts.ok("Connection deleted.");
+    await connections.remove(connection.id);
+    toasts.ok(`Connection “${connection.name}” removed.`);
     props.resolve(null);
   } catch (error) {
-    toasts.error((error as Error).message, "Cannot delete");
+    toasts.error((error as Error).message, "Cannot remove connection");
   }
 }
 
@@ -516,7 +523,7 @@ async function copySnippet() {
           class="text-danger"
           @click="removeConnection"
         >
-          {{ confirmingDelete ? "Delete for good?" : "Delete" }}
+          Remove connection…
         </AppButton>
       </div>
       <AppButton @click="cancel">Cancel</AppButton>
