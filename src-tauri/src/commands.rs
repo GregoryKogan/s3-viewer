@@ -695,37 +695,46 @@ pub async fn upload_files_impl(
     }
     let store = core.client(&input.connection_id)?;
     let prefix = as_folder_prefix(&input.prefix);
-    let mut plan = Vec::new();
+    // Validate every path before starting any progress entry: a bad path must not
+    // leave a transfer stuck in "running".
+    let mut planned = Vec::with_capacity(input.local_paths.len());
     for local in &input.local_paths {
         let path = PathBuf::from(local);
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .ok_or_else(|| AppError::invalid(format!("bad local path: {local}")))?;
-        plan.push(UploadPlanItem {
-            id: uuid::Uuid::new_v4().to_string(),
-            local_path: local.clone(),
-            key: format!("{prefix}{name}"),
-        });
+        planned.push((local.clone(), format!("{prefix}{name}")));
     }
 
     let tracker = core.progress.clone();
+    let mut plan = Vec::with_capacity(planned.len());
+    for (local_path, key) in planned {
+        // The progress entry itself is the item's identity: the UI waits for
+        // exactly these ids, so the transfer cannot finish before it is watched.
+        let id = tracker.start(objects::progress_label("Uploading", &key), None);
+        plan.push(UploadPlanItem {
+            id,
+            local_path,
+            key,
+        });
+    }
+
     let items = plan.clone();
     let overwrite = input.overwrite;
     tauri::async_runtime::spawn(async move {
         for item in items {
-            let id = tracker.start(objects::progress_label("Uploading", &item.key), None);
             let path = PathBuf::from(&item.local_path);
             if !overwrite && store.stat(&item.key).await.is_ok() {
                 tracker.fail(
-                    &id,
+                    &item.id,
                     format!("{} already exists (overwrite is disabled)", item.key),
                 );
                 continue;
             }
             match store.put_file(&item.key, &path, None).await {
-                Ok(()) => tracker.finish(&id, Some(item.key.clone())),
-                Err(e) => tracker.fail(&id, crate::model::describe_error(&e)),
+                Ok(()) => tracker.finish(&item.id, Some(item.key.clone())),
+                Err(e) => tracker.fail(&item.id, crate::model::describe_error(&e)),
             }
         }
     });

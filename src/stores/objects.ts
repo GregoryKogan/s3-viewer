@@ -76,6 +76,15 @@ export const useObjectsStore = defineStore("objects", () => {
 
   // ------------------------------------------------------------------ listing
 
+  /**
+   * The S3 request id the listing already recorded. Read through a function so
+   * the `null` assigned at the start of `loadFolder` does not narrow the ref
+   * away from what a later event handler wrote.
+   */
+  function recordedRequestId(): string | null {
+    return errorDetail.value?.requestId ?? null;
+  }
+
   async function loadFolder(targetPrefix: string) {
     const connections = useConnectionsStore();
     const connection = connections.active;
@@ -123,10 +132,15 @@ export const useObjectsStore = defineStore("objects", () => {
         loading.value = false;
         awaitingFirstPage.value = false;
         error.value = (failure as Error).message;
-        errorDetail.value =
-          failure instanceof ApiError
-            ? { hints: failure.hints, code: failure.code, requestId: failure.requestId }
-            : null;
+        if (failure instanceof ApiError) {
+          // The event often arrives before the rejected invoke and already knows
+          // the S3 request id; a throw without one must not erase it.
+          errorDetail.value = {
+            hints: failure.hints,
+            code: failure.code,
+            requestId: failure.requestId ?? recordedRequestId(),
+          };
+        }
         useToastsStore().error((failure as Error).message, "Cannot list this folder");
       }
     } finally {
@@ -184,7 +198,9 @@ export const useObjectsStore = defineStore("objects", () => {
     errorDetail.value = {
       hints: event.error?.hints ?? [],
       code: event.error?.code ?? null,
-      requestId: event.requestId,
+      // The top-level requestId is the internal listing counter; the S3 id lives
+      // inside the payload.
+      requestId: event.error?.requestId ?? null,
     };
     useToastsStore().error(event.error?.message ?? "listing failed", "Cannot list this folder");
   }

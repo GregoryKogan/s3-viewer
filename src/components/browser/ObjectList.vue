@@ -59,9 +59,12 @@ function sortLabel(column: { key: string; label: string }): string {
   return `Sort by ${column.label}, ${objects.sortAscending ? "ascending" : "descending"}`;
 }
 
-/** The backend explains the limit; the fallback covers a truncation with no text. */
+/**
+ * The backend warning normally carries the real limit, so the fallback must not
+ * invent a count: it only says that the list is cut short.
+ */
 const truncationMessage = computed(
-  () => objects.warning ?? `Only the first ${objects.entries.length} objects are shown.`,
+  () => objects.warning ?? "Only the first objects are shown.",
 );
 
 const totalHeight = computed(() => rows.value.length * ROW_HEIGHT);
@@ -286,27 +289,17 @@ defineExpose({ scrollToRow });
       class="scrollbar relative min-h-0 flex-1 overflow-y-auto"
       id="object-list"
       data-testid="object-list"
-      role="listbox"
-      aria-multiselectable="true"
-      aria-label="Objects"
+      :role="rows.length ? 'listbox' : undefined"
+      :aria-multiselectable="rows.length ? true : undefined"
+      :aria-label="rows.length ? 'Objects' : undefined"
       :aria-activedescendant="activeDescendant"
-      tabindex="0"
+      :tabindex="rows.length ? 0 : undefined"
       @scroll="onScroll"
       @click="onBackgroundClick"
       @contextmenu="onBackgroundContextMenu"
     >
       <div v-if="!rows.length" class="flex h-full items-center justify-center p-6">
         <Spinner v-if="objects.loading || objects.awaitingFirstPage" label="Loading…" />
-        <EmptyState
-          v-else-if="objects.filter"
-          title="Nothing matches the filter"
-          description="Clear the filter to see the whole folder."
-          data-testid="empty-folder"
-        >
-          <AppButton size="sm" data-testid="clear-filter" @click="objects.filter = ''">
-            Clear filter
-          </AppButton>
-        </EmptyState>
         <EmptyState
           v-else-if="objects.error"
           title="This folder could not be listed"
@@ -320,6 +313,16 @@ defineExpose({ scrollToRow });
             @click="objects.reload()"
           >
             Try again
+          </AppButton>
+        </EmptyState>
+        <EmptyState
+          v-else-if="objects.filter"
+          title="Nothing matches the filter"
+          description="Clear the filter to see the whole folder."
+          data-testid="empty-folder"
+        >
+          <AppButton size="sm" data-testid="clear-filter" @click="objects.filter = ''">
+            Clear filter
           </AppButton>
         </EmptyState>
         <EmptyState

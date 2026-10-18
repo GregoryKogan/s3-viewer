@@ -47,6 +47,7 @@ impl AppError {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ErrorPayload {
     pub kind: &'static str,
     pub message: String,

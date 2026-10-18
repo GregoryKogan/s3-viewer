@@ -224,8 +224,16 @@ export interface ListingDoneEvent {
 }
 
 export interface ListingErrorEvent {
+  /** The internal listing request id, used to drop stale events. */
   requestId: string;
-  error: { kind: string; message: string; code?: string; hints?: string[] };
+  error: {
+    kind: string;
+    message: string;
+    code?: string;
+    hints?: string[];
+    /** The S3 request id, when the backend captured one. */
+    requestId?: string | null;
+  };
 }
 
 /**

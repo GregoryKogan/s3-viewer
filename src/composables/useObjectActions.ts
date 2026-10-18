@@ -146,7 +146,25 @@ export function useObjectActions(options: Options = {}) {
         overwrite: false,
       });
       transfers.start();
-      toasts.info(`${plan.length} file${plan.length === 1 ? "" : "s"} → ${objects.prefix || "/"}`, "Upload started");
+      // The plan ids are the progress ids, so the upload is done only when every
+      // one of them settles. Without this the empty folder stayed empty until the
+      // next manual refresh (IO-7).
+      const outcomes = await Promise.all(plan.map((item) => transfers.waitFor(item.id)));
+      const failed = outcomes.filter((outcome) => outcome.state === "failed");
+      if (failed.length) {
+        const first = failed[0].error ?? "the transfer failed";
+        toasts.error(
+          failed.length === plan.length
+            ? first
+            : `${failed.length} of ${plan.length} uploads failed. ${first}`,
+          "Upload failed",
+        );
+      } else {
+        toasts.ok(
+          `${plan.length} file${plan.length === 1 ? "" : "s"} uploaded to ${objects.prefix || "/"}.`,
+        );
+      }
+      await objects.reload();
     } catch (error) {
       toasts.error((error as Error).message, "Cannot upload");
     }

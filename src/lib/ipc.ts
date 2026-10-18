@@ -72,7 +72,17 @@ export class ApiError extends Error {
 function toError(raw: unknown): ApiError {
   if (raw instanceof ApiError) return raw;
   if (raw && typeof raw === "object" && ("message" in raw || "kind" in raw)) {
-    return new ApiError(raw as Partial<ErrorPayload>);
+    // Rust now serializes camelCase, but older payloads and hand-built objects
+    // may still carry `request_id`; accept both rather than losing the id.
+    const payload = raw as Partial<ErrorPayload> & { request_id?: string | null };
+    return new ApiError({
+      kind: payload.kind,
+      message: payload.message,
+      code: payload.code,
+      requestId: payload.requestId ?? payload.request_id ?? null,
+      status: payload.status,
+      hints: payload.hints,
+    });
   }
   return new ApiError(typeof raw === "string" ? raw : JSON.stringify(raw));
 }

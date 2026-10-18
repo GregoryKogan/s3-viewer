@@ -13,6 +13,8 @@ const props = withDefaults(
     trailingIcon?: Component;
     disabled?: boolean;
     loading?: boolean;
+    /** Spinner without disabling the button: for refresh-style actions. */
+    busy?: boolean;
     block?: boolean;
     type?: "button" | "submit";
     title?: string;
@@ -50,7 +52,7 @@ const SIZES: Record<Size, string> = {
       props.block ? 'w-full' : '',
     ]"
   >
-    <Loader2 v-if="props.loading" class="size-3.5 animate-spin" />
+    <Loader2 v-if="props.loading || props.busy" class="size-3.5 animate-spin" />
     <component :is="props.icon" v-else-if="props.icon" class="size-3.5 shrink-0" />
     <span class="truncate"><slot /></span>
     <component :is="props.trailingIcon" v-if="props.trailingIcon" class="size-3.5 shrink-0" />

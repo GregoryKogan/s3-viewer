@@ -70,7 +70,7 @@ const previewOpen = computed(() => !ui.previewHidden);
         <AppButton
           variant="ghost"
           :icon="RefreshCw"
-          :loading="objects.loading"
+          :busy="objects.loading"
           title="Refresh (⌘R)"
           data-testid="refresh"
           @click="objects.reload()"
