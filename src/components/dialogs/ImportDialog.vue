@@ -12,7 +12,7 @@ import type { ConnectionDraft } from "@/types";
 
 const props = defineProps<{
   dialogId?: number;
-  resolve: (imported: number) => void;
+  resolve: (imported: string[]) => void;
 }>();
 
 const connections = useConnectionsStore();
@@ -62,7 +62,7 @@ async function readFile() {
 }
 
 function cancel() {
-  props.resolve(0);
+  props.resolve([]);
 }
 
 async function run() {
@@ -71,7 +71,7 @@ async function run() {
     return;
   }
   importing.value = true;
-  let created = 0;
+  const created: string[] = [];
   const failures: string[] = [];
   for (const draft of drafts.value) {
     if (!draft.bucket) {
@@ -79,24 +79,24 @@ async function run() {
       continue;
     }
     try {
-      await connections.save({ ...draft, prefix: draft.prefix ?? "" });
-      created += 1;
+      const saved = await connections.save({ ...draft, prefix: draft.prefix ?? "" });
+      created.push(saved.id);
     } catch (error) {
       failures.push(`${draft.name}: ${(error as Error).message}`);
     }
   }
   importing.value = false;
-  if (created) toasts.ok(`Imported ${created} connection(s).`, "Import finished");
+  if (created.length) toasts.ok(`Imported ${created.length} connection(s).`, "Import finished");
   if (failures.length) toasts.error(failures.join("\n"), "Some connections failed");
-  if (created) props.resolve(created);
+  if (created.length) props.resolve(created);
 }
 </script>
 
 <template>
   <ModalFrame title="Import connections" :icon="FileUp" @close="cancel">
     <p class="text-[0.6875rem] leading-relaxed text-muted">
-      Paste the JSON credentials file you already use, or a boto3 client snippet. Secrets are
-      encrypted locally and never leave this machine.
+      Paste a JSON credentials file or a boto3 client snippet. Secrets are encrypted locally and
+      never leave this machine.
     </p>
 
     <p v-if="fileName" class="flex items-center gap-1.5 text-[0.6875rem] text-muted">

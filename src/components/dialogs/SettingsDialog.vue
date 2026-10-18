@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { FolderOpen, RefreshCw, ShieldCheck, SlidersHorizontal } from "@lucide/vue";
+import { FolderOpen, RefreshCw, RotateCcw, ShieldCheck, SlidersHorizontal } from "@lucide/vue";
 import ModalFrame from "@/components/ui/ModalFrame.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppField from "@/components/ui/AppField.vue";
@@ -8,6 +8,7 @@ import AppBadge from "@/components/ui/AppBadge.vue";
 import { inputClass, selectClass, checkboxClass } from "@/components/ui/controls";
 import { pickFiles } from "@/lib/ipc";
 import { humanSize } from "@/lib/format";
+import { IS_MAC, keyLabel, shortcutLabel } from "@/lib/keyboard";
 import { useUiStore } from "@/stores/ui";
 import { useDialogsStore } from "@/stores/dialogs";
 import { useToastsStore } from "@/stores/toasts";
@@ -33,13 +34,23 @@ const PRESETS = [
   { value: 1024 * 1024 * 1024, label: "1 GB — can be slow" },
 ];
 
+/** Mirrors the defaults in the Rust `AppSettings::default`. */
+const DEFAULTS = {
+  previewMaxBytes: 25 * 1024 * 1024,
+  listPageLimit: 20_000,
+  theme: "dark" as Theme,
+  downloadDir: "",
+  askDownloadLocation: false,
+  showSystemObjects: false,
+};
+
 const form = ref({
-  previewMaxBytes: ui.settings?.previewMaxBytes ?? 25 * 1024 * 1024,
-  listPageLimit: ui.settings?.listPageLimit ?? 20_000,
-  theme: (ui.settings?.theme ?? "dark") as Theme,
-  downloadDir: ui.settings?.downloadDir ?? "",
-  askDownloadLocation: ui.settings?.askDownloadLocation ?? false,
-  showSystemObjects: ui.settings?.showSystemObjects ?? false,
+  previewMaxBytes: ui.settings?.previewMaxBytes ?? DEFAULTS.previewMaxBytes,
+  listPageLimit: ui.settings?.listPageLimit ?? DEFAULTS.listPageLimit,
+  theme: (ui.settings?.theme ?? DEFAULTS.theme) as Theme,
+  downloadDir: ui.settings?.downloadDir ?? DEFAULTS.downloadDir,
+  askDownloadLocation: ui.settings?.askDownloadLocation ?? DEFAULTS.askDownloadLocation,
+  showSystemObjects: ui.settings?.showSystemObjects ?? DEFAULTS.showSystemObjects,
 });
 
 const saving = ref(false);
@@ -50,6 +61,25 @@ const previewOptions = computed(() => {
     ? PRESETS
     : [...PRESETS, { value: form.value.previewMaxBytes, label: `${humanSize(form.value.previewMaxBytes)} — custom` }];
 });
+
+/**
+ * The same bindings the global key handler installs. Open and Delete are not
+ * modified everywhere, so they use the platform key glyph rather than claiming
+ * a modifier the handler does not require.
+ */
+const shortcuts = [
+  { action: "Refresh", keys: shortcutLabel("R") },
+  { action: "Upload", keys: shortcutLabel("U") },
+  { action: "New connection", keys: shortcutLabel("N") },
+  { action: "Edit connection", keys: shortcutLabel("I") },
+  { action: "Address", keys: shortcutLabel("L") },
+  { action: "Filter", keys: shortcutLabel("F") },
+  { action: "Up", keys: shortcutLabel("ArrowUp") },
+  { action: "Toggle sidebar", keys: shortcutLabel("B") },
+  { action: "Select all", keys: shortcutLabel("A") },
+  { action: "Open", keys: keyLabel("Enter") },
+  { action: "Delete", keys: IS_MAC ? shortcutLabel("Backspace") : keyLabel("Delete") },
+];
 
 onMounted(() => {
   void ui.loadSecurity();
@@ -83,6 +113,14 @@ async function chooseDownloadDir() {
   }
 }
 
+/**
+ * Restore the form, not the saved settings: the user can still cancel, and a
+ * reset only takes effect when Save is pressed.
+ */
+function resetDefaults() {
+  form.value = { ...DEFAULTS };
+}
+
 function cancel() {
   props.resolve(null);
 }
@@ -92,7 +130,7 @@ async function save() {
   try {
     const saved = await ui.saveSettings({
       previewMaxBytes: Number(form.value.previewMaxBytes),
-      listPageLimit: Number(form.value.listPageLimit) || 20_000,
+      listPageLimit: Number(form.value.listPageLimit) || DEFAULTS.listPageLimit,
       theme: form.value.theme,
       downloadDir: form.value.downloadDir.trim() || null,
       askDownloadLocation: form.value.askDownloadLocation,
@@ -202,6 +240,26 @@ async function save() {
       </label>
     </fieldset>
 
+    <fieldset class="rounded-control border border-line p-3" data-testid="settings-shortcuts">
+      <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+        Keyboard shortcuts
+      </legend>
+      <dl class="grid grid-cols-2 gap-x-6 gap-y-1.5">
+        <div
+          v-for="item in shortcuts"
+          :key="item.action"
+          class="flex items-baseline justify-between gap-2 text-xs"
+        >
+          <dt class="min-w-0 truncate text-muted">{{ item.action }}</dt>
+          <dd class="shrink-0">
+            <kbd class="rounded-[4px] border border-line-strong bg-inset px-1.5 py-px font-mono text-[0.625rem] text-content">
+              {{ item.keys }}
+            </kbd>
+          </dd>
+        </div>
+      </dl>
+    </fieldset>
+
     <fieldset class="rounded-control border border-line p-3" data-testid="settings-application">
       <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
         Application
@@ -254,6 +312,14 @@ async function save() {
     </fieldset>
 
     <template #footer>
+      <AppButton
+        class="mr-auto"
+        :icon="RotateCcw"
+        data-testid="settings-reset"
+        @click="resetDefaults"
+      >
+        Reset to defaults
+      </AppButton>
       <AppButton @click="cancel">Cancel</AppButton>
       <AppButton variant="primary" :loading="saving" data-testid="settings-save" @click="save">
         Save

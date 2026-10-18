@@ -172,6 +172,8 @@ export interface LayoutSettings {
   sidebar: number;
   preview: number;
   collapsed: boolean;
+  /** The preview column is hidden; persisted with the rest of the layout. */
+  previewHidden: boolean;
 }
 
 export interface SecurityStatus {

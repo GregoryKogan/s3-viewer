@@ -27,7 +27,7 @@ const TONES: Record<Toast["level"], string> = {
       >
         <div class="flex min-w-0 flex-col gap-0.5">
           <p v-if="toast.title" class="text-xs font-semibold text-content">{{ toast.title }}</p>
-          <p class="text-xs leading-relaxed break-words text-muted">{{ toast.message }}</p>
+          <p class="text-xs leading-relaxed break-words whitespace-pre-line text-muted">{{ toast.message }}</p>
           <div v-if="toast.actions.length" class="mt-1 flex gap-1.5">
             <button
               v-for="action in toast.actions"

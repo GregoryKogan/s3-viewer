@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, ref } from "vue";
 import {
   AlertTriangle,
   Check,
+  ChevronRight,
   ClipboardCopy,
   Copy,
   KeyRound,
@@ -45,8 +46,12 @@ const isEdit = computed(() => Boolean(props.connection?.id));
 
 const form = ref({
   name: props.connection?.name ?? "",
-  endpointUrl: "",
-  region: props.connection?.region ?? "us-east-1",
+  // Initialised here rather than in `onMounted`, which used to render an empty
+  // Endpoint for one frame in the edit dialog (CON-3).
+  endpointUrl: props.connection?.endpointUrl ?? "",
+  // Blank on purpose: the presets below fill it, and other providers do not
+  // necessarily use `us-east-1`.
+  region: props.connection?.region ?? "",
   accessKeyId: props.connection?.accessKeyId ?? "",
   secretAccessKey: "",
   sessionToken: "",
@@ -75,6 +80,50 @@ const PLACEHOLDER = {
   prefix: "some/folder/",
 };
 
+/**
+ * Presets fill an empty form; they never touch a value the user typed. The
+ * second preset is deliberately blank, so it hands the form back for any other
+ * S3-compatible service.
+ */
+const PRESETS = {
+  aws: { endpointUrl: "https://s3.amazonaws.com", region: "us-east-1" },
+  other: { endpointUrl: "", region: "" },
+};
+/** What the last preset put in the field, so "Other" can undo its own fill. */
+const presetFilled = { endpointUrl: "", region: "" };
+
+function applyPreset(name: keyof typeof PRESETS) {
+  const values = PRESETS[name];
+  for (const key of ["endpointUrl", "region"] as const) {
+    const current = form.value[key];
+    if (!current.trim() || current === presetFilled[key]) {
+      form.value[key] = values[key];
+    }
+    presetFilled[key] = values[key];
+  }
+}
+
+const nameInput = ref<HTMLInputElement | null>(null);
+const endpointInput = ref<HTMLInputElement | null>(null);
+const regionInput = ref<HTMLInputElement | null>(null);
+const bucketInput = ref<HTMLInputElement | null>(null);
+const accessKeyInput = ref<HTMLInputElement | null>(null);
+const secretInput = ref<HTMLInputElement | null>(null);
+
+/** The order the user reads the required fields in, for the first error. */
+const FIELD_ORDER = ["name", "endpoint", "region", "bucket", "accessKey", "secret"] as const;
+
+function inputFor(key: (typeof FIELD_ORDER)[number]): HTMLInputElement | null {
+  return {
+    name: nameInput.value,
+    endpoint: endpointInput.value,
+    region: regionInput.value,
+    bucket: bucketInput.value,
+    accessKey: accessKeyInput.value,
+    secret: secretInput.value,
+  }[key];
+}
+
 const showingSecret = ref(false);
 const probing = ref(false);
 const saving = ref(false);
@@ -100,21 +149,6 @@ const snippet = computed(() =>
 );
 
 const snippetMarkup = computed(() => highlight(snippet.value, "python"));
-
-/**
- * The endpoint is only known after the connection is loaded; edits keep the
- * existing one, so it is shown but not required in the form state above.
- */
-onMounted(() => {
-  if (props.connection) form.value.endpointUrl = props.connection.endpointUrl;
-});
-
-watch(
-  () => props.connection,
-  (connection) => {
-    if (connection) form.value.endpointUrl = connection.endpointUrl;
-  },
-);
 
 function cancel() {
   props.resolve(null);
@@ -148,18 +182,34 @@ function draft(): ConnectionDraft {
   };
 }
 
-function validate(): boolean {
+/**
+ * Validate, and on failure take the user to the first problem: the form is
+ * long, so an inline message below the fold used to be invisible (CON-3).
+ */
+async function validate(): Promise<boolean> {
   const next: Record<string, string> = {};
   if (!form.value.name.trim()) next.name = "Give the connection a name.";
-  if (!/^https?:\/\//.test(form.value.endpointUrl.trim()))
+  if (!form.value.endpointUrl.trim()) {
+    next.endpoint = "The endpoint URL is required.";
+  } else if (!/^https?:\/\//.test(form.value.endpointUrl.trim())) {
     next.endpoint = "The endpoint URL must start with http:// or https://.";
+  }
   if (!form.value.region.trim()) next.region = "The region is required.";
   if (!form.value.bucket.trim()) next.bucket = "The bucket name is required.";
-  if (form.value.bucket.includes("/")) next.bucket = "The bucket must not contain “/”.";
+  else if (form.value.bucket.includes("/")) next.bucket = "The bucket must not contain “/”.";
   if (!form.value.accessKeyId.trim()) next.accessKey = "The access key ID is required.";
-  if (!isEdit.value && !form.value.secretAccessKey) next.secret = "The secret access key is required.";
+  if (!isEdit.value && !form.value.secretAccessKey) {
+    next.secret = "The secret access key is required.";
+  }
   errors.value = next;
-  return Object.keys(next).length === 0;
+
+  const first = FIELD_ORDER.find((key) => next[key]);
+  if (!first) return true;
+  await nextTick();
+  const input = inputFor(first);
+  input?.scrollIntoView({ block: "center", behavior: "smooth" });
+  input?.focus({ preventScroll: true });
+  return false;
 }
 
 async function testConnection() {
@@ -195,7 +245,7 @@ async function testConnection() {
 }
 
 async function save() {
-  if (!validate()) return;
+  if (!(await validate())) return;
   saving.value = true;
   try {
     const saved = await connections.save(draft());
@@ -270,59 +320,117 @@ async function copySnippet() {
     @close="cancel"
   >
     <p class="text-[0.6875rem] leading-relaxed text-muted">
-      Copy the settings from a working Python client and they will behave the same here — the
-      snippet at the bottom is exactly what these fields mean in code.
+      Copy the settings from a working Python client and they will behave the same here. The basic
+      fields are what most connections need; open Advanced for signing, checksums, security and the
+      boto3 equivalent.
     </p>
 
-    <div class="grid grid-cols-2 gap-3">
-      <AppField label="Name" :error="errors.name" hint="What this connection is called in the sidebar.">
-        <input v-model="form.name" :class="inputClass" data-testid="conn-name" placeholder="Dev bucket" />
-      </AppField>
-
-      <AppField label="Bucket" :error="errors.bucket" hint="The bucket this connection is scoped to.">
-        <input v-model="form.bucket" :class="inputClass" data-testid="conn-bucket" :placeholder="PLACEHOLDER.bucket" />
-      </AppField>
-
-      <AppField label="Server address" :error="errors.endpoint" hint="The S3 endpoint, starting with https://" wide>
-        <input
-          v-model="form.endpointUrl"
-          :class="inputClass"
-          data-testid="conn-endpoint"
-          :placeholder="PLACEHOLDER.endpoint"
-          spellcheck="false"
-        />
-      </AppField>
-
-      <AppField label="Region" :error="errors.region" hint="Usually dictated by the provider.">
-        <input v-model="form.region" :class="inputClass" data-testid="conn-region" :placeholder="PLACEHOLDER.region" />
-      </AppField>
-
-      <AppField
-        label="Start folder"
-        hint="Optional. The connection opens here; it is matched literally."
-      >
-        <input v-model="form.prefix" :class="inputClass" data-testid="conn-prefix" :placeholder="PLACEHOLDER.prefix" />
-      </AppField>
+    <div class="flex flex-wrap items-center gap-1.5" data-testid="conn-presets">
+      <span class="text-[0.6875rem] text-subtle">Start from a preset:</span>
+      <AppButton size="sm" data-testid="conn-preset-aws" @click="applyPreset('aws')">
+        AWS S3
+      </AppButton>
+      <AppButton size="sm" data-testid="conn-preset-other" @click="applyPreset('other')">
+        Other S3-compatible
+      </AppButton>
     </div>
 
     <fieldset class="rounded-control border border-line p-3">
       <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
-        Credentials
+        Connection
       </legend>
       <div class="grid grid-cols-2 gap-3">
-        <AppField label="Access key" :error="errors.accessKey" hint="The key ID, not the secret.">
+        <AppField
+          label="Name"
+          required
+          :error="errors.name"
+          hint="What this connection is called in the sidebar."
+        >
           <input
+            ref="nameInput"
+            v-model="form.name"
+            :class="inputClass"
+            data-testid="conn-name"
+            placeholder="Dev bucket"
+            :aria-invalid="errors.name ? 'true' : undefined"
+          />
+        </AppField>
+
+        <AppField
+          label="Bucket"
+          required
+          :error="errors.bucket"
+          hint="The bucket this connection is scoped to."
+        >
+          <input
+            ref="bucketInput"
+            v-model="form.bucket"
+            :class="inputClass"
+            data-testid="conn-bucket"
+            :placeholder="PLACEHOLDER.bucket"
+            :aria-invalid="errors.bucket ? 'true' : undefined"
+          />
+        </AppField>
+
+        <AppField
+          label="Endpoint"
+          required
+          wide
+          :error="errors.endpoint"
+          hint="The S3 endpoint, starting with https://"
+        >
+          <input
+            ref="endpointInput"
+            v-model="form.endpointUrl"
+            :class="inputClass"
+            data-testid="conn-endpoint"
+            :placeholder="PLACEHOLDER.endpoint"
+            spellcheck="false"
+            :aria-invalid="errors.endpoint ? 'true' : undefined"
+          />
+        </AppField>
+
+        <AppField
+          label="Region"
+          required
+          :error="errors.region"
+          hint="Usually dictated by the provider."
+        >
+          <input
+            ref="regionInput"
+            v-model="form.region"
+            :class="inputClass"
+            data-testid="conn-region"
+            :placeholder="PLACEHOLDER.region"
+            :aria-invalid="errors.region ? 'true' : undefined"
+          />
+        </AppField>
+
+        <AppField label="Root folder (scope)" hint="Browse stays inside this prefix">
+          <input
+            v-model="form.prefix"
+            :class="inputClass"
+            data-testid="conn-prefix"
+            :placeholder="PLACEHOLDER.prefix"
+          />
+        </AppField>
+
+        <AppField label="Access key" required :error="errors.accessKey" hint="The key ID, not the secret.">
+          <input
+            ref="accessKeyInput"
             v-model="form.accessKeyId"
             :class="inputClass"
             data-testid="conn-access-key"
             :placeholder="PLACEHOLDER.accessKey"
             spellcheck="false"
             autocomplete="off"
+            :aria-invalid="errors.accessKey ? 'true' : undefined"
           />
         </AppField>
 
         <AppField
           label="Secret access key"
+          :required="!isEdit"
           :error="errors.secret"
           :hint="
             isEdit && props.connection
@@ -332,12 +440,14 @@ async function copySnippet() {
         >
           <div class="flex gap-1">
             <input
+              ref="secretInput"
               v-model="form.secretAccessKey"
               :type="showingSecret ? 'text' : 'password'"
               :class="inputClass"
               data-testid="conn-secret-key"
               :placeholder="isEdit ? '•••••••• (stored)' : ''"
               autocomplete="off"
+              :aria-invalid="errors.secret ? 'true' : undefined"
             />
             <button
               type="button"
@@ -368,163 +478,174 @@ async function copySnippet() {
       </div>
     </fieldset>
 
-    <fieldset class="rounded-control border border-line p-3">
-      <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
-        S3 behaviour
-      </legend>
-      <div class="grid grid-cols-2 gap-3">
-        <AppField label="Bucket in the address" hint="Most services put the bucket in the host name.">
-          <select v-model="form.addressingStyle" :class="selectClass" data-testid="conn-addressing">
-            <option value="virtual">In the host name (usual)</option>
-            <option value="path">In the URL path</option>
-            <option value="auto">Decide automatically</option>
-          </select>
-        </AppField>
+    <div v-if="probeError" class="rounded-control border border-danger/40 bg-danger-soft px-2.5 py-1.5 text-[0.6875rem] leading-relaxed text-danger">
+      {{ probeError }}
+    </div>
 
-        <AppField label="Request signing" hint="How requests are signed. The newest is the default.">
-          <select v-model="form.signatureVersion" :class="selectClass" data-testid="conn-signature">
-            <option value="s3v4">Version 4 (usual)</option>
-            <option value="v4">Version 4, generic</option>
-            <option value="s3v2">Version 2 (legacy services)</option>
-          </select>
-        </AppField>
-
-        <AppField
-          label="Checksums on upload"
-          hint="Only change this if the service rejects checksum headers."
+    <div v-if="capabilities" class="flex flex-col gap-1.5" data-testid="probe-output">
+      <div class="flex flex-wrap gap-1.5">
+        <span
+          v-for="item in [
+            { label: 'list', ok: capabilities.canList },
+            { label: 'read', ok: capabilities.canRead },
+            { label: 'write', ok: capabilities.canWrite },
+            { label: 'delete', ok: capabilities.canDelete },
+          ]"
+          :key="item.label"
+          class="inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[0.625rem]"
+          :class="item.ok ? 'border-ok/40 text-ok' : 'border-danger/40 text-danger'"
         >
-          <select v-model="form.requestChecksumCalculation" :class="selectClass">
-            <option value="whenSupported">When the service supports it</option>
-            <option value="whenRequired">Only when required</option>
-          </select>
-        </AppField>
-
-        <AppField
-          label="Checksums on download"
-          hint="Whether responses are checked against their checksum."
-        >
-          <select v-model="form.responseChecksumValidation" :class="selectClass">
-            <option value="whenSupported">When the service supports it</option>
-            <option value="whenRequired">Only when required</option>
-          </select>
-        </AppField>
-      </div>
-      <p class="mt-2 flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-subtle">
-        <AlertTriangle class="mt-0.5 size-3 shrink-0" />
-        Some S3-compatible services reject the checksum headers the client adds. Switching both
-        to “only when required” is the documented workaround.
-      </p>
-    </fieldset>
-
-    <fieldset class="rounded-control border border-line p-3">
-      <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
-        Security
-      </legend>
-      <div class="flex flex-col gap-2">
-        <label class="flex items-start gap-2 text-xs">
-          <input v-model="form.readOnlyMode" type="checkbox" :class="checkboxClass" class="mt-0.5" />
-          <span>
-            Read-only mode
-            <span class="block text-[0.6875rem] text-muted">
-              Block every write, upload, rename and delete on this connection.
-            </span>
-          </span>
-        </label>
-        <label class="flex items-start gap-2 text-xs">
-          <input v-model="form.confirmDelete" type="checkbox" :class="checkboxClass" class="mt-0.5" />
-          <span>
-            Ask before deleting
-            <span class="block text-[0.6875rem] text-muted">Show a confirmation dialog for deletes.</span>
-          </span>
-        </label>
-        <label class="flex items-start gap-2 text-xs">
-          <input v-model="form.confirmOverwrite" type="checkbox" :class="checkboxClass" class="mt-0.5" />
-          <span>
-            Ask before overwriting
-            <span class="block text-[0.6875rem] text-muted">Warn when an upload would replace an object.</span>
-          </span>
-        </label>
-        <label class="flex items-start gap-2 text-xs">
-          <input v-model="form.detectPermissions" type="checkbox" :class="checkboxClass" class="mt-0.5" />
-          <span>
-            Detect permissions on connect
-            <span class="block text-[0.6875rem] text-muted">
-              Probe read / write / delete rights with a temporary object that is removed immediately.
-            </span>
-          </span>
-        </label>
-      </div>
-    </fieldset>
-
-    <section class="flex flex-col gap-1.5">
-      <div class="flex items-center justify-between gap-2">
-        <span class="text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
-          The equivalent Python client
+          <component :is="item.ok ? Check : AlertTriangle" class="size-2.5" />
+          {{ item.label }}
         </span>
-        <AppButton
-          size="sm"
-          :variant="copied ? 'primary' : 'ghost'"
-          :icon="copied ? Check : ClipboardCopy"
-          :class="copied ? '!bg-ok !border-ok text-white' : ''"
-          data-testid="copy-snippet"
-          @click="copySnippet"
-        >
-          {{ copied ? "Copied" : "Copy" }}
-        </AppButton>
       </div>
-      <!-- eslint-disable-next-line vue/no-v-html -- highlight.js over escaped text -->
-      <pre :class="codeClass" data-testid="boto3-snippet"><code class="hljs" v-html="snippetMarkup" /></pre>
-    </section>
+      <ul v-if="capabilities.details?.length" class="list-disc pl-4 text-[0.6875rem] leading-relaxed text-muted">
+        <li v-for="(detail, index) in capabilities.details" :key="index">{{ detail }}</li>
+      </ul>
+    </div>
 
-    <section class="flex flex-col gap-2">
-      <div class="flex items-center gap-2">
+    <details class="group/advanced rounded-control border border-line" data-testid="conn-advanced">
+      <summary class="flex cursor-pointer list-none items-baseline gap-2 px-3 py-2">
+        <ChevronRight class="size-3 shrink-0 self-center text-subtle transition-transform group-open/advanced:rotate-90" />
+        <span class="text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+          Advanced
+        </span>
+        <span class="text-[0.6875rem] text-subtle">
+          Addressing, signing, checksums, security and the boto3 equivalent
+        </span>
+      </summary>
+
+      <div class="flex flex-col gap-3 border-t border-line p-3">
+        <fieldset class="rounded-control border border-line p-3">
+          <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+            S3 behaviour
+          </legend>
+          <div class="grid grid-cols-2 gap-3">
+            <AppField label="Bucket in the address" hint="Most services put the bucket in the host name.">
+              <select v-model="form.addressingStyle" :class="selectClass" data-testid="conn-addressing">
+                <option value="virtual">In the host name (usual)</option>
+                <option value="path">In the URL path</option>
+                <option value="auto">Decide automatically</option>
+              </select>
+            </AppField>
+
+            <AppField label="Request signing" hint="How requests are signed. The newest is the default.">
+              <select v-model="form.signatureVersion" :class="selectClass" data-testid="conn-signature">
+                <option value="s3v4">Version 4 (usual)</option>
+                <option value="v4">Version 4, generic</option>
+                <option value="s3v2">Version 2 (legacy services)</option>
+              </select>
+            </AppField>
+
+            <AppField
+              label="Checksums on upload"
+              hint="Only change this if the service rejects checksum headers."
+            >
+              <select v-model="form.requestChecksumCalculation" :class="selectClass">
+                <option value="whenSupported">When the service supports it</option>
+                <option value="whenRequired">Only when required</option>
+              </select>
+            </AppField>
+
+            <AppField
+              label="Checksums on download"
+              hint="Whether responses are checked against their checksum."
+            >
+              <select v-model="form.responseChecksumValidation" :class="selectClass">
+                <option value="whenSupported">When the service supports it</option>
+                <option value="whenRequired">Only when required</option>
+              </select>
+            </AppField>
+          </div>
+          <p class="mt-2 flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-subtle">
+            <AlertTriangle class="mt-0.5 size-3 shrink-0" />
+            Some S3-compatible services reject the checksum headers the client adds. Switching both
+            to “only when required” is the documented workaround.
+          </p>
+        </fieldset>
+
+        <fieldset class="rounded-control border border-line p-3">
+          <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+            Security
+          </legend>
+          <div class="flex flex-col gap-2">
+            <label class="flex items-start gap-2 text-xs">
+              <input v-model="form.readOnlyMode" type="checkbox" :class="checkboxClass" class="mt-0.5" />
+              <span>
+                Read-only mode
+                <span class="block text-[0.6875rem] text-muted">
+                  Block every write, upload, rename and delete on this connection.
+                </span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 text-xs">
+              <input v-model="form.confirmDelete" type="checkbox" :class="checkboxClass" class="mt-0.5" />
+              <span>
+                Ask before deleting
+                <span class="block text-[0.6875rem] text-muted">Show a confirmation dialog for deletes.</span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 text-xs">
+              <input v-model="form.confirmOverwrite" type="checkbox" :class="checkboxClass" class="mt-0.5" />
+              <span>
+                Ask before overwriting
+                <span class="block text-[0.6875rem] text-muted">Warn when an upload would replace an object.</span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 text-xs">
+              <input v-model="form.detectPermissions" type="checkbox" :class="checkboxClass" class="mt-0.5" />
+              <span>
+                Detect permissions on connect
+                <span class="block text-[0.6875rem] text-muted">
+                  Probe read / write / delete rights with a temporary object that is removed immediately.
+                </span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <details class="group/boto3 rounded-control border border-line">
+          <summary class="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-[0.6875rem] font-medium text-muted">
+            <ChevronRight class="size-3 shrink-0 text-subtle transition-transform group-open/boto3:rotate-90" />
+            Show boto3 equivalent
+          </summary>
+          <div class="flex flex-col gap-1.5 border-t border-line p-3">
+            <div class="flex items-center justify-end">
+              <AppButton
+                size="sm"
+                :variant="copied ? 'primary' : 'ghost'"
+                :icon="copied ? Check : ClipboardCopy"
+                :class="copied ? '!bg-ok !border-ok text-white' : ''"
+                data-testid="copy-snippet"
+                @click="copySnippet"
+              >
+                {{ copied ? "Copied" : "Copy" }}
+              </AppButton>
+            </div>
+            <!-- eslint-disable-next-line vue/no-v-html -- highlight.js over escaped text -->
+            <pre :class="codeClass" data-testid="boto3-snippet"><code class="hljs" v-html="snippetMarkup" /></pre>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <template #footer>
+      <div class="mr-auto flex items-center gap-1">
         <AppButton :icon="ShieldCheck" :loading="probing" data-testid="conn-test" @click="testConnection">
           {{ probing ? "Testing…" : "Test connection" }}
         </AppButton>
-        <span class="text-[0.6875rem] text-subtle">
-          Checks access and finds out what these credentials may do.
-        </span>
-      </div>
-
-      <div v-if="probeError" class="rounded-control border border-danger/40 bg-danger-soft px-2.5 py-1.5 text-[0.6875rem] leading-relaxed text-danger">
-        {{ probeError }}
-      </div>
-
-      <div v-if="capabilities" class="flex flex-col gap-1.5" data-testid="probe-output">
-        <div class="flex flex-wrap gap-1.5">
-          <span
-            v-for="item in [
-              { label: 'list', ok: capabilities.canList },
-              { label: 'read', ok: capabilities.canRead },
-              { label: 'write', ok: capabilities.canWrite },
-              { label: 'delete', ok: capabilities.canDelete },
-            ]"
-            :key="item.label"
-            class="inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[0.625rem]"
-            :class="item.ok ? 'border-ok/40 text-ok' : 'border-danger/40 text-danger'"
+        <template v-if="isEdit">
+          <AppButton variant="ghost" size="sm" :icon="Copy" @click="duplicate">Duplicate</AppButton>
+          <AppButton
+            variant="ghost"
+            size="sm"
+            :icon="Trash2"
+            class="text-danger"
+            @click="removeConnection"
           >
-            <component :is="item.ok ? Check : AlertTriangle" class="size-2.5" />
-            {{ item.label }}
-          </span>
-        </div>
-        <ul v-if="capabilities.details?.length" class="list-disc pl-4 text-[0.6875rem] leading-relaxed text-muted">
-          <li v-for="(detail, index) in capabilities.details" :key="index">{{ detail }}</li>
-        </ul>
-      </div>
-    </section>
-
-    <template #footer>
-      <div v-if="isEdit" class="mr-auto flex items-center gap-1">
-        <AppButton variant="ghost" size="sm" :icon="Copy" @click="duplicate">Duplicate</AppButton>
-        <AppButton
-          variant="ghost"
-          size="sm"
-          :icon="Trash2"
-          class="text-danger"
-          @click="removeConnection"
-        >
-          Remove connection…
-        </AppButton>
+            Remove connection…
+          </AppButton>
+        </template>
       </div>
       <AppButton @click="cancel">Cancel</AppButton>
       <AppButton variant="primary" :loading="saving" data-testid="conn-save" @click="save">

@@ -31,6 +31,10 @@ pub struct LayoutSettings {
     pub sidebar: u32,
     pub preview: u32,
     pub collapsed: bool,
+    /// The preview panel is hidden. Older config files predate the field, so a
+    /// missing value means "visible".
+    #[serde(default)]
+    pub preview_hidden: bool,
 }
 
 impl Default for LayoutSettings {
@@ -39,6 +43,7 @@ impl Default for LayoutSettings {
             sidebar: 264,
             preview: 420,
             collapsed: false,
+            preview_hidden: false,
         }
     }
 }
@@ -546,7 +551,7 @@ pub fn validate_key(key: &str) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AddressingStyle, SignatureVersion};
+    use crate::model::{AddressingStyle, Capabilities, SignatureVersion};
 
     fn temp_store() -> (tempfile::TempDir, Store) {
         let dir = tempfile::tempdir().unwrap();
@@ -687,6 +692,56 @@ mod tests {
         assert_ne!(a.id, b.id);
         assert_eq!(b.prefix, "other/path/");
         assert_eq!(store.list().len(), 2);
+    }
+
+    #[test]
+    fn upsert_drops_stored_capabilities() {
+        let (dir, mut store) = temp_store();
+        let conn = store.upsert(sample_input()).unwrap();
+        store
+            .set_capabilities(
+                &conn.id,
+                Capabilities {
+                    can_list: true,
+                    can_read: true,
+                    can_write: true,
+                    can_delete: true,
+                    probed: true,
+                    details: Vec::new(),
+                },
+            )
+            .unwrap();
+        assert!(store.capabilities(&conn.id).is_some());
+
+        // Editing the credentials must invalidate the cached badge: the stored
+        // rights belong to the old keys (CON-4).
+        let mut input = sample_input();
+        input.id = Some(conn.id.clone());
+        input.access_key_id = "AKIANEWKEY".into();
+        store.upsert(input).unwrap();
+        assert!(
+            store.capabilities(&conn.id).is_none(),
+            "the stored capabilities survived an edit"
+        );
+
+        // A restart reads the same on-disk state, so the stale badge cannot
+        // come back from the saved config either.
+        let reloaded = Store::load_from(dir.path()).unwrap();
+        assert!(reloaded.capabilities(&conn.id).is_none());
+    }
+
+    #[test]
+    fn layout_preview_hidden_defaults_to_false() {
+        // Config files written before the field existed must still load.
+        let layout: LayoutSettings =
+            serde_json::from_str(r#"{"sidebar":300,"preview":400,"collapsed":true}"#).unwrap();
+        assert!(!layout.preview_hidden);
+        assert!(!LayoutSettings::default().preview_hidden);
+        assert!(!AppSettings::default().layout.preview_hidden);
+
+        // The wire name stays camelCase, matching the TypeScript type.
+        let json = serde_json::to_value(LayoutSettings::default()).unwrap();
+        assert_eq!(json["previewHidden"], false);
     }
 
     #[test]

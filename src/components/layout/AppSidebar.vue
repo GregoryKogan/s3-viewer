@@ -5,7 +5,7 @@ import AppBadge from "@/components/ui/AppBadge.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import { useConnectionsStore, describeCapabilities } from "@/stores/connections";
 import { useUiStore } from "@/stores/ui";
-import type { Connection } from "@/types";
+import type { Capabilities, Connection } from "@/types";
 
 const emit = defineEmits<{
   create: [];
@@ -27,11 +27,28 @@ const collapsed = computed(() => ui.layout.collapsed);
  */
 const labelFits = computed(() => !collapsed.value && ui.layout.sidebar >= 176);
 
-function toneFor(connection: Connection): "ok" | "warn" | "danger" {
+function toneFor(connection: Connection): "ok" | "warn" | "danger" | "neutral" {
   const summary = describeCapabilities(connections.capabilitiesOf(connection.id));
   if (summary.badgeClass === "ok") return "ok";
   if (summary.badgeClass === "danger") return "danger";
+  if (summary.badgeClass === "neutral") return "neutral";
   return "warn";
+}
+
+/**
+ * `read-only` is what the bucket's permission probe found; `writes blocked` is
+ * the connection's own read-only switch. Without a title the two badges next to
+ * each other read as the same fact (CON-5).
+ */
+function capabilityTitle(capabilities?: Capabilities | null): string {
+  const summary = describeCapabilities(capabilities);
+  if (!capabilities?.probed) {
+    return "Permissions have not been probed yet. This is not an error; use Test connection while editing the connection.";
+  }
+  if (summary.level === "ro") {
+    return "Probed from the bucket: these credentials can read but not write or delete. The local read-only switch is the separate “writes blocked” badge.";
+  }
+  return summary.summary;
 }
 
 /** A right-click anchors the menu at the pointer. */
@@ -147,6 +164,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
               'bg-ok': toneFor(view.connection) === 'ok',
               'bg-warn': toneFor(view.connection) === 'warn',
               'bg-danger': toneFor(view.connection) === 'danger',
+              'bg-subtle': toneFor(view.connection) === 'neutral',
             }"
           />
         </button>
@@ -183,8 +201,9 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
                   'bg-ok': toneFor(view.connection) === 'ok',
                   'bg-warn': toneFor(view.connection) === 'warn',
                   'bg-danger': toneFor(view.connection) === 'danger',
+                  'bg-subtle': toneFor(view.connection) === 'neutral',
                 }"
-                :title="describeCapabilities(view.capabilities).summary"
+                :title="capabilityTitle(view.capabilities)"
               />
             </div>
 
@@ -192,14 +211,18 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
               {{ view.connection.bucket }}<span class="text-muted">/{{ view.connection.prefix }}</span>
             </div>
             <div class="flex flex-wrap gap-1">
-              <AppBadge :tone="toneFor(view.connection)">
+              <AppBadge :tone="toneFor(view.connection)" :title="capabilityTitle(view.capabilities)">
                 {{ describeCapabilities(view.capabilities).badge }}
               </AppBadge>
               <AppBadge v-if="view.connection.signatureVersion !== 's3v4'" tone="accent">
                 {{ view.connection.signatureVersion }}
               </AppBadge>
-              <AppBadge v-if="view.connection.security.readOnlyMode" tone="danger">
-                read-only
+              <AppBadge
+                v-if="view.connection.security.readOnlyMode"
+                tone="danger"
+                title="Read-only mode is switched on for this connection: the app blocks every write, upload, rename and delete. This is a local setting, not what the probe found."
+              >
+                writes blocked
               </AppBadge>
             </div>
           </button>

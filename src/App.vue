@@ -45,6 +45,7 @@ import { useUpdatesStore } from "@/stores/updates";
 import { useObjectActions } from "@/composables/useObjectActions";
 import { useDialogs } from "@/composables/useDialogs";
 import type {
+  AppSettings,
   Connection,
   ListingDoneEvent,
   ListingErrorEvent,
@@ -304,15 +305,29 @@ async function removeConnection(connection: Connection) {
 }
 
 async function openSettings() {
-  await dialogs.open(SettingsDialog, (settle) => ({ resolve: settle }), "normal");
-  // Nothing about the folder changed, so there is nothing to re-list.
+  const saved = await dialogs.open<AppSettings | null>(
+    SettingsDialog,
+    (settle) => ({ resolve: settle }),
+    "normal",
+  );
+  if (!saved) return;
+  // Settings such as "show system objects" and the page size only take effect
+  // on the next listing, so re-list the open folder instead of making the user
+  // find Refresh (SET-1).
+  if (connections.active) await objects.reload();
 }
 
 async function openImport() {
-  const imported = await dialogs.open<number>(ImportDialog, (settle) => ({ resolve: settle }), "normal");
-  if (!imported) return;
+  const imported = await dialogs.open<string[]>(
+    ImportDialog,
+    (settle) => ({ resolve: settle }),
+    "normal",
+  );
+  if (!imported?.length) return;
   await connections.load();
-  const first = connections.all[0];
+  // Open the connection that was just imported, not whichever connection
+  // happened to sort first (CON-8).
+  const first = connections.all.find((connection) => connection.id === imported[0]);
   if (first) await openConnection(first);
 }
 

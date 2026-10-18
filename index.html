@@ -4,6 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>S3 Viewer</title>
+    <!-- Before paint and before the module: resolves the saved theme so a
+         light-theme user never sees a dark frame (SET-3). A separate file, not
+         an inline script, because the CSP allows only 'self'. -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="app"></div>

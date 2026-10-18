@@ -22,7 +22,9 @@ export interface CapabilitySummary {
 /** Turn the probe result into the label the sidebar shows. */
 export function describeCapabilities(capabilities?: Capabilities | null): CapabilitySummary {
   if (!capabilities?.probed) {
-    return { level: "none", summary: "not probed", badge: "not probed", badgeClass: "warn" };
+    // "Not probed" is the normal state before the first probe, not a warning;
+    // amber here read as a problem with the connection (CON-5).
+    return { level: "none", summary: "not probed", badge: "not probed", badgeClass: "neutral" };
   }
   if (!capabilities.canList) {
     return { level: "none", summary: "cannot list", badge: "no access", badgeClass: "danger" };

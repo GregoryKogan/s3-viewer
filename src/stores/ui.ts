@@ -4,10 +4,26 @@ import { api } from "@/lib/ipc";
 import { clamp } from "@/lib/format";
 import type { AppSettings, LayoutSettings, SecurityStatus, Theme, TransferResult } from "@/types";
 
-const LAYOUT_DEFAULTS: LayoutSettings = { sidebar: 264, preview: 420, collapsed: false };
+const LAYOUT_DEFAULTS: LayoutSettings = {
+  sidebar: 264,
+  preview: 420,
+  collapsed: false,
+  previewHidden: false,
+};
 const SIDEBAR_MIN = 190;
 const SIDEBAR_MAX = 520;
 const PREVIEW_MIN = 260;
+
+/** Must match `public/theme-init.js`, which resolves it before the app loads. */
+const THEME_STORAGE_KEY = "s3viewer.theme";
+
+function rememberTheme(value: Theme) {
+  try {
+    globalThis.localStorage?.setItem(THEME_STORAGE_KEY, value);
+  } catch {
+    /* storage may be unavailable; the next launch just falls back to dark */
+  }
+}
 
 /**
  * Application shell: persisted settings, panel geometry, theme, and the
@@ -18,7 +34,12 @@ export const useUiStore = defineStore("ui", () => {
   const settings = ref<AppSettings | null>(null);
   const security = ref<SecurityStatus | null>(null);
   const layout = ref<LayoutSettings>({ ...LAYOUT_DEFAULTS });
-  const previewHidden = ref(false);
+  /**
+   * Whether the preview column is hidden, stored with the rest of the layout so
+   * it survives a restart like the panel widths do. Read-only by design: the
+   * store owns every mutation.
+   */
+  const previewHidden = computed(() => layout.value.previewHidden);
   /**
    * The preview has the main area to itself. Deliberately not persisted: a
    * maximised preview is a momentary inspection, not a workspace layout.
@@ -33,8 +54,11 @@ export const useUiStore = defineStore("ui", () => {
   async function load() {
     settings.value = await api.getSettings();
     if (settings.value.layout) {
-      layout.value = { ...layout.value, ...settings.value.layout };
+      layout.value = { ...LAYOUT_DEFAULTS, ...layout.value, ...settings.value.layout };
     }
+    // Keep the pre-paint copy (theme-init.js) in step with the store in case
+    // the config file was edited elsewhere.
+    rememberTheme(theme.value);
     applyTheme();
     applyLayoutDom();
     ready.value = true;
@@ -50,6 +74,22 @@ export const useUiStore = defineStore("ui", () => {
 
   function prefersLight() {
     return globalThis.matchMedia?.("(prefers-color-scheme: light)").matches ?? false;
+  }
+
+  /**
+   * Follow the OS while the setting is "system" (SET-2). One listener for the
+   * app lifetime: `applyTheme` is also called on every save, so attaching it
+   * per call would stack duplicates.
+   */
+  let systemThemeListenerAttached = false;
+  function watchSystemTheme() {
+    if (systemThemeListenerAttached) return;
+    const media = globalThis.matchMedia?.("(prefers-color-scheme: light)");
+    if (!media?.addEventListener) return;
+    systemThemeListenerAttached = true;
+    media.addEventListener("change", () => {
+      if (theme.value === "system") applyTheme();
+    });
   }
 
   /**
@@ -77,6 +117,7 @@ export const useUiStore = defineStore("ui", () => {
     const requested = theme.value;
     const resolved = requested === "system" ? (prefersLight() ? "light" : "dark") : requested;
     document.documentElement.dataset.theme = resolved;
+    watchSystemTheme();
   }
 
   async function saveSettings(next: Partial<AppSettings>) {
@@ -94,6 +135,7 @@ export const useUiStore = defineStore("ui", () => {
     // Keep the local layout: it is newer than the value that came back, and the
     // response would otherwise undo a collapse or a resize that just happened.
     settings.value = { ...saved, layout: { ...layout.value } };
+    rememberTheme(settings.value.theme);
     applyTheme();
     return settings.value;
   }
@@ -142,10 +184,11 @@ export const useUiStore = defineStore("ui", () => {
   }
 
   function togglePreview() {
-    previewHidden.value = !previewHidden.value;
+    layout.value.previewHidden = !layout.value.previewHidden;
     // A hidden panel has no expanded state to come back to.
-    if (previewHidden.value) collapsePreview();
+    if (layout.value.previewHidden) collapsePreview();
     applyLayoutDom();
+    persistLayout();
   }
 
   /**
