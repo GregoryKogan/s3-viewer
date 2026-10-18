@@ -163,7 +163,7 @@ Same as Task 1 (frontend + Rust e2e compiles).
    - Empty folder: `Upload files` and `New folder` buttons when writable; reuse `useObjectActions`.
    - Keep `data-testid="empty-folder"`; add testids for the new buttons.
    - Error precedence: check `objects.error` before `objects.filter` in the empty-state chain, so a failed refresh with an active filter still shows the error and its Retry.
-   - Upload completion: make `upload_files_impl` use each plan item's `id` as the progress id (do not generate a second UUID); `uploadPaths` waits for those ids, toasts failures, and reloads the folder, so the empty-state Upload leaves the empty state. Task 5 reuses this.
+   - Upload completion: make `upload_files_impl` use each plan item's `id` as the progress id (do not generate a second UUID). Add `progress.waitForAll(ids)` with one shared poll loop and no fixed timeout (a large upload must not be reported failed at 120 s). `uploadPaths` captures the connection id and prefix, waits for all ids, toasts failures, and reloads only when the session still points at that same folder. Task 5 reuses this.
    - Error detail request id: add `#[serde(rename_all = "camelCase")]` to Rust `ErrorPayload`, add `requestId` to the listing-error event type, store the S3 request id rather than the internal listing counter, and never overwrite a non-null id with a null one from the catch. Accept both `requestId` and `request_id` in `toError` for safety.
    - The fallback truncation banner text must be count-free (`Only the first objects are shown.`); the backend warning normally supplies the real count.
 6. Dates:
@@ -242,7 +242,7 @@ Frontend gates, Rust gates (new command + test), e2e compile. No visual test har
    - Preserve the structure; reject unreadable paths with the path in the message; refuse more than 10 000 files with a clear error.
    - Keep this function testable with `tempfile` (already a dev-dependency? check; if not, use `std::env::temp_dir` + unique names and clean up).
 3. `upload_files`:
-   - Build the plan once; start a progress entry synchronously for each non-skipped item and use its id as `UploadPlanItem.id`; skipped items get `skipped: true` and no progress entry.
+   - Build the plan once; start a progress entry synchronously for every item and use its id as `UploadPlanItem.id`. A skipped item gets `skipped: true` and its progress entry is finished immediately (label `Skipped <key>`), so the UI's wait always settles; never return an id without an entry.
    - If `skip_existing`, stat each key before starting; do not upload existing ones.
    - The spawn loop checks `progress` cancellation before each item; it cannot abort an in-flight PUT (document this in the command comment).
    - Return the plan immediately.
