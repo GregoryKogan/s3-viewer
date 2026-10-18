@@ -151,7 +151,13 @@ async function save() {
             placeholder="(default: your Downloads folder)"
             data-testid="settings-download-dir"
           />
-          <AppButton :icon="FolderOpen" @click="chooseDownloadDir">Choose…</AppButton>
+          <AppButton
+            :icon="FolderOpen"
+            title="Choose a folder"
+            aria-label="Choose a folder"
+            data-testid="settings-choose-dir"
+            @click="chooseDownloadDir"
+          />
         </div>
       </AppField>
 

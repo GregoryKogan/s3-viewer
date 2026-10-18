@@ -14,14 +14,11 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     target: ["safari16", "chrome110", "firefox115"],
-    // One chunk keeps the webview startup simple: no module waterfall to wait on.
+    // Content-hashed names. A fixed `app.js` is served from the webview's HTTP
+    // cache across builds, so a user updating the app would keep seeing the
+    // previous interface until the cache expired.
     rollupOptions: {
-      output: {
-        manualChunks: undefined,
-        entryFileNames: "assets/app.js",
-        chunkFileNames: "assets/[name].js",
-        assetFileNames: "assets/[name][extname]",
-      },
+      output: { manualChunks: undefined },
     },
     sourcemap: false,
     minify: "esbuild",

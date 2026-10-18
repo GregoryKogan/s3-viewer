@@ -373,6 +373,17 @@ const SCENARIO: &str = r#"(async () => {
       return 'snippet mirrors the form';
     });
 
+    await check('ui: importing is available from the start', async () => {
+      const trigger = $('[data-testid=import-connections]');
+      if (!trigger) throw new Error('the import action is missing');
+      trigger.click();
+      const area = await wait('the import dialog', () => $('[data-testid=import-textarea]'), 10000);
+      const title = $('[data-testid=modal-title]').textContent;
+      if (!/import/i.test(title)) throw new Error('unexpected dialog: ' + title);
+      await closeModal();
+      return area.tagName.toLowerCase() + ' in "' + title.trim() + '"';
+    });
+
     await check('ui: the sidebar lists the connection with probed rights', async () => {
       const cards = await wait('a connection card', () => {
         const found = $$('#connection-list button[data-testid^="connection-"]');
@@ -664,6 +675,9 @@ const SCENARIO: &str = r#"(async () => {
       const label = $('#sidebar .sidebar-label');
       const button = $('#new-connection');
       if (!button) throw new Error('the New button disappeared');
+      if (!/\bNew\b/.test(button.textContent || '')) {
+        throw new Error('the New button lost its label at minimum width: "' + button.textContent.trim() + '"');
+      }
       if (label && label.offsetParent !== null) {
         const l = label.getBoundingClientRect();
         const b = button.getBoundingClientRect();
@@ -1058,6 +1072,13 @@ const SCENARIO: &str = r#"(async () => {
     await check('settings: downloads can ask for a destination every time', async () => {
       $('[data-testid=open-settings]').click();
       const toggle = await wait('the ask-location setting', () => $('[data-testid=settings-ask-location]'), 10000);
+      // The folder picker is an icon: a label next to the path field did not fit.
+      const choose = $('[data-testid=settings-choose-dir]');
+      if (!choose) throw new Error('the folder picker is missing');
+      if ((choose.textContent || '').trim()) {
+        throw new Error('the folder picker still has a label: "' + choose.textContent.trim() + '"');
+      }
+      if (!choose.querySelector('svg')) throw new Error('the folder picker has no icon');
       const before = toggle.checked;
       toggle.click();
       await frame();

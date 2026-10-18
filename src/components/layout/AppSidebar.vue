@@ -21,10 +21,11 @@ const ui = useUiStore();
 const collapsed = computed(() => ui.layout.collapsed);
 
 /**
- * Below this width the header cannot hold both the text label and the actions, so
- * the label gives way instead of overlapping the button beside it.
+ * The label only gives way if the window itself forces the sidebar below the
+ * width it needs. Collapsing is the deliberate way to get a narrow sidebar, so
+ * there is no in-between state to get wrong.
  */
-const narrow = computed(() => collapsed.value || ui.layout.sidebar < 232);
+const labelFits = computed(() => !collapsed.value && ui.layout.sidebar >= 176);
 
 function toneFor(connection: Connection): "ok" | "warn" | "danger" {
   const summary = describeCapabilities(connections.capabilitiesOf(connection.id));
@@ -43,32 +44,14 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
   >
     <div class="drag-region h-[var(--titlebar-height)] shrink-0" aria-hidden="true" />
 
-    <div class="flex min-h-9 shrink-0 items-center gap-1 px-2 pt-1 pb-1.5">
-      <span
-        v-if="!narrow"
-        class="sidebar-label min-w-0 flex-1 truncate text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase"
-      >
-        Connections
-      </span>
-      <span v-else class="flex-1" />
-
-      <AppButton
-        v-if="!collapsed"
-        variant="primary"
-        size="sm"
-        :icon="Plus"
-        id="new-connection"
-        data-testid="new-connection"
-        class="shrink-0"
-        :title="narrow ? 'Add a connection (⌘N)' : undefined"
-        @click="emit('create')"
-      >
-        <span v-if="!narrow">New</span>
-      </AppButton>
+    <!-- Collapsed: a single centred target. Expanded: the label and the one
+         action that belongs at this level. The collapse control lives in the
+         footer, so this row never has to squeeze three things into a narrow
+         column. -->
+    <div v-if="collapsed" class="flex shrink-0 items-center justify-center px-2 pt-1 pb-1.5">
       <button
-        v-else
         type="button"
-        class="grid size-9 shrink-0 place-items-center rounded-control bg-accent text-white transition-colors hover:bg-accent-hover"
+        class="grid size-9 place-items-center rounded-control bg-accent text-white transition-colors hover:bg-accent-hover"
         title="Add a connection (⌘N)"
         id="new-connection"
         data-testid="new-connection"
@@ -78,15 +61,49 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
       </button>
     </div>
 
+    <div v-else class="flex min-h-9 shrink-0 items-center gap-1 px-2 pt-1 pb-1.5" :class="labelFits ? 'justify-between' : 'justify-center'">
+      <span
+        v-if="labelFits"
+        class="sidebar-label min-w-0 truncate text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase"
+      >
+        Connections
+      </span>
+
+      <AppButton
+        variant="primary"
+        size="sm"
+        :icon="Plus"
+        id="new-connection"
+        data-testid="new-connection"
+        class="shrink-0"
+        @click="emit('create')"
+      >
+        New
+      </AppButton>
+    </div>
+
     <div
       id="connection-list"
       class="scrollbar flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-2"
       data-testid="connection-list"
     >
-      <p v-if="!connections.views.length" class="sidebar-label px-2 py-4 text-xs leading-relaxed text-muted">
-        No connections yet.<br />
-        Add one, or import the credentials file you already use.
-      </p>
+      <div
+        v-if="!connections.views.length && !collapsed"
+        class="flex flex-col items-start gap-2 px-2 py-4"
+      >
+        <p class="text-xs leading-relaxed text-muted">
+          No connections yet. Add one, or bring in the credentials file you already use.
+        </p>
+        <button
+          type="button"
+          class="flex items-center gap-1.5 rounded-control border border-line-strong px-2 py-1 text-[0.6875rem] text-content transition-colors hover:bg-hover"
+          data-testid="import-empty"
+          @click="emit('import')"
+        >
+          <Upload class="size-3.5" />
+          Import from JSON…
+        </button>
+      </div>
 
       <!-- Collapsed: a rail of large, centred targets instead of squeezed cards. -->
       <template v-if="collapsed">
@@ -168,7 +185,7 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
       </template>
 
       <button
-        v-if="connections.views.length"
+        v-if="connections.views.length || collapsed"
         type="button"
         class="flex shrink-0 items-center gap-1.5 rounded-control text-[0.6875rem] text-muted transition-colors hover:bg-hover hover:text-content"
         :class="collapsed ? 'mx-auto size-9 justify-center' : 'mt-1 px-2 py-1.5'"
@@ -182,40 +199,55 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
     </div>
 
     <!-- Footer: the collapse toggle is a full-width 36px target in both states. -->
-    <div class="flex shrink-0 flex-col gap-0.5 border-t border-line p-1.5">
-      <button
-        v-if="collapsed"
-        type="button"
-        class="grid h-9 w-full place-items-center rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
-        title="Settings"
-        data-testid="open-settings"
-        @click="emit('settings')"
-      >
-        <Settings class="size-4" />
-      </button>
-      <AppButton
-        v-else
-        variant="ghost"
-        block
-        :icon="Settings"
-        title="Settings"
-        data-testid="open-settings"
-        @click="emit('settings')"
-      >
-        Settings
-      </AppButton>
+    <!-- Footer. When expanded this is one row: Settings takes the space, and the
+         panel toggle is the small icon button every editor puts at the end of a
+         sidebar. When collapsed both stack, centred. -->
+    <div
+      class="flex shrink-0 gap-1 border-t border-line p-1.5"
+      :class="collapsed ? 'flex-col items-center' : 'items-center'"
+    >
+      <template v-if="collapsed">
+        <button
+          type="button"
+          class="grid size-9 place-items-center rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
+          title="Settings"
+          data-testid="open-settings"
+          @click="emit('settings')"
+        >
+          <Settings class="size-4" />
+        </button>
+        <button
+          type="button"
+          class="grid size-9 place-items-center rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
+          title="Expand the sidebar (⌘B)"
+          data-testid="collapse-sidebar"
+          @click="ui.toggleSidebar()"
+        >
+          <ChevronsRight class="size-4" />
+        </button>
+      </template>
 
-      <button
-        type="button"
-        class="flex h-9 w-full items-center gap-2 rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
-        :class="collapsed ? 'justify-center' : 'px-2.5'"
-        :title="collapsed ? 'Expand the sidebar (⌘B)' : 'Collapse the sidebar (⌘B)'"
-        data-testid="collapse-sidebar"
-        @click="ui.toggleSidebar()"
-      >
-        <component :is="collapsed ? ChevronsRight : ChevronsLeft" class="size-4 shrink-0" />
-        <span v-if="!collapsed" class="text-xs">Collapse</span>
-      </button>
+      <template v-else>
+        <AppButton
+          variant="ghost"
+          class="min-w-0 flex-1 !justify-start"
+          :icon="Settings"
+          title="Settings"
+          data-testid="open-settings"
+          @click="emit('settings')"
+        >
+          Settings
+        </AppButton>
+        <button
+          type="button"
+          class="grid size-7 shrink-0 place-items-center rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
+          title="Collapse the sidebar (⌘B)"
+          data-testid="collapse-sidebar"
+          @click="ui.toggleSidebar()"
+        >
+          <ChevronsLeft class="size-3.5" />
+        </button>
+      </template>
     </div>
   </aside>
 </template>

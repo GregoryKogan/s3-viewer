@@ -21,6 +21,23 @@ use aws_sdk_s3::types::{Delete, ObjectIdentifier};
 use aws_sdk_s3::Client;
 use std::path::Path;
 
+/// The HTTP client every S3 connection shares in character.
+///
+/// Idle keep-alive sockets are dropped quickly on purpose. Some S3-compatible
+/// endpoints close idle connections without telling the client, and reusing such
+/// a socket turns the next request into a silent stall until the OS gives up —
+/// which is exactly what a listing that emits nothing for twenty seconds looks
+/// like. A short idle timeout costs one TLS handshake and removes the failure.
+fn http_client() -> aws_smithy_runtime_api::client::http::SharedHttpClient {
+    aws_smithy_http_client::Builder::new()
+        .pool_idle_timeout(std::time::Duration::from_secs(5))
+        .pool_max_idle_per_host(2)
+        .tls_provider(aws_smithy_http_client::tls::Provider::Rustls(
+            aws_smithy_http_client::tls::rustls_provider::CryptoMode::AwsLc,
+        ))
+        .build_https()
+}
+
 pub struct AwsStore {
     client: Client,
     bucket: String,
@@ -44,6 +61,17 @@ impl AwsStore {
         };
         let cfg = aws_sdk_s3::Config::builder()
             .behavior_version(aws_config::BehaviorVersion::latest())
+            .http_client(http_client())
+            // boto3's defaults, which this client aims to reproduce: three
+            // attempts, and a read that gives up instead of hanging a worker
+            // forever when a socket goes quiet.
+            .timeout_config(
+                aws_smithy_types::timeout::TimeoutConfig::builder()
+                    .connect_timeout(std::time::Duration::from_secs(10))
+                    .read_timeout(std::time::Duration::from_secs(30))
+                    .build(),
+            )
+            .retry_config(aws_sdk_s3::config::retry::RetryConfig::standard().with_max_attempts(3))
             .credentials_provider(credentials)
             .region(Region::new(conn.region.clone()))
             .endpoint_url(conn.endpoint_url.clone())
