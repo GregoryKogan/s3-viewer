@@ -37,11 +37,41 @@ export function useObjectActions(options: Options = {}) {
     objects.selected.size ? objects.selectedEntries : [],
   );
 
+  /** Mutations act on the selection, or on the focused row when it is empty. */
+  const writeTargets = computed<ObjectEntry[]>(() => objects.deleteTargets);
+
+  /**
+   * Guard against a session that no longer matches the active connection.
+   *
+   * The listing is a snapshot of one connection; acting with the active
+   * connection's id and this listing's keys can touch the wrong bucket when two
+   * connections share key names. Aborting is the only safe answer, and the
+   * active root is reloaded so the screen matches again.
+   */
+  function sessionMatchesActive(): boolean {
+    const active = connections.active;
+    if (!active) return false;
+    if (objects.sessionConnectionId === active.id) return true;
+    toasts.error(
+      "The folder on screen belongs to a different connection. It was reloaded from the active connection.",
+      "Connection changed",
+    );
+    void objects.reloadSession();
+    return false;
+  }
+
+  /** Writes need a writable connection; say why instead of failing silently. */
+  function canWrite(): boolean {
+    if (connections.canWriteActive) return true;
+    toasts.warn("This connection does not allow writes. Nothing was changed.", "Read-only connection");
+    return false;
+  }
+
   // ---------------------------------------------------------------- downloads
 
   async function downloadEntry(entry: ObjectEntry) {
     const connection = connections.active;
-    if (!connection) return;
+    if (!connection || !sessionMatchesActive()) return;
 
     // "Ask every time" means exactly that: pick the destination first, and treat
     // cancelling the dialog as cancelling the download.
@@ -60,6 +90,7 @@ export function useObjectActions(options: Options = {}) {
   }
 
   async function downloadSelection() {
+    if (!sessionMatchesActive()) return;
     const entries = targets.value.filter((entry) => !entry.isFolder);
     if (!entries.length) {
       toasts.warn("Folders cannot be downloaded directly. Open the folder and select its files.", "Nothing to download");
@@ -72,7 +103,7 @@ export function useObjectActions(options: Options = {}) {
 
   async function copyUri(entry: ObjectEntry) {
     const connection = connections.active;
-    if (!connection) return;
+    if (!connection || !sessionMatchesActive()) return;
     const uri = s3Uri(connection.bucket, entry.key);
     if (await copyText(uri)) toasts.ok(`Copied ${uri}`);
     else toasts.error("The clipboard is not available.");
@@ -81,7 +112,7 @@ export function useObjectActions(options: Options = {}) {
   async function copySelectionUris() {
     const connection = connections.active;
     const entries = targets.value;
-    if (!connection || !entries.length) return;
+    if (!connection || !entries.length || !sessionMatchesActive()) return;
     const text = entries.map((entry) => s3Uri(connection.bucket, entry.key)).join("\n");
     if (!(await copyText(text))) {
       toasts.error("The clipboard is not available.");
@@ -94,11 +125,7 @@ export function useObjectActions(options: Options = {}) {
 
   async function upload() {
     const connection = connections.active;
-    if (!connection) return;
-    if (connection.security.readOnlyMode) {
-      toasts.warn("This connection is in read-only mode.", "Upload blocked");
-      return;
-    }
+    if (!connection || !sessionMatchesActive() || !canWrite()) return;
     try {
       const paths = await pickFiles({ multiple: true });
       if (!paths.length) return;
@@ -108,9 +135,22 @@ export function useObjectActions(options: Options = {}) {
     }
   }
 
+  /** Pick a directory; the uploader walks it recursively. */
+  async function uploadFolder() {
+    const connection = connections.active;
+    if (!connection || !sessionMatchesActive() || !canWrite()) return;
+    try {
+      const paths = await pickFiles({ directory: true });
+      if (!paths.length) return;
+      await uploadPaths(paths);
+    } catch (error) {
+      toasts.error((error as Error).message, "Cannot upload");
+    }
+  }
+
   async function uploadPaths(paths: string[]) {
     const connection = connections.active;
-    if (!connection || !paths.length) return;
+    if (!connection || !paths.length || !sessionMatchesActive() || !canWrite()) return;
     try {
       const plan = await api.uploadFiles({
         connectionId: connection.id,
@@ -129,7 +169,7 @@ export function useObjectActions(options: Options = {}) {
 
   async function createFolder() {
     const connection = connections.active;
-    if (!connection) return;
+    if (!connection || !sessionMatchesActive() || !canWrite()) return;
     const name = await dialogs.prompt({
       title: "New folder",
       label: "Folder name",
@@ -149,7 +189,7 @@ export function useObjectActions(options: Options = {}) {
 
   async function createFile() {
     const connection = connections.active;
-    if (!connection) return;
+    if (!connection || !sessionMatchesActive() || !canWrite()) return;
     const name = await dialogs.prompt({
       title: "New file",
       label: "File name",
@@ -171,8 +211,8 @@ export function useObjectActions(options: Options = {}) {
 
   async function deleteSelection() {
     const connection = connections.active;
-    const entries = targets.value;
-    if (!connection || !entries.length) return;
+    const entries = writeTargets.value;
+    if (!connection || !entries.length || !sessionMatchesActive() || !canWrite()) return;
 
     const folders = entries.filter((entry) => entry.isFolder);
     const files = entries.filter((entry) => !entry.isFolder);
@@ -208,6 +248,9 @@ export function useObjectActions(options: Options = {}) {
         keys: entries.map((entry) => entry.key),
       });
       transfers.start();
+      if (objects.previewKey && entries.some((entry) => entry.key === objects.previewKey)) {
+        objects.clearPreview();
+      }
       objects.clearSelection();
       const outcome = await transfers.waitFor(result.id);
       if (outcome.state === "failed") toasts.error(outcome.error ?? "the delete failed", "Delete failed");
@@ -221,9 +264,9 @@ export function useObjectActions(options: Options = {}) {
   // ----------------------------------------------------------------- copy/move
 
   async function transferSelection(moveObjects: boolean) {
-    const entries = targets.value;
+    const entries = writeTargets.value;
     const source = connections.active;
-    if (!entries.length || !source) return;
+    if (!entries.length || !source || !sessionMatchesActive() || !canWrite()) return;
 
     const result = await dialogs.store.open<CopyMoveResult | null>(
       CopyMoveDialog,
@@ -260,11 +303,13 @@ export function useObjectActions(options: Options = {}) {
 
   return {
     targets,
+    writeTargets,
     downloadEntry,
     downloadSelection,
     copyUri,
     copySelectionUris,
     upload,
+    uploadFolder,
     uploadPaths,
     createFolder,
     createFile,

@@ -109,37 +109,44 @@ onMounted(() => {
 onBeforeUnmount(() => observer?.disconnect());
 
 /**
- * A plain click moves the focus and shows the preview; it never ticks a box.
- * Shift extends the range, Cmd/Ctrl toggles a single row.
+ * A plain click selects exactly one row and shows its preview; Cmd/Ctrl toggles
+ * one row, Shift replaces the selection with the range from the anchor.
  */
 function onClick(entry: (typeof rows.value)[number], event: MouseEvent) {
-  const extending = event.shiftKey;
+  const modifier = event.metaKey || event.ctrlKey;
   // The range is computed from the anchor set by the previous click, so focus
   // has to move without stealing it.
-  if (extending) objects.selectRange(entry.key);
-  objects.focus(entry.key, { keepAnchor: extending });
-  if (!extending && (event.metaKey || event.ctrlKey)) objects.toggleSelected(entry.key);
+  if (event.shiftKey) {
+    objects.selectRange(entry.key);
+    objects.focus(entry.key, { keepAnchor: true });
+  } else if (modifier) {
+    objects.toggleSelected(entry.key);
+    objects.focus(entry.key);
+  } else {
+    objects.selectOnly(entry.key);
+    objects.focus(entry.key);
+  }
   void objects.previewEntry(entry);
 }
 
-/** Clicking the checkbox selects without moving focus to another row's preview. */
-function onToggleCheck(entry: (typeof rows.value)[number], event: MouseEvent) {
-  if (event.shiftKey) {
-    objects.selectRange(entry.key);
-    objects.toggleSelected(entry.key);
-  }
+/** Clicking the empty scroller behind the rows is the fastest way to deselect. */
+function onBackgroundClick(event: MouseEvent) {
+  const target = event.target as HTMLElement | null;
+  if (!target?.closest || target.closest(".object-row")) return;
+  objects.clearSelection();
+  objects.focus(null);
 }
 
-function onToggleCheckbox(entry: (typeof rows.value)[number]) {
-  objects.toggleSelected(entry.key);
+/** The checkbox is a secondary, explicit path; it must not toggle twice. */
+function onToggleCheck(entry: (typeof rows.value)[number], event: MouseEvent) {
+  if (event.shiftKey) objects.selectRange(entry.key);
+  else objects.toggleSelected(entry.key);
 }
 
 function onContextMenu(entry: (typeof rows.value)[number], event: MouseEvent) {
-  // Right-clicking a row that is not selected acts on that row alone.
-  if (!objects.selected.has(entry.key)) {
-    objects.clearSelection();
-    objects.toggleSelected(entry.key);
-  }
+  // A right-click on an unselected row makes it the target of focused actions
+  // (Delete, Copy to…) without disturbing an existing multi-selection.
+  if (!objects.selected.has(entry.key)) objects.focus(entry.key, { keepAnchor: true });
   emit("contextmenu", entry, event);
 }
 
@@ -199,6 +206,7 @@ defineExpose({ scrollToRow });
       id="object-list"
       data-testid="object-list"
       @scroll="onScroll"
+      @click="onBackgroundClick"
       @contextmenu.self.prevent="emit('background', $event)"
     >
       <div v-if="!rows.length" class="flex h-full items-center justify-center p-6">
@@ -239,7 +247,6 @@ defineExpose({ scrollToRow });
           @click="onClick"
           @activate="onActivate"
           @toggle-check="onToggleCheck"
-          @toggle-checkbox="onToggleCheckbox"
           @contextmenu="onContextMenu"
         />
       </div>

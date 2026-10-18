@@ -22,6 +22,12 @@ export type SortKey = "name" | "size" | "modified" | "kind";
  */
 export const useObjectsStore = defineStore("objects", () => {
   const prefix = ref("");
+  /**
+   * The connection this listing belongs to. Every mutation checks it against
+   * the active connection, so a stale session can never delete objects in
+   * another bucket that happens to share the same keys.
+   */
+  const sessionConnectionId = ref<string | null>(null);
   const entries = ref<ObjectEntry[]>([]);
   const loading = ref(false);
   const awaitingFirstPage = ref(false);
@@ -72,13 +78,21 @@ export const useObjectsStore = defineStore("objects", () => {
     const connection = connections.active;
     if (!connection) return;
 
-    prefix.value = asFolderPrefix(targetPrefix);
+    const nextPrefix = asFolderPrefix(targetPrefix);
+    // A reload of the same folder keeps the selection and the filter; a new
+    // folder (or a different connection on the same prefix) starts fresh.
+    const continuing =
+      sessionConnectionId.value === connection.id && nextPrefix === prefix.value;
+    sessionConnectionId.value = connection.id;
+    prefix.value = nextPrefix;
     entries.value = [];
     staged = [];
-    selected.value.clear();
-    selectionAnchor.value = null;
-    focusedKey.value = null;
-    filter.value = "";
+    if (!continuing) {
+      selected.value = new Set();
+      selectionAnchor.value = null;
+      focusedKey.value = null;
+      filter.value = "";
+    }
     loading.value = true;
     awaitingFirstPage.value = true;
     error.value = null;
@@ -143,8 +157,13 @@ export const useObjectsStore = defineStore("objects", () => {
     truncated.value = event.truncated;
     warning.value = event.warning ?? null;
     prefix.value = event.prefix ?? prefix.value;
-    selected.value.clear();
-    selectionAnchor.value = null;
+
+    // A reload must not lose the user's place: keep only what still exists in
+    // the new listing, and drop a focus or anchor that vanished with it.
+    const keys = new Set(entries.value.map((entry) => entry.key));
+    selected.value = new Set([...selected.value].filter((key) => keys.has(key)));
+    if (focusedKey.value && !keys.has(focusedKey.value)) focusedKey.value = null;
+    if (selectionAnchor.value && !keys.has(selectionAnchor.value)) selectionAnchor.value = null;
   }
 
   function onListingError(event: ListingErrorEvent) {
@@ -172,6 +191,7 @@ export const useObjectsStore = defineStore("objects", () => {
   function close() {
     listingRequest += 1;
     prefix.value = "";
+    sessionConnectionId.value = null;
     entries.value = [];
     staged = [];
     selected.value.clear();
@@ -229,11 +249,17 @@ export const useObjectsStore = defineStore("objects", () => {
     selectionAnchor.value = key;
   }
 
+  /** Select exactly one row, like a plain click in a file manager. */
+  function selectOnly(key: string) {
+    selected.value = new Set([key]);
+    selectionAnchor.value = key;
+  }
+
   /**
-   * Select every row between the anchor and `key`, inclusive.
+   * Replace the selection with every row between the anchor and `key`, inclusive.
    *
-   * The anchor is the last row the user acted on, so repeated Shift+clicks widen
-   * and narrow the same range instead of starting a new one each time.
+   * The anchor is the row the range started at, so repeated Shift+clicks widen
+   * and narrow the same range instead of growing a union on every click.
    */
   function selectRange(key: string) {
     const list = visibleEntries.value;
@@ -246,10 +272,9 @@ export const useObjectsStore = defineStore("objects", () => {
       selectionAnchor.value = key;
       return;
     }
+    selectionAnchor.value = anchorKey;
     const [lo, hi] = from <= to ? [from, to] : [to, from];
-    const next = new Set(selected.value);
-    for (let index = lo; index <= hi; index += 1) next.add(list[index].key);
-    selected.value = next;
+    selected.value = new Set(list.slice(lo, hi + 1).map((entry) => entry.key));
   }
 
   /**
@@ -276,6 +301,17 @@ export const useObjectsStore = defineStore("objects", () => {
   const selectedEntries = computed(() =>
     entries.value.filter((entry) => selected.value.has(entry.key)),
   );
+
+  /**
+   * What Delete acts on: the selection, or the focused row when nothing is
+   * selected. Never more than one row in the fallback case.
+   */
+  const deleteTargets = computed<ObjectEntry[]>(() => {
+    if (selected.value.size) return selectedEntries.value;
+    if (!focusedKey.value) return [];
+    const focused = entries.value.find((entry) => entry.key === focusedKey.value);
+    return focused ? [focused] : [];
+  });
 
   // ------------------------------------------------------------------ preview
 
@@ -349,6 +385,7 @@ export const useObjectsStore = defineStore("objects", () => {
   return {
     logging: { listing: listingLog, preview: previewLog },
     prefix,
+    sessionConnectionId,
     entries,
     loading,
     awaitingFirstPage,
@@ -370,6 +407,7 @@ export const useObjectsStore = defineStore("objects", () => {
     open,
     visibleEntries,
     selectedEntries,
+    deleteTargets,
     loadFolder,
     reload,
     reloadSession,
@@ -381,6 +419,7 @@ export const useObjectsStore = defineStore("objects", () => {
     close,
     setSort,
     toggleSelected,
+    selectOnly,
     selectRange,
     focus,
     selectAll,

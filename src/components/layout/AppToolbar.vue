@@ -5,6 +5,7 @@ import AppButton from "@/components/ui/AppButton.vue";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
 import { humanSize } from "@/lib/format";
+import { IS_MAC, shortcutLabel } from "@/lib/keyboard";
 import { useObjectActions } from "@/composables/useObjectActions";
 
 const emit = defineEmits<{ moved: [] }>();
@@ -15,9 +16,8 @@ const actions = useObjectActions({ onChanged: () => emit("moved") });
 
 const selectionCount = computed(() => objects.selected.size);
 const canWrite = computed(() => connections.canWriteActive && Boolean(connections.active));
-
-/** Nothing selected: only the actions that create or open something are shown. */
-const idle = computed(() => selectionCount.value === 0);
+/** macOS deletes with ⌘⌫; Linux deletes with the forward-delete key. */
+const deleteShortcut = IS_MAC ? shortcutLabel("Backspace") : "Del";
 
 const status = computed(() => {
   const files = objects.entries.filter((entry) => !entry.isFolder).length;
@@ -36,51 +36,61 @@ const status = computed(() => {
 
 <template>
   <div id="toolbar" class="flex min-h-9 flex-wrap items-center gap-1 px-3.5 pb-2" data-testid="toolbar">
-    <template v-if="idle">
-      <AppButton
-        :icon="Upload"
-        :disabled="!canWrite"
-        title="Upload files (⌘U)"
-        data-testid="upload"
-        @click="actions.upload()"
-      >
-        Upload
-      </AppButton>
-      <AppButton
-        :icon="FolderPlus"
-        :disabled="!canWrite"
-        title="New folder"
-        data-testid="new-folder"
-        @click="actions.createFolder()"
-      >
-        Folder
-      </AppButton>
-      <AppButton
-        :icon="FilePlus"
-        :disabled="!canWrite"
-        title="New file"
-        data-testid="new-file"
-        @click="actions.createFile()"
-      >
-        File
-      </AppButton>
-    </template>
+    <AppButton
+      :icon="Upload"
+      :disabled="!canWrite"
+      :title="`Upload files (${shortcutLabel('U')})`"
+      data-testid="upload"
+      @click="actions.upload()"
+    >
+      Upload
+    </AppButton>
+    <AppButton
+      :icon="FolderPlus"
+      :disabled="!canWrite"
+      title="New folder"
+      data-testid="new-folder"
+      @click="actions.createFolder()"
+    >
+      New folder
+    </AppButton>
+    <AppButton
+      :icon="FilePlus"
+      :disabled="!canWrite"
+      title="New file"
+      data-testid="new-file"
+      @click="actions.createFile()"
+    >
+      New file
+    </AppButton>
 
-    <!-- A selection replaces the create actions instead of piling on top of
-         them: at rest the toolbar stays short, and the bulk actions appear
-         exactly when they apply. -->
-    <template v-else>
+    <!-- The create actions stay put; the bulk actions append to them exactly
+         while a selection exists. -->
+    <template v-if="selectionCount">
+      <span class="mx-1 h-4 w-px bg-line" />
       <span class="text-xs font-medium text-content" data-testid="selection-count">
         {{ selectionCount }} selected
       </span>
-      <span class="mx-1 h-4 w-px bg-line" />
-      <AppButton :icon="Download" data-testid="download" @click="actions.downloadSelection()">
+      <AppButton
+        :icon="Download"
+        title="Download the selected files"
+        data-testid="download"
+        @click="actions.downloadSelection()"
+      >
         Download
       </AppButton>
-      <AppButton :icon="Copy" data-testid="copy-uri" @click="actions.copySelectionUris()">URI</AppButton>
+      <AppButton
+        :icon="Copy"
+        title="Copy the S3 URIs of the selected objects"
+        data-testid="copy-uri"
+        @click="actions.copySelectionUris()"
+      >
+        URI
+      </AppButton>
       <AppButton
         :icon="MoveRight"
         :disabled="!canWrite"
+        title="Copy the selected objects to another folder"
         data-testid="copy"
         @click="actions.transferSelection(false)"
       >
@@ -89,6 +99,7 @@ const status = computed(() => {
       <AppButton
         :icon="MoveRight"
         :disabled="!canWrite"
+        title="Move the selected objects to another folder"
         data-testid="move"
         @click="actions.transferSelection(true)"
       >
@@ -98,6 +109,7 @@ const status = computed(() => {
         variant="danger"
         :icon="Trash2"
         :disabled="!canWrite"
+        :title="`Delete the selected objects (${deleteShortcut})`"
         data-testid="delete"
         @click="actions.deleteSelection()"
       >

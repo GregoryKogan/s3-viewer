@@ -23,7 +23,6 @@ const emit = defineEmits<{
   click: [entry: ObjectEntry, event: MouseEvent];
   contextmenu: [entry: ObjectEntry, event: MouseEvent];
   toggleCheck: [entry: ObjectEntry, event: MouseEvent];
-  toggleCheckbox: [entry: ObjectEntry];
 }>();
 
 const style = computed(() => kindStyle(props.entry.kind));
@@ -36,18 +35,24 @@ const checkboxVisible = computed(() => props.selectionActive || hovered.value);
   <div
     class="object-row group absolute inset-x-0 grid h-[var(--row-height)] cursor-default items-center gap-1.5 px-3.5 select-none"
     :class="[
-      props.focused ? 'bg-accent/20' : props.selected ? 'bg-accent/10' : 'hover:bg-hover',
+      props.selected
+        ? 'bg-accent/20'
+        : props.focused
+          ? 'bg-accent/[0.07] shadow-[inset_2px_0_0_0_var(--color-accent)]'
+          : 'hover:bg-hover',
       props.entry.isFolder ? 'text-content' : 'text-content/90',
     ]"
     :style="{
       transform: `translateY(${props.index * props.rowHeight}px)`,
       gridTemplateColumns: props.gridTemplate,
     }"
+    :id="`row-${props.index}`"
     :data-key="props.entry.key"
     :data-kind="props.entry.kind"
     :data-testid="`row-${props.entry.name}`"
     role="option"
-    :aria-selected="props.selected || props.focused"
+    :aria-label="props.entry.name"
+    :aria-selected="props.selected"
     @click="emit('click', props.entry, $event)"
     @dblclick="emit('activate', props.entry)"
     @contextmenu.prevent="emit('contextmenu', props.entry, $event)"
@@ -62,7 +67,6 @@ const checkboxVisible = computed(() => props.selectionActive || hovered.value);
         :checked="props.selected"
         :data-testid="`row-check-${props.entry.name}`"
         @click="emit('toggleCheck', props.entry, $event)"
-        @change="emit('toggleCheckbox', props.entry)"
       />
     </label>
 

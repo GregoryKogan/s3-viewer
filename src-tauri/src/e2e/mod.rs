@@ -291,6 +291,10 @@ const SCENARIO: &str = r#"(async () => {
     item.click();
   };
   const clickRow = (label) => {
+    // Preview-only checks do not care about the selection, and a leftover
+    // multi-selection from an earlier check must not leak into them. A plain
+    // click then selects exactly the row it hits, as a file manager does.
+    window.__s3viewer.state.objects.clearSelection();
     // The list is virtualised: only the rows near the viewport exist in the DOM,
     // so scroll the target into the painted window before looking for it.
     const index = window.__s3viewer.state.visible.findIndex((e) => e.name === label);
@@ -781,18 +785,26 @@ const SCENARIO: &str = r#"(async () => {
       return toast.textContent.replace(/\s+/g, ' ').slice(0, 80);
     });
 
-    await check('ui: a single click focuses a row without ticking its checkbox', async () => {
+    await check('ui: a single click selects exactly one row and opens its preview', async () => {
       window.__s3viewer.state.objects.clearSelection();
       await frame();
-      clickRow('sample.json');
+      const row = clickRow('sample.json');
       await frame();
-      const selected = window.__s3viewer.state.objects.selected.size;
-      if (selected !== 0) throw new Error('a plain click selected ' + selected + ' row(s)');
+      const selected = Array.from(window.__s3viewer.state.objects.selected);
+      if (selected.length !== 1) {
+        throw new Error('a plain click selected ' + selected.length + ' row(s)');
+      }
+      if (!selected[0].endsWith('sample.json')) {
+        throw new Error('the click selected the wrong row: ' + selected.join(', '));
+      }
       const previewKey = window.__s3viewer.state.objects.previewKey;
       if (!previewKey || !previewKey.includes('sample.json')) {
         throw new Error('the click did not open the preview: ' + previewKey);
       }
-      return 'focused without selecting';
+      if (row.getAttribute('aria-selected') !== 'true') {
+        throw new Error('the selected row is not marked aria-selected');
+      }
+      return 'selected exactly one row and previewed it';
     });
 
     await check('ui: checkboxes are hidden until something is selected', async () => {
@@ -815,10 +827,12 @@ const SCENARIO: &str = r#"(async () => {
       }
 
       const row = $$('.object-row')[0];
-      row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      const check = row.querySelector('input[type=checkbox]');
-      check.click();
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true, view: window }));
       await frame();
+      const selected = window.__s3viewer.state.objects.selected.size;
+      if (selected !== 1) {
+        throw new Error('clicking a row selected ' + selected + ' row(s) instead of one');
+      }
       const after = $$('[data-testid^=row-check-]').filter((box) => box.offsetParent !== null);
       if (!after.length) throw new Error('checkboxes stayed hidden after selecting');
       return 'hidden at rest, ' + after.length + ' visible in selection mode';
@@ -840,6 +854,11 @@ const SCENARIO: &str = r#"(async () => {
       const selected = Array.from(window.__s3viewer.state.objects.selected);
       if (selected.length !== 3) {
         throw new Error('expected 3 rows, got ' + selected.length + ' (' + selected.join(', ') + ')');
+      }
+      const ariaSelected = $$('.object-row')
+        .filter((row) => row.getAttribute('aria-selected') === 'true').length;
+      if (ariaSelected !== 3) {
+        throw new Error('expected 3 aria-selected rows, got ' + ariaSelected);
       }
       return names.join(' → ');
     });

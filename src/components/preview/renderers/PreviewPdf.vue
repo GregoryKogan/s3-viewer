@@ -115,22 +115,32 @@ function onKeydown(event: KeyboardEvent) {
   if (event.metaKey || event.ctrlKey) {
     if (event.key === "+" || event.key === "=") {
       event.preventDefault();
+      event.stopPropagation();
       zoomBy(0.25);
     } else if (event.key === "-") {
       event.preventDefault();
+      event.stopPropagation();
       zoomBy(-0.25);
     }
     return;
   }
-  if (event.key === "ArrowRight" || event.key === "PageDown") void goTo(pageNumber.value + 1);
-  if (event.key === "ArrowLeft" || event.key === "PageUp") void goTo(pageNumber.value - 1);
+  if (event.key === "ArrowRight" || event.key === "PageDown") {
+    event.preventDefault();
+    event.stopPropagation();
+    void goTo(pageNumber.value + 1);
+    return;
+  }
+  if (event.key === "ArrowLeft" || event.key === "PageUp") {
+    event.preventDefault();
+    event.stopPropagation();
+    void goTo(pageNumber.value - 1);
+  }
 }
 
 let observer: ResizeObserver | undefined;
 
 onMounted(() => {
   void load();
-  window.addEventListener("keydown", onKeydown);
   if (scrollHost.value) {
     observer = new ResizeObserver(() => {
       if (fitWidth.value) void render();
@@ -140,7 +150,6 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener("keydown", onKeydown);
   observer?.disconnect();
   renderTask?.cancel();
   // v6 keeps `destroy` but its type surface varies by build; call it defensively.
@@ -183,7 +192,13 @@ watch(() => props.data.streamUrl, () => void load());
       <span class="tabular ml-auto text-[0.6875rem] text-subtle">{{ humanSize(props.data.size) }}</span>
     </div>
 
-    <div ref="scrollHost" class="scrollbar min-h-0 flex-1 overflow-auto bg-inset p-3">
+    <div
+      ref="scrollHost"
+      class="scrollbar min-h-0 flex-1 overflow-auto bg-inset p-3 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
+      tabindex="0"
+      aria-label="PDF pages"
+      @keydown="onKeydown"
+    >
       <Spinner v-if="loading" label="Loading the document…" />
       <p v-else-if="error" class="p-3 text-[0.6875rem] leading-relaxed text-danger">
         This PDF could not be rendered: {{ error }}

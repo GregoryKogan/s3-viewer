@@ -7,6 +7,8 @@ export interface MenuItem {
   shortcut?: string;
   danger?: boolean;
   separatorBefore?: boolean;
+  /** Rendered but not runnable; used when the action exists but is unavailable. */
+  disabled?: boolean;
   run: () => void;
 }
 
@@ -53,6 +55,7 @@ function onKeydown(event: KeyboardEvent) {
 const style = computed(() => ({ left: `${position.value.left}px`, top: `${position.value.top}px` }));
 
 function run(item: MenuItem) {
+  if (item.disabled) return;
   emit("close");
   // Let the menu disappear before the action can open a dialog or navigate.
   // A timeout, not an animation frame: background windows do not get frames.
@@ -76,7 +79,14 @@ function run(item: MenuItem) {
           type="button"
           role="menuitem"
           class="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors"
-          :class="item.danger ? 'text-danger hover:bg-danger-soft' : 'text-content hover:bg-hover'"
+          :class="[
+            item.disabled
+              ? 'cursor-default opacity-40'
+              : item.danger
+                ? 'text-danger hover:bg-danger-soft'
+                : 'text-content hover:bg-hover',
+          ]"
+          :disabled="item.disabled"
           @click="run(item)"
         >
           <component :is="item.icon" v-if="item.icon" class="size-3.5 shrink-0 opacity-70" />

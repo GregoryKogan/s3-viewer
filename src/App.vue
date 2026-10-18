@@ -32,6 +32,7 @@ import UpdateDialog from "@/components/dialogs/UpdateDialog.vue";
 import ImportDialog from "@/components/dialogs/ImportDialog.vue";
 import { copyText, listen } from "@/lib/ipc";
 import { clamp } from "@/lib/format";
+import { IS_MAC, isEditableTarget, shortcutLabel } from "@/lib/keyboard";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
 import { useProgressStore } from "@/stores/progress";
@@ -61,65 +62,117 @@ const objectList = ref<InstanceType<typeof ObjectList> | null>(null);
 /** Right-click menu: either on one row, or on the empty background. */
 const menu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null);
 
+/** macOS deletes with ⌘⌫; Linux deletes with the forward-delete key. */
+const deleteShortcut = IS_MAC ? shortcutLabel("Backspace") : "Del";
+
+async function copyNames(names: string[]) {
+  if (!names.length) return;
+  const copied = await copyText(names.join("\n"));
+  if (!copied) {
+    toasts.error("The clipboard is not available.");
+    return;
+  }
+  toasts.ok(names.length === 1 ? `Copied “${names[0]}”` : `Copied ${names.length} names`);
+}
+
 function rowMenu(entry: (typeof objects.entries)[number], event: MouseEvent) {
   const connection = connections.active;
   if (!connection) return;
   const writable = connections.canWriteActive;
+  // Single-row actions apply to the clicked row unless it is part of the
+  // selection; bulk actions apply to the selection, falling back to the row.
+  const rowTargets = objects.selected.has(entry.key) ? objects.selectedEntries : [entry];
+  const rowCount = rowTargets.length;
+  const rowLabel = (base: string, noun: string) =>
+    rowCount > 1 ? `${base} ${rowCount} ${noun}` : base;
+  const writeTargets = objects.selected.size ? objects.selectedEntries : [entry];
+  const writeCount = writeTargets.length;
+  const writeItem = (base: string) =>
+    writeCount > 1 ? `${base} ${writeCount} items to…` : `${base} to…`;
+  const names = rowTargets.map((item) => item.name);
+
   menu.value = {
     x: event.clientX,
     y: event.clientY,
     items: [
       entry.isFolder
         ? { label: "Open", icon: FolderOpen, run: () => void objects.navigate(entry.key) }
-        : { label: "Preview", icon: Eye, run: () => {
-            objects.focus(entry.key);
-            void objects.previewEntry(entry, { force: true });
-          } },
+        : {
+            label: "Preview",
+            icon: Eye,
+            run: () => {
+              objects.focus(entry.key);
+              void objects.previewEntry(entry, { force: true });
+            },
+          },
       ...(entry.isFolder
         ? []
         : [
-            { label: "Download", icon: Download, run: () => void actions.downloadEntry(entry) },
-            { label: "Copy S3 URI", icon: Link2, run: () => void actions.copyUri(entry) },
             {
-              label: "Copy name",
+              label: rowLabel("Download", "files"),
+              icon: Download,
+              run: () =>
+                rowCount > 1 ? void actions.downloadSelection() : void actions.downloadEntry(entry),
+            },
+            {
+              label: rowCount > 1 ? `Copy ${rowCount} S3 URIs` : "Copy S3 URI",
+              icon: Link2,
+              run: () =>
+                rowCount > 1 ? void actions.copySelectionUris() : void actions.copyUri(entry),
+            },
+            {
+              label: rowCount > 1 ? `Copy ${rowCount} names` : "Copy name",
               icon: Copy,
-              run: () => void copyText(entry.name).then((ok) =>
-                ok ? toasts.ok(`Copied “${entry.name}”`) : toasts.error("The clipboard is not available."),
-              ),
+              run: () => void copyNames(names),
             },
           ]),
-      ...(writable
-        ? [
-            {
-              label: "Copy to…",
-              icon: MoveRight,
-              separatorBefore: true,
-              run: () => void actions.transferSelection(false),
-            },
-            { label: "Move to…", icon: MoveRight, run: () => void actions.transferSelection(true) },
-            {
-              label: "Delete",
-              icon: Trash2,
-              danger: true,
-              separatorBefore: true,
-              run: () => void actions.deleteSelection(),
-            },
-          ]
-        : []),
+      {
+        label: writeItem("Copy"),
+        icon: MoveRight,
+        separatorBefore: true,
+        disabled: !writable,
+        run: () => void actions.transferSelection(false),
+      },
+      {
+        label: writeItem("Move"),
+        icon: MoveRight,
+        disabled: !writable,
+        run: () => void actions.transferSelection(true),
+      },
+      {
+        label: writeCount > 1 ? `Delete ${writeCount} items` : "Delete",
+        icon: Trash2,
+        danger: true,
+        shortcut: deleteShortcut,
+        separatorBefore: true,
+        disabled: !writable,
+        run: () => void actions.deleteSelection(),
+      },
     ] as MenuItem[],
   };
 }
 
 function backgroundMenu(event: MouseEvent) {
+  const writable = connections.canWriteActive;
   menu.value = {
     x: event.clientX,
     y: event.clientY,
     items: [
-      { label: "Upload files…", icon: Upload, run: () => void actions.upload() },
-      { label: "New folder…", icon: FolderPlus, run: () => void actions.createFolder() },
-      { label: "New file…", icon: FilePlus, run: () => void actions.createFile() },
-      { label: "Refresh", icon: RefreshCw, separatorBefore: true, run: () => void objects.reload() },
-    ],
+      ...(writable
+        ? [
+            { label: "Upload files…", icon: Upload, run: () => void actions.upload() },
+            { label: "Upload folder…", icon: FolderOpen, run: () => void actions.uploadFolder() },
+            { label: "New folder…", icon: FolderPlus, run: () => void actions.createFolder() },
+            { label: "New file…", icon: FilePlus, run: () => void actions.createFile() },
+          ]
+        : []),
+      {
+        label: "Refresh",
+        icon: RefreshCw,
+        separatorBefore: writable,
+        run: () => void objects.reload(),
+      },
+    ] as MenuItem[],
   };
 }
 const unsubscribers: Array<() => void> = [];
@@ -216,92 +269,181 @@ async function checkForUpdates() {
 
 // ------------------------------------------------------------------- keyboard
 
-const editingTarget = () => {
-  const tag = (document.activeElement?.tagName ?? "").toLowerCase();
-  return tag === "input" || tag === "textarea" || tag === "select";
-};
+const PAGE_ROWS = 10;
+const TYPE_AHEAD_MS = 700;
+/** Type-ahead buffer: printable keys typed in a row search the visible names. */
+let typeAhead = "";
+let typeAheadTimer: ReturnType<typeof setTimeout> | undefined;
+
+function clearTypeAhead() {
+  if (typeAheadTimer) clearTimeout(typeAheadTimer);
+  typeAheadTimer = undefined;
+  typeAhead = "";
+}
+
+/** Keys on a button, link or menu belong to that control, not to the list. */
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(target.closest('button, a, [role="menu"], [role="menuitem"], [role="separator"]'));
+}
+
+function focusedRowIndex(): number {
+  return objects.visibleEntries.findIndex((entry) => entry.key === objects.focusedKey);
+}
+
+/** Move the focus and the preview; only Shift+Arrow also changes the selection. */
+function moveFocus(index: number, extend = false) {
+  const rows = objects.visibleEntries;
+  if (!rows.length) return;
+  const next = clamp(index, 0, rows.length - 1);
+  const entry = rows[next];
+  if (extend) {
+    objects.focus(entry.key, { keepAnchor: true });
+    objects.selectRange(entry.key);
+  } else {
+    objects.focus(entry.key);
+  }
+  objectList.value?.scrollToRow(next);
+  void objects.previewEntry(entry);
+}
+
+function runTypeAhead(character: string) {
+  if (typeAheadTimer) clearTimeout(typeAheadTimer);
+  typeAhead = (typeAhead + character).toLowerCase();
+  typeAheadTimer = setTimeout(() => {
+    typeAhead = "";
+    typeAheadTimer = undefined;
+  }, TYPE_AHEAD_MS);
+
+  const rows = objects.visibleEntries;
+  const index = rows.findIndex((entry) => entry.name.toLowerCase().startsWith(typeAhead));
+  if (index === -1) return;
+  const entry = rows[index];
+  objects.focus(entry.key);
+  objectList.value?.scrollToRow(index);
+  void objects.previewEntry(entry);
+}
 
 async function onKeydown(event: KeyboardEvent) {
+  // A nested control already handled this key (menu, resizer, PDF page).
+  if (event.defaultPrevented) return;
   const meta = event.metaKey || event.ctrlKey;
+  const key = event.key;
+  const lower = key.toLowerCase();
+  const editing = isEditableTarget(event.target) || isEditableTarget(document.activeElement);
 
-  if (meta && event.key.toLowerCase() === "r") {
+  if (meta && lower === "r") {
     event.preventDefault();
     await objects.reload();
     return;
   }
-  if (meta && event.key.toLowerCase() === "u" && hasConnection.value) {
+  if (meta && lower === "u" && hasConnection.value) {
     event.preventDefault();
     await actions.upload();
     return;
   }
-  if (meta && event.key.toLowerCase() === "n") {
+  if (meta && lower === "n") {
     event.preventDefault();
     await createConnection();
     return;
   }
-  if (meta && event.key.toLowerCase() === "b") {
+  if (meta && lower === "b") {
     event.preventDefault();
     ui.toggleSidebar();
     return;
   }
-  if (meta && event.key.toLowerCase() === "i" && connections.active) {
+  if (meta && lower === "i" && connections.active) {
     event.preventDefault();
     await editConnection();
     return;
   }
-  if (meta && event.key.toLowerCase() === "l") {
+  if (meta && lower === "l") {
     event.preventDefault();
     document.querySelector<HTMLButtonElement>('[data-testid=address-edit]')?.click();
     return;
   }
-  if (meta && event.key.toLowerCase() === "a" && !editingTarget() && hasConnection.value) {
+  if (meta && lower === "f") {
+    event.preventDefault();
+    document.querySelector<HTMLInputElement>('[data-testid=filter-input]')?.focus();
+    return;
+  }
+  if (meta && lower === "a" && !editing && hasConnection.value) {
     event.preventDefault();
     objects.selectAll(objects.visibleEntries.map((entry) => entry.key));
     return;
   }
-  if (dialogs.isOpen() || editingTarget()) return;
+  if (dialogs.isOpen() || editing || isInteractiveTarget(event.target)) return;
 
   const rows = objects.visibleEntries;
+  const current = focusedRowIndex();
 
-  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+  // Up-navigation owns modified ArrowUp, so it must win over list movement.
+  // macOS goes up with ⌘↑; bare Backspace must not navigate there at all.
+  if (meta && key === "ArrowUp" && objects.prefix) {
     event.preventDefault();
-    const delta = event.key === "ArrowDown" ? 1 : -1;
-    const keys = [...objects.selected];
-    const current = keys.length ? rows.findIndex((entry) => entry.key === keys[keys.length - 1]) : -1;
-    const next = clamp(current + delta, 0, rows.length - 1);
-    const entry = rows[next];
-    if (!entry) return;
-    objects.focus(entry.key);
-    if (event.shiftKey) objects.selectRange(entry.key);
-    objectList.value?.scrollToRow(next);
-    void objects.previewEntry(entry);
+    await objects.navigateUp();
+    return;
+  }
+  if (!IS_MAC && key === "Backspace" && !meta && objects.prefix) {
+    event.preventDefault();
+    await objects.navigateUp();
     return;
   }
 
-  if (event.key === "Enter" && objects.focusedKey) {
+  if (key === "ArrowDown" || key === "ArrowUp") {
     event.preventDefault();
-    const key = objects.focusedKey;
-    const entry = rows.find((item) => item.key === key);
+    const delta = key === "ArrowDown" ? 1 : -1;
+    moveFocus(current === -1 ? 0 : current + delta, event.shiftKey);
+    return;
+  }
+
+  if (key === "PageDown" || key === "PageUp") {
+    event.preventDefault();
+    const delta = key === "PageDown" ? PAGE_ROWS : -PAGE_ROWS;
+    moveFocus(current === -1 ? 0 : current + delta);
+    return;
+  }
+
+  if (key === "Home" || key === "End") {
+    event.preventDefault();
+    moveFocus(key === "Home" ? 0 : rows.length - 1);
+    return;
+  }
+
+  if (key === "Enter" && objects.focusedKey) {
+    event.preventDefault();
+    const focused = objects.focusedKey;
+    const entry = rows.find((item) => item.key === focused);
     if (!entry) return;
     if (entry.isFolder) await objects.navigate(entry.key);
     else await objects.previewEntry(entry, { force: true });
     return;
   }
 
-  if ((event.key === "Backspace" || event.key === "ArrowLeft") && objects.prefix) {
-    event.preventDefault();
-    await objects.navigateUp();
-    return;
-  }
-
-  if (event.key === "Delete" && objects.selected.size) {
+  // ⌘⌫ (the Mac Delete key) and the forward-delete key both delete on macOS.
+  const deletePressed = IS_MAC
+    ? (meta && key === "Backspace") || key === "Delete"
+    : key === "Delete";
+  if (deletePressed && objects.deleteTargets.length) {
     event.preventDefault();
     await actions.deleteSelection();
     return;
   }
 
-  if (event.key === "Escape") {
+  if (key === " " && objects.focusedKey) {
+    event.preventDefault();
+    objects.toggleSelected(objects.focusedKey);
+    return;
+  }
+
+  if (key === "Escape") {
     objects.clearSelection();
+    return;
+  }
+
+  // Type-ahead: printable characters, no modifiers, and never a bare space.
+  if (!meta && !event.altKey && key.length === 1 && key !== " ") {
+    runTypeAhead(key);
   }
 }
 
@@ -404,6 +546,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeydown);
+  clearTypeAhead();
   for (const unsubscribe of unsubscribers) unsubscribe();
   progress.stop();
 });

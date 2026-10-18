@@ -57,7 +57,9 @@ function onPointerDown(event: PointerEvent) {
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  // The panel owns its arrow keys; the object list must not also navigate.
   event.preventDefault();
+  event.stopPropagation();
   const step = (event.shiftKey ? 40 : 10) * (event.key === "ArrowRight" ? 1 : -1) * sign();
   emit("update:modelValue", clamp(props.modelValue + step));
   emit("commit");
