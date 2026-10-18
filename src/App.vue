@@ -10,6 +10,7 @@ import {
   Link2,
   MoveRight,
   PanelLeft,
+  Pencil,
   RefreshCw,
   Trash2,
   Upload,
@@ -31,7 +32,7 @@ import SettingsDialog from "@/components/dialogs/SettingsDialog.vue";
 import UpdateDialog from "@/components/dialogs/UpdateDialog.vue";
 import ImportDialog from "@/components/dialogs/ImportDialog.vue";
 import { copyText, listen } from "@/lib/ipc";
-import { clamp } from "@/lib/format";
+import { clamp, s3Uri } from "@/lib/format";
 import { IS_MAC, isEditableTarget, shortcutLabel } from "@/lib/keyboard";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
@@ -41,6 +42,7 @@ import { useDialogsStore } from "@/stores/dialogs";
 import { useToastsStore } from "@/stores/toasts";
 import { useUpdatesStore } from "@/stores/updates";
 import { useObjectActions } from "@/composables/useObjectActions";
+import { useDialogs } from "@/composables/useDialogs";
 import type {
   Connection,
   ListingDoneEvent,
@@ -56,6 +58,7 @@ const dialogs = useDialogsStore();
 const toasts = useToastsStore();
 const updates = useUpdatesStore();
 const actions = useObjectActions();
+const confirmations = useDialogs();
 
 const objectList = ref<InstanceType<typeof ObjectList> | null>(null);
 
@@ -198,19 +201,95 @@ async function createConnection() {
   await openConnection(saved);
 }
 
-async function editConnection() {
-  const current = connections.active;
-  if (!current) return;
+async function editConnection(connection: Connection | undefined = connections.active ?? undefined) {
+  if (!connection) return;
   const saved = await dialogs.open<Connection | null>(
     ConnectionDialog,
-    (settle) => ({ connection: current, resolve: settle }),
+    (settle) => ({ connection, resolve: settle }),
     "wide",
   );
-  await connections.load();
   if (!saved) return;
-  // The open session holds a snapshot; re-open it so new settings take effect.
-  connections.setActive(saved.id);
-  await objects.reloadSession();
+  await connections.load();
+  // The saved credentials may differ from the ones the badge was probed with.
+  await connections.refreshCapabilities(saved.id);
+  // Only the active session holds a snapshot of the edited connection. Editing
+  // another connection must leave the open folder, its filter and its selection
+  // exactly as they were (CON-1).
+  if (saved.id === connections.activeId) await objects.reloadSession();
+}
+
+/** Right-click or the `⋯` button on a connection card: actions, not activation. */
+function connectionMenu(connection: Connection, point: { x: number; y: number }) {
+  menu.value = {
+    x: point.x,
+    y: point.y,
+    items: [
+      {
+        label: "Open",
+        icon: FolderOpen,
+        run: () => void openConnection(connection),
+      },
+      {
+        label: "Edit connection…",
+        icon: Pencil,
+        run: () => void editConnection(connection),
+      },
+      {
+        label: "Duplicate",
+        icon: Copy,
+        run: () => void duplicateConnection(connection),
+      },
+      {
+        label: "Copy bucket URI",
+        icon: Link2,
+        run: () => void copyBucketUri(connection),
+      },
+      {
+        label: "Remove connection…",
+        icon: Trash2,
+        danger: true,
+        separatorBefore: true,
+        run: () => void removeConnection(connection),
+      },
+    ],
+  };
+}
+
+async function duplicateConnection(connection: Connection) {
+  try {
+    const copy = await connections.duplicate(connection.id);
+    toasts.ok(`Connection “${copy.name}” created.`);
+  } catch (error) {
+    toasts.error((error as Error).message, "Cannot duplicate");
+  }
+}
+
+async function copyBucketUri(connection: Connection) {
+  const uri = s3Uri(connection.bucket, connection.prefix);
+  if (!(await copyText(uri))) {
+    toasts.error("The clipboard is not available.");
+    return;
+  }
+  toasts.ok(`Copied ${uri}`);
+}
+
+async function removeConnection(connection: Connection) {
+  const confirmed = await confirmations.confirm({
+    title: `Remove “${connection.name}”?`,
+    message:
+      "This removes the connection and its saved credentials from this computer. Objects in the bucket are unaffected.",
+    confirmLabel: "Remove",
+    danger: true,
+  });
+  if (!confirmed) return;
+  try {
+    // The store clears the open objects session when the removed connection is
+    // the active one, so the main area falls back to its empty state.
+    await connections.remove(connection.id);
+    toasts.ok(`Connection “${connection.name}” removed.`);
+  } catch (error) {
+    toasts.error((error as Error).message, "Cannot remove connection");
+  }
 }
 
 async function openSettings() {
@@ -566,7 +645,7 @@ function onDrop(paths: string[]) {
         <AppSidebar
           @create="createConnection"
           @open="openConnection"
-          @contextmenu="(connection) => { connections.setActive(connection.id); editConnection(); }"
+          @menu="connectionMenu"
           @settings="openSettings"
           @import="openImport"
         />

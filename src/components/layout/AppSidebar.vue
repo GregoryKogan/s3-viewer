@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { ChevronsLeft, ChevronsRight, HardDrive, Plus, Settings, Upload } from "@lucide/vue";
+import { ChevronsLeft, ChevronsRight, Ellipsis, HardDrive, Plus, Settings, Upload } from "@lucide/vue";
 import AppBadge from "@/components/ui/AppBadge.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import { useConnectionsStore, describeCapabilities } from "@/stores/connections";
@@ -10,7 +10,7 @@ import type { Connection } from "@/types";
 const emit = defineEmits<{
   create: [];
   open: [connection: Connection];
-  contextmenu: [connection: Connection, event: MouseEvent];
+  menu: [connection: Connection, point: { x: number; y: number }];
   settings: [];
   import: [];
 }>();
@@ -32,6 +32,24 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
   if (summary.badgeClass === "ok") return "ok";
   if (summary.badgeClass === "danger") return "danger";
   return "warn";
+}
+
+/** A right-click anchors the menu at the pointer. */
+function menuAtPointer(connection: Connection, event: MouseEvent) {
+  emit("menu", connection, { x: event.clientX, y: event.clientY });
+}
+
+/**
+ * The `⋯` button can be activated from the keyboard, where a click carries no
+ * coordinates; anchor the menu to the button itself in that case.
+ */
+function menuAtButton(connection: Connection, event: MouseEvent) {
+  if (event.clientX || event.clientY) {
+    emit("menu", connection, { x: event.clientX, y: event.clientY });
+    return;
+  }
+  const rect = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect();
+  emit("menu", connection, rect ? { x: rect.right, y: rect.bottom } : { x: 0, y: 0 });
 }
 </script>
 
@@ -120,7 +138,7 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
           :title="`${view.connection.name} — ${view.connection.bucket}/${view.connection.prefix}`"
           :data-testid="`connection-${view.connection.id}`"
           @click="emit('open', view.connection)"
-          @contextmenu.prevent="emit('contextmenu', view.connection, $event)"
+          @contextmenu.prevent="menuAtPointer(view.connection, $event)"
         >
           <HardDrive class="size-4" />
           <span
@@ -135,53 +153,70 @@ function toneFor(connection: Connection): "ok" | "warn" | "danger" {
       </template>
 
       <template v-else>
-        <button
+        <div
           v-for="view in connections.views"
           :key="view.connection.id"
-          type="button"
-          class="flex w-full shrink-0 flex-col items-stretch gap-1 rounded-control border px-2 py-1.5 text-left transition-colors"
-          :class="
-            view.connection.id === connections.activeId
-              ? 'border-line-strong bg-active'
-              : 'border-transparent hover:bg-hover'
-          "
-          :aria-selected="view.connection.id === connections.activeId"
-          :data-testid="`connection-${view.connection.id}`"
-          :title="`${view.connection.bucket}/${view.connection.prefix}`"
-          @click="emit('open', view.connection)"
-          @contextmenu.prevent="emit('contextmenu', view.connection, $event)"
+          class="group relative w-full shrink-0"
         >
-          <div class="flex min-w-0 items-center gap-1.5">
-            <HardDrive class="size-3.5 shrink-0 text-subtle" />
-            <span class="min-w-0 flex-1 truncate text-xs font-medium text-content">
-              {{ view.connection.name }}
-            </span>
-            <span
-              class="size-1.5 shrink-0 rounded-full"
-              :class="{
-                'bg-ok': toneFor(view.connection) === 'ok',
-                'bg-warn': toneFor(view.connection) === 'warn',
-                'bg-danger': toneFor(view.connection) === 'danger',
-              }"
-              :title="describeCapabilities(view.capabilities).summary"
-            />
-          </div>
+          <button
+            type="button"
+            class="flex w-full flex-col items-stretch gap-1 rounded-control border px-2 py-1.5 text-left transition-colors"
+            :class="
+              view.connection.id === connections.activeId
+                ? 'border-line-strong bg-active'
+                : 'border-transparent hover:bg-hover'
+            "
+            :aria-selected="view.connection.id === connections.activeId"
+            :data-testid="`connection-${view.connection.id}`"
+            :title="`${view.connection.bucket}/${view.connection.prefix}`"
+            @click="emit('open', view.connection)"
+            @contextmenu.prevent="menuAtPointer(view.connection, $event)"
+          >
+            <div class="flex min-w-0 items-center gap-1.5 pr-6">
+              <HardDrive class="size-3.5 shrink-0 text-subtle" />
+              <span class="min-w-0 flex-1 truncate text-xs font-medium text-content">
+                {{ view.connection.name }}
+              </span>
+              <span
+                class="size-1.5 shrink-0 rounded-full"
+                :class="{
+                  'bg-ok': toneFor(view.connection) === 'ok',
+                  'bg-warn': toneFor(view.connection) === 'warn',
+                  'bg-danger': toneFor(view.connection) === 'danger',
+                }"
+                :title="describeCapabilities(view.capabilities).summary"
+              />
+            </div>
 
-          <div class="min-w-0 truncate text-[0.6875rem] leading-snug text-subtle" dir="ltr">
-            {{ view.connection.bucket }}<span class="text-muted">/{{ view.connection.prefix }}</span>
-          </div>
-          <div class="flex flex-wrap gap-1">
-            <AppBadge :tone="toneFor(view.connection)">
-              {{ describeCapabilities(view.capabilities).badge }}
-            </AppBadge>
-            <AppBadge v-if="view.connection.signatureVersion !== 's3v4'" tone="accent">
-              {{ view.connection.signatureVersion }}
-            </AppBadge>
-            <AppBadge v-if="view.connection.security.readOnlyMode" tone="danger">
-              read-only
-            </AppBadge>
-          </div>
-        </button>
+            <div class="min-w-0 truncate text-[0.6875rem] leading-snug text-subtle" dir="ltr">
+              {{ view.connection.bucket }}<span class="text-muted">/{{ view.connection.prefix }}</span>
+            </div>
+            <div class="flex flex-wrap gap-1">
+              <AppBadge :tone="toneFor(view.connection)">
+                {{ describeCapabilities(view.capabilities).badge }}
+              </AppBadge>
+              <AppBadge v-if="view.connection.signatureVersion !== 's3v4'" tone="accent">
+                {{ view.connection.signatureVersion }}
+              </AppBadge>
+              <AppBadge v-if="view.connection.security.readOnlyMode" tone="danger">
+                read-only
+              </AppBadge>
+            </div>
+          </button>
+
+          <!-- A sibling, not a child: a button inside the card button would be
+               invalid markup and would swallow the card's click. -->
+          <button
+            type="button"
+            class="absolute top-1 right-1 grid size-6 place-items-center rounded-control text-subtle opacity-0 transition-opacity hover:bg-hover hover:text-content focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+            aria-label="Connection menu"
+            title="Connection menu"
+            :data-testid="`connection-menu-${view.connection.id}`"
+            @click.stop="menuAtButton(view.connection, $event)"
+          >
+            <Ellipsis class="size-3.5" />
+          </button>
+        </div>
       </template>
 
       <button

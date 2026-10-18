@@ -137,6 +137,19 @@ function onBackgroundClick(event: MouseEvent) {
   objects.focus(null);
 }
 
+/**
+ * Right-click on the empty area opens the folder menu.
+ *
+ * Rows already emit their own menu and stop the event, but the empty-state card
+ * fills the scroller, so the old `.self` binding never fired there (NAV-6).
+ */
+function onBackgroundContextMenu(event: MouseEvent) {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest(".object-row")) return;
+  event.preventDefault();
+  emit("background", event);
+}
+
 /** The checkbox is a secondary, explicit path; it must not toggle twice. */
 function onToggleCheck(entry: (typeof rows.value)[number], event: MouseEvent) {
   if (event.shiftKey) objects.selectRange(entry.key);
@@ -209,7 +222,7 @@ defineExpose({ scrollToRow });
       data-testid="object-list"
       @scroll="onScroll"
       @click="onBackgroundClick"
-      @contextmenu.self.prevent="emit('background', $event)"
+      @contextmenu="onBackgroundContextMenu"
     >
       <div v-if="!rows.length" class="flex h-full items-center justify-center p-6">
         <Spinner v-if="objects.loading || objects.awaitingFirstPage" label="Loading…" />

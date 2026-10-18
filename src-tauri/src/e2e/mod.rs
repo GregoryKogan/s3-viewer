@@ -468,7 +468,7 @@ const SCENARIO: &str = r#"(async () => {
       const missing = expected.filter((name) => !names.includes(name));
       if (missing.length) throw new Error('missing rows: ' + missing.join(', '));
       const rootCrumb = $('[data-testid=crumb-root]').textContent;
-      if (rootCrumb !== __BUCKET__) throw new Error('unexpected root crumb: ' + rootCrumb);
+      if (rootCrumb !== connectionName) throw new Error('unexpected root crumb: ' + rootCrumb);
       // The listing must be scoped to the connection prefix, not the bucket root.
       const scoped = await invoke('list_objects', { input: { connectionId, prefix: null } });
       if (scoped.prefix !== __PREFIX__) {

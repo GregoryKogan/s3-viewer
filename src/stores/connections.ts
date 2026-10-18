@@ -113,6 +113,24 @@ export const useConnectionsStore = defineStore("connections", () => {
     return capabilities;
   }
 
+  /**
+   * Probe a connection again after its credentials or settings changed.
+   *
+   * The session-level "already probed" memory and the cached badge are dropped
+   * first, so the visible rights cannot outlive the keys they describe. A failed
+   * probe stays silent: the badge itself reports "not probed" (CON-4).
+   */
+  async function refreshCapabilities(id: string) {
+    probedThisSession.value.delete(id);
+    const view = find(id);
+    if (view) view.capabilities = undefined;
+    try {
+      await detect(id);
+    } catch {
+      /* a failed probe is reported by the capability badge itself */
+    }
+  }
+
   async function probeDraft(
     draft: ConnectionProbeDraft,
     detectWrite: boolean,
@@ -155,6 +173,7 @@ export const useConnectionsStore = defineStore("connections", () => {
     remove,
     duplicate,
     detect,
+    refreshCapabilities,
     probeDraft,
     probeOnConnect,
     setActive,

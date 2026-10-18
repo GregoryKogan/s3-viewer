@@ -5,11 +5,15 @@ import AddressBar from "./AddressBar.vue";
 import AppToolbar from "./AppToolbar.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import { inputClass } from "@/components/ui/controls";
+import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
 import { useUiStore } from "@/stores/ui";
 
+const connections = useConnectionsStore();
 const objects = useObjectsStore();
 const ui = useUiStore();
+
+const hasConnection = computed(() => Boolean(connections.active));
 
 const filterValue = ref("");
 
@@ -62,6 +66,6 @@ const previewOpen = computed(() => !ui.previewHidden);
       </div>
     </div>
 
-    <AppToolbar />
+    <AppToolbar v-if="hasConnection" />
   </header>
 </template>

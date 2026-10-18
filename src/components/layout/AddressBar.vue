@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { ChevronRight, Database, Pencil } from "@lucide/vue";
+import { ArrowUp, ChevronRight, Database, Pencil } from "@lucide/vue";
 import { api } from "@/lib/ipc";
 import { prefixSegments, s3Uri } from "@/lib/format";
+import { shortcutLabel } from "@/lib/keyboard";
 import { asFolderPrefix } from "@/lib/keys";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
@@ -32,6 +33,21 @@ const atScopeRoot = computed(() => objects.prefix === (connection.value?.prefix 
 const absolute = computed(() =>
   connection.value ? s3Uri(connection.value.bucket, objects.prefix) : "",
 );
+
+const upTitle = computed(() => `Up one level (${shortcutLabel("ArrowUp")})`);
+
+/**
+ * The free space of the crumb row is the address editor's target (NAV-2).
+ *
+ * The crumbs and the pencil are buttons and keep their own click behaviour, so
+ * only a click that did not land on one of them starts editing.
+ */
+function onCrumbRowClick(event: MouseEvent) {
+  if (!connection.value) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("button")) return;
+  startEditing();
+}
 
 function startEditing() {
   if (!connection.value) return;
@@ -129,11 +145,20 @@ async function submit() {
     } catch {
       // Not an object: it may still be a folder prefix.
       const folder = `${root}${asFolderPrefix(key)}`;
-      const probe = await api.listObjects({ connectionId: connection.value.id, prefix: folder });
-      if (probe.entries.length) {
+      try {
+        const probe = await api.listObjects({ connectionId: connection.value.id, prefix: folder });
+        if (probe.entries.length) {
+          editing.value = false;
+          await objects.navigate(folder);
+          return;
+        }
+        // An empty folder has no children to list but S3 still keeps it as a
+        // zero-byte marker object. Without this probe a real, empty folder
+        // would report "Nothing found" (NAV-5).
+        await api.objectMeta(connection.value.id, folder);
         editing.value = false;
         await objects.navigate(folder);
-      } else {
+      } catch {
         invalid.value = `Nothing found at ${s3Uri(connection.value.bucket, fullKey)}.`;
         toasts.warn(invalid.value, "Not found");
       }
@@ -155,18 +180,33 @@ watch(
 
 <template>
   <div class="min-w-0 flex-1" data-testid="breadcrumb">
-    <div v-if="!editing" class="scrollbar flex min-w-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap">
+    <div
+      v-if="!editing"
+      class="scrollbar flex min-w-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap"
+      @click="onCrumbRowClick"
+    >
       <template v-if="connection">
+        <button
+          type="button"
+          class="grid size-6 shrink-0 place-items-center rounded-control text-subtle transition-colors hover:bg-hover hover:text-content disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle"
+          :disabled="atScopeRoot"
+          :title="upTitle"
+          data-testid="navigate-up"
+          @click="objects.navigateUp()"
+        >
+          <ArrowUp class="size-3.5" />
+        </button>
+
         <button
           type="button"
           class="flex max-w-64 items-center gap-1 rounded-control px-1.5 py-0.5 transition-colors hover:bg-hover"
           :class="atScopeRoot ? 'font-semibold text-content' : 'text-muted'"
-          :title="`s3://${connection.bucket}/${connection.prefix}`"
+          :title="s3Uri(connection.bucket, connection.prefix)"
           data-testid="crumb-root"
           @click="objects.navigate(connection.prefix ?? '')"
         >
           <Database class="size-3.5 shrink-0" />
-          <span class="truncate">{{ connection.bucket }}</span>
+          <span class="truncate">{{ connection.name }}</span>
         </button>
 
         <template v-for="crumb in crumbs" :key="crumb.full">
@@ -174,14 +214,13 @@ watch(
           <button
             type="button"
             class="max-w-56 truncate rounded-control px-1.5 py-0.5 text-muted transition-colors hover:bg-hover hover:text-content"
-            :title="`s3://${connection.bucket}/${crumb.full}`"
+            :title="s3Uri(connection.bucket, crumb.full)"
             @click="objects.navigate(crumb.full)"
           >
             {{ crumb.name }}
           </button>
         </template>
 
-        <span class="flex-1" />
         <button
           type="button"
           class="ml-1 grid size-6 shrink-0 place-items-center rounded-control text-subtle transition-colors hover:bg-hover hover:text-content"
@@ -191,8 +230,9 @@ watch(
         >
           <Pencil class="size-3" />
         </button>
+        <!-- Free space after the crumbs is the click-to-edit target. -->
+        <span class="min-w-2 flex-1" />
       </template>
-      <span v-else class="px-1.5 text-muted">No connection selected</span>
     </div>
 
     <form v-else class="flex min-w-0 flex-col gap-0.5" @submit.prevent="submit">
