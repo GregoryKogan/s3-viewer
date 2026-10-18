@@ -104,14 +104,14 @@ Address/breadcrumb changes (Task 2), filter/truncation (Task 3), preview header 
 
 ## Task 2: Navigation, address bar, connection menu
 
-**Audit:** NAV-1, NAV-2, NAV-4, NAV-5, NAV-6, CON-1, CON-7 (sidebar delete), section 12 (duplicate "No connection selected", toolbar without a connection). NAV-3 moves to Task 7 with the form.
+**Audit:** NAV-1, NAV-2, NAV-4, NAV-5, NAV-6, CON-1, CON-7 (both the sidebar menu and the ConnectionDialog footer), section 12 (duplicate "No connection selected", toolbar without a connection). NAV-3 moves to Task 7 with the form.
 **Depends on:** Task 1.
 
 ### Requirements
 
 1. `AddressBar`:
    - Add an Up button before the root crumb (`data-testid="navigate-up"`), disabled at the connection root, title `Up one level (⌘↑)`, calls `objects.navigateUp()`.
-   - Clicking the free area of the crumb row starts editing (the whole address container is clickable except the crumbs themselves, which navigate). Keep the pencil inside the crumb group at its end.
+   - Clicking the free area of the crumb row starts editing (the whole address container is clickable except the crumbs themselves, which navigate). Keep the pencil inside the crumb group at its end. The edit input's placeholder hints the shortcut: `s3://bucket/path/to/object  (⌘L)` / `(Ctrl+L)`.
    - The root crumb shows the connection name as its label and `s3://bucket/prefix` in the title; the e2e root-crumb expectation changes to the connection name. Keep `data-testid="crumb-root"`.
    - Remove the "No connection selected" span when there is no connection; the main empty state already says it.
    - Empty-prefix navigation: when a typed key is not an object and the prefix listing is empty, try `api.objectMeta(id, folderWithSlash)`; if the marker exists, navigate. Only then show "Nothing found".
@@ -124,10 +124,12 @@ Address/breadcrumb changes (Task 2), filter/truncation (Task 3), preview header 
    - `Edit connection…` opens `ConnectionDialog` for that connection without activating it. After save: refresh the list; if the edited id is the active one, reload the current session; otherwise keep the current session untouched.
    - `Remove connection…` uses `dialogs.confirm` with title `Remove “<name>”?`, message `This removes the connection and its saved credentials from this computer. Objects in the bucket are unaffected.`, confirm label `Remove`, danger. On success: toast, refresh; if it was active, clear the objects session and show the empty state.
    - `Copy bucket URI` copies `s3://bucket/prefix`.
-4. Add `connections.refreshCapabilities(id)`: delete the id from `probedThisSession`, clear the local `capabilities` on the view (or reload the list), and call `detect(id)` once; a failed probe is silent because the badge reports it. `App.editConnection(connection?)`: accept an optional connection; do not call `connections.setActive` before the dialog. After save, call a new `connections.refreshCapabilities(id)` that clears `probedThisSession` for the id and runs `detect(id)` once. (The backend stale-capability fix is Task 7; this call is safe either way.)
+4. Add `connections.refreshCapabilities(id)`: delete the id from `probedThisSession`, clear the cached capabilities on the view, and call `detect(id)` once; a failed probe is silent because the badge reports it. `App.editConnection(connection?)`: accept an optional connection; do not call `connections.setActive` before the dialog. After save, refresh the list, call `refreshCapabilities(saved.id)`, and reload the current session only when the saved id is active. (The backend stale-capability fix is Task 7; this call is safe either way.)
 5. Collapsed sidebar: not in this task (Task 9).
 6. Update the e2e root-crumb assertion to `connectionName` (the placeholder already exists) and any test that right-clicks a connection, if present.
 7. `AppHeader` renders `AppToolbar` only when a connection is active; the main empty state is the only content without one.
+8. Clamp up-navigation to the connection scope: `objects.navigateUp()` must stop at `connections.active.prefix` (a non-empty root prefix currently escapes to the bucket root). The Up button and the ⌘↑ shortcut must agree; no-op at the root.
+9. `ConnectionDialog` footer: replace the two-step `Delete`/`Delete for good?` with `useDialogs().confirm` (title `Remove “<name>”?`, the same message as the sidebar, `confirmLabel: "Remove"`, `danger: true`); label the button `Remove connection…`. Task 7's form restructure must keep this behaviour.
 
 ### Verification
 
@@ -310,7 +312,7 @@ Frontend gates; Rust gates (unchanged since Task 5); e2e compile. The e2e copy t
    - Presets at the top: `AWS S3` (endpoint `https://s3.amazonaws.com`, region `us-east-1`) and `Other S3-compatible` (blank endpoint/region). Changing a preset only fills empty fields; never overwrite typed values.
    - `Test connection` moves to the footer, left of Cancel/Save. Keep the result chips and error block.
    - Required markers (`*`) on Name, Endpoint, Region, Bucket, Access key, Secret (create). On failed validation, focus and scroll the first invalid field and add `aria-invalid`; keep inline messages.
-   - `Remove connection…` in the footer uses `dialogs.confirm` with the Task 2 text and "Objects in the bucket are unaffected"; replace the two-click label.
+   - The footer's `Remove connection…` was completed in Task 2; keep that confirm flow while restructuring the form.
 2. Re-probe after save:
    - Backend `store.upsert` removes the stored capabilities for the edited id (add a Rust test), so a restart cannot show stale rights.
    - Frontend `connections.refreshCapabilities(id)` clears `probedThisSession` and calls `detect(id)`; `App.editConnection` calls it after save.
