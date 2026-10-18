@@ -79,20 +79,41 @@ jobs:
       - name: Run the Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      # An unset secret still arrives as an empty string, and Tauri treats "the
+      # variable exists" as "sign with it" — which failed with an unhelpful
+      # "the password must match the one used to export it". The variables are
+      # therefore copied into the job environment only when they carry a value.
+      - name: Prepare signing
+        shell: bash
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          NOTARY_APPLE_ID: ${{ secrets.APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CERTIFICATE:-}" ]; then
+            echo "No APPLE_CERTIFICATE secret: building an unsigned app."
+            echo "macOS will ask the user to allow it once; this is documented on the site."
+            exit 0
+          fi
+          {
+            echo "APPLE_CERTIFICATE=$CERTIFICATE"
+            echo "APPLE_CERTIFICATE_PASSWORD=$CERTIFICATE_PASSWORD"
+            echo "APPLE_SIGNING_IDENTITY=$SIGNING_IDENTITY"
+            echo "APPLE_ID=$NOTARY_APPLE_ID"
+            echo "APPLE_PASSWORD=$NOTARY_PASSWORD"
+            echo "APPLE_TEAM_ID=$NOTARY_TEAM_ID"
+          } >> "$GITHUB_ENV"
+          echo "Signing and notarisation are configured."
+
       - name: Build the application
         env:
           # Stops the macOS bundler from asking Finder to arrange the disk image,
           # which needs Automation permission and times out on a build runner.
           CI: "true"
-          # Signing and notarisation switch on automatically when these secrets
-          # exist. Without them the build is unsigned and macOS asks the user to
-          # allow it once; the landing page explains that step.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           args="--bundles ${{ matrix.bundles }}"
           if [ -n "${{ matrix.target }}" ]; then args="--target ${{ matrix.target }} $args"; fi
