@@ -213,6 +213,10 @@ export const api = {
   // transfers
   downloadObject: (input: DownloadInput) => invoke<TransferResult>("download_object", { input }),
   uploadFiles: (input: UploadInput) => invoke<UploadPlanItem[]>("upload_files", { input }),
+  /** Keys from the same upload plan that already exist. Uploads nothing. */
+  uploadConflicts: (input: UploadInput) => invoke<string[]>("upload_conflicts", { input }),
+  /** Cancel a transfer that is still running; finished ids are an error. */
+  cancelTransfer: (id: string) => invoke<void>("cancel_transfer", { id }),
   saveTextObject: (input: {
     connectionId: string;
     key: string;

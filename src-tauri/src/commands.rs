@@ -5,10 +5,11 @@ use crate::error::{AppError, AppResult, ErrorPayload};
 // `macro_export` places these at the crate root, so they need importing here.
 use crate::model::{
     Capabilities, Connection, ConnectionView, FileKind, ListResult, ObjectEntry, PreviewData,
-    ProgressView, StaticCreds,
+    ProgressState, ProgressView, StaticCreds,
 };
 use crate::objects::{self, as_folder_prefix};
 use crate::preview::{self, parse_range};
+use crate::progress::ProgressTracker;
 use crate::s3::{AnyStore, ObjectStore};
 use crate::state::AppCore;
 use crate::store::{AppSettings, ConnectionInput, Theme};
@@ -569,9 +570,13 @@ pub struct TransferResult {
 pub struct DownloadInput {
     pub connection_id: String,
     pub key: String,
-    /// Optional explicit destination; otherwise the download directory is used.
+    /// Optional explicit destination; otherwise `dest_dir` (or the configured
+    /// download directory) is used.
     #[serde(default)]
     pub dest_path: Option<String>,
+    /// Directory for a batch download. `dest_path` wins when both are set.
+    #[serde(default)]
+    pub dest_dir: Option<String>,
 }
 
 #[tauri::command]
@@ -586,11 +591,26 @@ pub async fn download_object(
     let dest = match input.dest_path.clone() {
         Some(path) => PathBuf::from(path),
         None => {
-            let base = core
-                .settings()
-                .download_dir
-                .map(PathBuf::from)
-                .unwrap_or_else(crate::fsutil::download_dir);
+            let base = match input
+                .dest_dir
+                .as_deref()
+                .filter(|dir| !dir.trim().is_empty())
+            {
+                // A batch destination is chosen in one dialog and may not exist
+                // yet, so create it before looking for a free name in it.
+                Some(dir) => {
+                    let dir = PathBuf::from(dir);
+                    tokio::fs::create_dir_all(&dir).await.map_err(|e| {
+                        AppError::msg(format!("cannot create {}: {e}", dir.display()))
+                    })?;
+                    dir
+                }
+                None => core
+                    .settings()
+                    .download_dir
+                    .map(PathBuf::from)
+                    .unwrap_or_else(crate::fsutil::download_dir),
+            };
             crate::fsutil::unique_path(&base, &default_file_name(&input.key))
         }
     };
@@ -606,6 +626,10 @@ pub async fn download_object(
     let conn_name = conn.name.clone();
 
     tauri::async_runtime::spawn(async move {
+        // Cancelled before the task got scheduled: do not start the GET at all.
+        if !entry_is_running(&tracker, &progress_id_task) {
+            return;
+        }
         let outcome = async {
             if let Some(parent) = dest_task.parent() {
                 tokio::fs::create_dir_all(parent).await?;
@@ -619,12 +643,21 @@ pub async fn download_object(
         }
         .await;
 
+        // A GET that has already started cannot be aborted either. If the user
+        // cancelled, the entry stays cancelled and the file is dropped instead
+        // of being reported as a finished download.
+        let cancelled = !entry_is_running(&tracker, &progress_id_task);
         match outcome {
+            Ok(_) if cancelled => {
+                let _ = tokio::fs::remove_file(&dest_task).await;
+            }
             Ok(_) => tracker.finish(&progress_id_task, Some(dest_task.display().to_string())),
             Err(e) => {
                 // Do not leave a half-written file behind.
                 let _ = tokio::fs::remove_file(&dest_task).await;
-                tracker.fail(&progress_id_task, crate::model::describe_error(&e));
+                if !cancelled {
+                    tracker.fail(&progress_id_task, crate::model::describe_error(&e));
+                }
             }
         }
     });
@@ -654,6 +687,9 @@ pub struct UploadInput {
     pub local_paths: Vec<String>,
     #[serde(default)]
     pub overwrite: bool,
+    /// Leave keys that already exist untouched instead of uploading them.
+    #[serde(default)]
+    pub skip_existing: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -662,6 +698,216 @@ pub struct UploadPlanItem {
     pub id: String,
     pub local_path: String,
     pub key: String,
+    /// The key already exists and `skip_existing` was set. Nothing will be
+    /// uploaded, but `id` is still a progress entry (finished immediately) so
+    /// the UI can wait for every id in the plan.
+    pub skipped: bool,
+}
+
+/// One file — or one zero-byte folder marker — that an upload plan contains.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedUpload {
+    pub local_path: PathBuf,
+    pub key: String,
+    /// A marker for a directory that would otherwise disappear from S3 because
+    /// it contains no files of its own. Uploaded as a zero-byte key ending in
+    /// `/`, exactly like `create_folder` does.
+    pub is_marker: bool,
+}
+
+/// Ceiling on one upload plan.
+///
+/// A paste/drop that produces more keys than this is almost always a folder the
+/// user did not mean to send; failing up front beats starting ten thousand
+/// background PUTs.
+pub const MAX_PLAN_ITEMS: usize = 10_000;
+/// `upload_conflicts` is a pre-flight check the user waits on, so it is capped
+/// well below the upload cap.
+const MAX_CONFLICT_SCAN: usize = 2_000;
+/// Most existence checks in flight at once.
+const STAT_CONCURRENCY: usize = 16;
+
+/// Build the upload plan for a set of local paths.
+///
+/// Files keep their name (`prefix + name`). Directories are walked recursively,
+/// without following symlinks, and keep their structure under
+/// `prefix + dir_name/`. Every directory that ends up with no files below it
+/// gets a zero-byte marker, so an empty folder survives the round trip.
+///
+/// The walk is deterministic: entries are sorted by name before they are
+/// visited, so the same tree always produces the same plan.
+pub fn plan_uploads(paths: &[String], prefix: &str) -> AppResult<Vec<PlannedUpload>> {
+    plan_uploads_capped(paths, prefix, MAX_PLAN_ITEMS)
+}
+
+fn plan_uploads_capped(
+    paths: &[String],
+    prefix: &str,
+    max_items: usize,
+) -> AppResult<Vec<PlannedUpload>> {
+    let prefix = as_folder_prefix(prefix);
+    let mut plan = Vec::new();
+    for raw in paths {
+        let path = PathBuf::from(raw);
+        // Top-level paths come from a file dialog or a drop, so a symlink picked
+        // explicitly is followed; symlinks *inside* a directory are not.
+        let meta = std::fs::metadata(&path)
+            .map_err(|e| AppError::invalid(format!("cannot read {}: {e}", path.display())))?;
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| AppError::invalid(format!("bad local path: {raw}")))?;
+        if meta.is_dir() {
+            let key_prefix = format!("{prefix}{name}/");
+            walk_upload_dir(&path, &key_prefix, max_items, &mut plan)?;
+        } else if meta.is_file() {
+            push_planned(&mut plan, path, format!("{prefix}{name}"), false, max_items)?;
+        } else {
+            return Err(AppError::invalid(format!(
+                "{} is not a file or a directory",
+                path.display()
+            )));
+        }
+    }
+    Ok(plan)
+}
+
+/// Walk one directory in sorted order, appending files and folder markers.
+///
+/// Returns whether this directory contributed anything (a file, a marker below
+/// it, or its own marker). A directory with nothing uploadable (empty, or
+/// containing only symlinks/special files) gets a marker so the folder does not
+/// vanish; that marker also keeps every ancestor visible, so no ancestor adds
+/// one of its own.
+fn walk_upload_dir(
+    dir: &Path,
+    key_prefix: &str,
+    max_items: usize,
+    plan: &mut Vec<PlannedUpload>,
+) -> AppResult<bool> {
+    let read_error = |e: std::io::Error| {
+        AppError::invalid(format!("cannot read directory {}: {e}", dir.display()))
+    };
+    let mut entries = std::fs::read_dir(dir)
+        .map_err(read_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(read_error)?;
+    // Deterministic order: the same tree must always produce the same plan.
+    entries.sort_by_key(|entry| entry.file_name());
+
+    let mut planned = false;
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|e| AppError::invalid(format!("cannot read {}: {e}", path.display())))?;
+        // Never follow symlinks during the walk: a link pointing back up the
+        // tree would turn the upload into an endless one.
+        if file_type.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if file_type.is_dir() {
+            let child_prefix = format!("{key_prefix}{name}/");
+            if walk_upload_dir(&path, &child_prefix, max_items, plan)? {
+                planned = true;
+            }
+        } else if file_type.is_file() {
+            push_planned(plan, path, format!("{key_prefix}{name}"), false, max_items)?;
+            planned = true;
+        }
+        // Sockets, FIFOs and devices are skipped: a PUT of one would block or
+        // fail, and they have no place in S3.
+    }
+    if !planned {
+        push_planned(
+            plan,
+            dir.to_path_buf(),
+            key_prefix.to_string(),
+            true,
+            max_items,
+        )?;
+        // The marker keeps this level (and every ancestor) visible, so the
+        // caller must not add a marker of its own.
+        planned = true;
+    }
+    Ok(planned)
+}
+
+fn push_planned(
+    plan: &mut Vec<PlannedUpload>,
+    local_path: PathBuf,
+    key: String,
+    is_marker: bool,
+    max_items: usize,
+) -> AppResult<()> {
+    if plan.len() >= max_items {
+        return Err(AppError::invalid(format!(
+            "refusing to upload more than {max_items} items at once; select fewer files or split the folder"
+        )));
+    }
+    plan.push(PlannedUpload {
+        local_path,
+        key,
+        is_marker,
+    });
+    Ok(())
+}
+
+/// Is this error S3 saying "there is no such key"?
+fn is_missing(err: &AppError) -> bool {
+    match err {
+        AppError::NotFound(_) => true,
+        AppError::S3 { code, .. } => matches!(
+            code.as_str(),
+            "NotFound" | "NoSuchKey" | "NoSuchObject" | "HTTP404" | "404"
+        ),
+        _ => false,
+    }
+}
+
+/// Which of `keys` already exist, with at most [`STAT_CONCURRENCY`] HEADs in
+/// flight.
+///
+/// A missing key is `false`. Any other failure is returned: a policy that says
+/// "skip what exists" must not silently overwrite data because HEAD was denied.
+async fn keys_that_exist(store: &AnyStore, keys: &[String]) -> AppResult<Vec<bool>> {
+    let mut exists = vec![false; keys.len()];
+    for (chunk_index, chunk) in keys.chunks(STAT_CONCURRENCY).enumerate() {
+        let mut tasks = tokio::task::JoinSet::new();
+        for (offset, key) in chunk.iter().enumerate() {
+            let store = store.clone();
+            let key = key.clone();
+            tasks.spawn(async move {
+                let index = chunk_index * STAT_CONCURRENCY + offset;
+                (index, store.stat(&key).await)
+            });
+        }
+        while let Some(joined) = tasks.join_next().await {
+            let (index, result) =
+                joined.map_err(|e| AppError::msg(format!("existence check failed: {e}")))?;
+            match result {
+                Ok(_) => exists[index] = true,
+                Err(e) if is_missing(&e) => {}
+                Err(e) => return Err(AppError::msg(format!("cannot check {}: {e}", keys[index]))),
+            }
+        }
+    }
+    Ok(exists)
+}
+
+/// Is this progress entry still waiting for its transfer to finish?
+fn entry_is_running(tracker: &ProgressTracker, id: &str) -> bool {
+    tracker.get(id).map(|view| view.state) == Some(ProgressState::Running)
+}
+
+/// A non-skipped plan item handed to the background upload task.
+struct UploadTask {
+    id: String,
+    local_path: PathBuf,
+    key: String,
+    is_marker: bool,
 }
 
 #[tauri::command]
@@ -694,52 +940,185 @@ pub async fn upload_files_impl(
         }
     }
     let store = core.client(&input.connection_id)?;
-    let prefix = as_folder_prefix(&input.prefix);
-    // Validate every path before starting any progress entry: a bad path must not
-    // leave a transfer stuck in "running".
-    let mut planned = Vec::with_capacity(input.local_paths.len());
-    for local in &input.local_paths {
-        let path = PathBuf::from(local);
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .ok_or_else(|| AppError::invalid(format!("bad local path: {local}")))?;
-        planned.push((local.clone(), format!("{prefix}{name}")));
+
+    // Build the whole plan before touching progress: a bad path or an oversized
+    // tree must fail without leaving a single entry behind.
+    let plan = plan_uploads(&input.local_paths, &input.prefix)?;
+
+    // Pre-flight existence check. Markers are not checked: writing a zero-byte
+    // marker again is harmless and must not make an empty folder look skipped.
+    let mut skipped = vec![false; plan.len()];
+    if input.skip_existing {
+        let indexes: Vec<usize> = plan
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| !item.is_marker)
+            .map(|(index, _)| index)
+            .collect();
+        let keys: Vec<String> = indexes
+            .iter()
+            .map(|index| plan[*index].key.clone())
+            .collect();
+        let existing = keys_that_exist(&store, &keys).await?;
+        for (index, exists) in indexes.into_iter().zip(existing) {
+            skipped[index] = exists;
+        }
     }
 
     let tracker = core.progress.clone();
-    let mut plan = Vec::with_capacity(planned.len());
-    for (local_path, key) in planned {
-        // The progress entry itself is the item's identity: the UI waits for
-        // exactly these ids, so the transfer cannot finish before it is watched.
-        let id = tracker.start(objects::progress_label("Uploading", &key), None);
-        plan.push(UploadPlanItem {
-            id,
+    let mut plan_items = Vec::with_capacity(plan.len());
+    let mut tasks: Vec<UploadTask> = Vec::new();
+    for (planned, skip) in plan.into_iter().zip(skipped) {
+        let PlannedUpload {
             local_path,
             key,
+            is_marker,
+        } = planned;
+        let label = if skip {
+            format!("Skipped {key}")
+        } else {
+            objects::progress_label("Uploading", &key)
+        };
+        // The progress entry itself is the item's identity: the UI waits for
+        // exactly these ids, so the transfer cannot finish before it is watched.
+        let id = tracker.start(label, None);
+        if skip {
+            // Finished immediately: a UI waiting on every id must settle even
+            // though no PUT will ever run for this item.
+            tracker.finish(&id, None);
+        }
+        plan_items.push(UploadPlanItem {
+            id: id.clone(),
+            local_path: local_path.display().to_string(),
+            key: key.clone(),
+            skipped: skip,
         });
+        if !skip {
+            tasks.push(UploadTask {
+                id,
+                local_path,
+                key,
+                is_marker,
+            });
+        }
     }
 
-    let items = plan.clone();
+    let tracker_task = tracker.clone();
     let overwrite = input.overwrite;
+    // One background batch; the plan returns to the UI immediately.
+    //
+    // Cancellation is checked before every item. An in-flight PUT cannot be
+    // aborted — the store API has no cancellation handle — so cancelling during
+    // one only marks the entry, the bytes may still land, and the result is
+    // discarded because the entry is no longer `Running`.
     tauri::async_runtime::spawn(async move {
-        for item in items {
-            let path = PathBuf::from(&item.local_path);
-            if !overwrite && store.stat(&item.key).await.is_ok() {
-                tracker.fail(
-                    &item.id,
-                    format!("{} already exists (overwrite is disabled)", item.key),
-                );
+        for task in tasks {
+            if !entry_is_running(&tracker_task, &task.id) {
+                // Cancelled while queued: nothing was uploaded.
                 continue;
             }
-            match store.put_file(&item.key, &path, None).await {
-                Ok(()) => tracker.finish(&item.id, Some(item.key.clone())),
-                Err(e) => tracker.fail(&item.id, crate::model::describe_error(&e)),
+            if task.is_marker {
+                let result = store
+                    .put_bytes(&task.key, Vec::new(), Some("application/x-directory"))
+                    .await;
+                if entry_is_running(&tracker_task, &task.id) {
+                    match result {
+                        Ok(()) => tracker_task.finish(&task.id, Some(task.key.clone())),
+                        Err(e) => tracker_task.fail(&task.id, crate::model::describe_error(&e)),
+                    }
+                }
+                continue;
+            }
+            // Keep the pre-existing guard for callers that do not use
+            // `skip_existing`: with neither flag set an existing key fails
+            // instead of being replaced without being asked.
+            if !overwrite && store.stat(&task.key).await.is_ok() {
+                if entry_is_running(&tracker_task, &task.id) {
+                    tracker_task.fail(
+                        &task.id,
+                        format!("{} already exists (overwrite is disabled)", task.key),
+                    );
+                }
+                continue;
+            }
+            let result = store.put_file(&task.key, &task.local_path, None).await;
+            if !entry_is_running(&tracker_task, &task.id) {
+                continue;
+            }
+            match result {
+                Ok(()) => tracker_task.finish(&task.id, Some(task.key)),
+                Err(e) => tracker_task.fail(&task.id, crate::model::describe_error(&e)),
             }
         }
     });
 
-    Ok(plan)
+    Ok(plan_items)
+}
+
+/// Keys from the same plan that already exist in the bucket.
+///
+/// Read-only: nothing is uploaded. The UI calls this before an upload to offer
+/// Replace / Skip / Rename instead of failing on the first conflict.
+#[tauri::command]
+pub async fn upload_conflicts(
+    app: State<'_, Arc<AppCore>>,
+    input: UploadInput,
+) -> CmdResult<Vec<String>> {
+    let ctx = Ctx(&app);
+    upload_conflicts_impl(ctx.core(), input).await.map_err(err)
+}
+
+pub async fn upload_conflicts_impl(
+    core: &AppCore,
+    input: UploadInput,
+) -> crate::error::AppResult<Vec<String>> {
+    let store = core.client(&input.connection_id)?;
+    let plan = plan_uploads(&input.local_paths, &input.prefix)?;
+    let keys: Vec<String> = plan
+        .into_iter()
+        .filter(|item| !item.is_marker)
+        .map(|item| item.key)
+        .collect();
+    if keys.len() > MAX_CONFLICT_SCAN {
+        return Err(AppError::invalid(format!(
+            "too many files to check for conflicts ({} files; the limit is {MAX_CONFLICT_SCAN})",
+            keys.len()
+        )));
+    }
+    let existing = keys_that_exist(&store, &keys).await?;
+    // The same key can appear twice when a folder and a file inside it are
+    // selected together; report each conflict once.
+    let mut seen = std::collections::HashSet::new();
+    let mut conflicts = Vec::new();
+    for (key, exists) in keys.into_iter().zip(existing) {
+        if exists && seen.insert(key.clone()) {
+            conflicts.push(key);
+        }
+    }
+    Ok(conflicts)
+}
+
+/// Cancel a transfer that is still queued or running.
+///
+/// Only a running entry can be cancelled; an unknown or already finished id is
+/// an error so the UI can say why the click did nothing.
+#[tauri::command]
+pub async fn cancel_transfer(app: State<'_, Arc<AppCore>>, id: String) -> CmdResult<()> {
+    let ctx = Ctx(&app);
+    cancel_transfer_impl(&ctx.core().progress, &id).map_err(err)
+}
+
+pub fn cancel_transfer_impl(tracker: &ProgressTracker, id: &str) -> crate::error::AppResult<()> {
+    let Some(view) = tracker.get(id) else {
+        return Err(AppError::not_found(format!("transfer {id}")));
+    };
+    if view.state != ProgressState::Running {
+        return Err(AppError::invalid(format!(
+            "transfer {id} is no longer running and cannot be cancelled"
+        )));
+    }
+    tracker.cancel(id);
+    Ok(())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1235,5 +1614,152 @@ mod tests {
         assert_eq!(default_file_name("c.png"), "c.png");
         assert_eq!(default_file_name("a/b/"), "b");
         assert_eq!(default_file_name(""), "object");
+    }
+
+    /// A unique directory under the system temp dir, removed on drop.
+    struct TempTree(PathBuf);
+
+    impl TempTree {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("s3viewer-plan-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&path).expect("create temp dir");
+            TempTree(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempTree {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn planned_keys(plan: &[PlannedUpload]) -> Vec<&str> {
+        plan.iter().map(|item| item.key.as_str()).collect()
+    }
+
+    #[test]
+    fn plan_preserves_a_nested_tree_and_its_order() {
+        let root = TempTree::new();
+        let photos = root.path().join("photos");
+        std::fs::create_dir_all(photos.join("a")).unwrap();
+        std::fs::write(photos.join("b.txt"), b"b").unwrap();
+        std::fs::write(photos.join("a/z.txt"), b"z").unwrap();
+        std::fs::write(photos.join("a/y.txt"), b"y").unwrap();
+
+        let plan = plan_uploads(&[photos.display().to_string()], "up/").unwrap();
+
+        assert_eq!(
+            planned_keys(&plan),
+            vec!["up/photos/a/y.txt", "up/photos/a/z.txt", "up/photos/b.txt"]
+        );
+        assert!(plan.iter().all(|item| !item.is_marker));
+    }
+
+    #[test]
+    fn a_single_file_keeps_its_name_and_handles_spaces_and_unicode() {
+        let root = TempTree::new();
+        let file = root.path().join("тест с пробелами.txt");
+        std::fs::write(&file, b"x").unwrap();
+
+        let plan = plan_uploads(&[file.display().to_string()], "reports").unwrap();
+
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].key, "reports/тест с пробелами.txt");
+        assert!(!plan[0].is_marker);
+        assert_eq!(plan[0].local_path, file);
+    }
+
+    #[test]
+    fn directories_without_files_get_a_zero_byte_marker() {
+        let root = TempTree::new();
+        let empty = root.path().join("empty");
+        let nested = root.path().join("tree/nested");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::create_dir_all(&nested).unwrap();
+
+        let plan = plan_uploads(
+            &[
+                empty.display().to_string(),
+                root.path().join("tree").display().to_string(),
+            ],
+            "",
+        )
+        .unwrap();
+
+        assert_eq!(planned_keys(&plan), vec!["empty/", "tree/nested/"]);
+        assert!(plan.iter().all(|item| item.is_marker));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_are_not_followed_while_walking() {
+        use std::os::unix::fs::symlink;
+
+        let root = TempTree::new();
+        let real = root.path().join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("inside.txt"), b"x").unwrap();
+
+        let picked = root.path().join("picked");
+        std::fs::create_dir_all(&picked).unwrap();
+        symlink(&real, picked.join("link")).unwrap();
+
+        let plan = plan_uploads(&[picked.display().to_string()], "").unwrap();
+
+        // The linked directory is skipped, so the folder would disappear from S3
+        // and therefore keeps a marker instead.
+        assert_eq!(planned_keys(&plan), vec!["picked/"]);
+        assert!(plan[0].is_marker);
+    }
+
+    #[test]
+    fn plan_refuses_more_items_than_the_cap() {
+        let root = TempTree::new();
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(root.path().join(name), b"x").unwrap();
+        }
+
+        let error = plan_uploads_capped(&[root.path().display().to_string()], "", 2).unwrap_err();
+
+        assert!(
+            error.to_string().contains("more than 2"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_missing_path_and_names_it() {
+        let missing =
+            std::env::temp_dir().join(format!("s3viewer-missing-{}", uuid::Uuid::new_v4()));
+        let raw = missing.display().to_string();
+
+        let error = plan_uploads(std::slice::from_ref(&raw), "").unwrap_err();
+
+        assert!(
+            error.to_string().contains(&raw),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn cancel_only_accepts_a_running_transfer() {
+        let tracker = ProgressTracker::new();
+
+        assert!(cancel_transfer_impl(&tracker, "missing").is_err());
+
+        let finished = tracker.start("finished", None);
+        tracker.finish(&finished, None);
+        assert!(cancel_transfer_impl(&tracker, &finished).is_err());
+
+        let running = tracker.start("running", None);
+        cancel_transfer_impl(&tracker, &running).unwrap();
+        assert_eq!(
+            tracker.get(&running).unwrap().state,
+            ProgressState::Cancelled
+        );
     }
 }

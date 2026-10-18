@@ -410,6 +410,7 @@ pub async fn e2e_readonly_check(
             prefix: plan.prefix.clone(),
             local_paths: vec![local.display().to_string()],
             overwrite: true,
+            skip_existing: false,
         },
     )
     .await;

@@ -202,6 +202,8 @@ export interface UploadPlanItem {
   id: string;
   localPath: string;
   key: string;
+  /** The key already exists and `skipExisting` was set; nothing was uploaded. */
+  skipped: boolean;
 }
 
 // -------------------------------------------------------------- listing stream
@@ -264,6 +266,8 @@ export interface DownloadInput {
   connectionId: string;
   key: string;
   destPath?: string | null;
+  /** Directory for a batch download. `destPath` wins when both are set. */
+  destDir?: string | null;
 }
 
 export interface UploadInput {
@@ -271,6 +275,8 @@ export interface UploadInput {
   prefix: string;
   localPaths: string[];
   overwrite: boolean;
+  /** Leave keys that already exist untouched instead of uploading them. */
+  skipExisting?: boolean;
 }
 
 export interface DeleteInput {

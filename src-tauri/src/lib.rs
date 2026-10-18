@@ -60,6 +60,8 @@ pub fn run() {
             commands::object_meta,
             commands::download_object,
             commands::upload_files,
+            commands::upload_conflicts,
+            commands::cancel_transfer,
             commands::save_text_object,
             commands::transfer_progress,
             commands::clear_transfers,
