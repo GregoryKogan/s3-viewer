@@ -228,6 +228,17 @@ export interface ListingErrorEvent {
   error: { kind: string; message: string; code?: string; hints?: string[] };
 }
 
+/**
+ * Structured detail behind the last listing failure. The list itself still
+ * shows the plain message; this is what the error state expands into hints and
+ * a request id.
+ */
+export interface ListErrorDetail {
+  hints: string[];
+  code: string | null;
+  requestId: string | null;
+}
+
 // ---------------------------------------------------------------------- errors
 
 export interface ErrorPayload {

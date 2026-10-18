@@ -28,6 +28,14 @@ const emit = defineEmits<{
 const style = computed(() => kindStyle(props.entry.kind));
 const hovered = ref(false);
 
+/** The cell is short on purpose; the tooltip carries the whole timestamp. */
+const modifiedTitle = computed(() => {
+  const value = props.entry.lastModified;
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+});
+
 const checkboxVisible = computed(
   () => props.selectionActive || hovered.value || props.focused,
 );
@@ -84,7 +92,7 @@ const checkboxVisible = computed(
     <div
       v-if="props.showModified"
       class="tabular truncate text-right text-muted"
-      :title="props.entry.lastModified ?? ''"
+      :title="modifiedTitle"
     >
       {{ humanDate(props.entry.lastModified) }}
     </div>

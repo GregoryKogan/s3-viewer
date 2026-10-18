@@ -15,27 +15,53 @@ export function humanSize(bytes: number | null | undefined): string {
   return `${value.toFixed(value >= 100 ? 0 : 1)} ${SIZE_UNITS[unit]}`;
 }
 
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
+const SHORT_MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
 
-/** Relative for recent timestamps, absolute for older ones. */
-export function humanDate(value: string | null | undefined): string {
+/** Midnight at the start of the local calendar day `date` falls in. */
+function startOfDay(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function dayAndMonth(date: Date, withYear: boolean): string {
+  const day = date.getDate();
+  const month = SHORT_MONTHS[date.getMonth()];
+  return withYear ? `${day} ${month} ${date.getFullYear()}` : `${day} ${month}`;
+}
+
+/**
+ * Absolute, scannable dates: `Today 14:05`, `Yesterday 09:12`, `12 Oct`, and
+ * `12 Oct 2025` outside the current year. Relative ages ("3h ago") are useless
+ * when comparing two versions of a file, so the only relative part left is the
+ * day itself.
+ *
+ * `now` is injectable so tests do not depend on the wall clock. Missing values
+ * stay an em dash and an unparseable value is returned unchanged, as before.
+ */
+export function humanDate(value: string | null | undefined, now: Date = new Date()): string {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  const diff = Date.now() - date.getTime();
-  if (diff >= 0 && diff < MINUTE) return "just now";
-  if (diff >= 0 && diff < HOUR) return `${Math.floor(diff / MINUTE)}m ago`;
-  if (diff >= 0 && diff < DAY) return `${Math.floor(diff / HOUR)}h ago`;
-  if (diff >= 0 && diff < 7 * DAY) return `${Math.floor(diff / DAY)}d ago`;
-  return date.toLocaleDateString(undefined, {
-    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
 
+  const time = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  const day = startOfDay(date);
+  if (day === startOfDay(now)) return `Today ${time}`;
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (day === startOfDay(yesterday)) return `Yesterday ${time}`;
+  return dayAndMonth(date, date.getFullYear() !== now.getFullYear());
+}
 
 /** The trailing path segment of a prefix, with its trailing slash removed. */
 export function leafName(key: string): string {

@@ -22,13 +22,44 @@ test("humanSize is defensive about missing sizes", () => {
   assert.equal(humanSize(-5), "—");
 });
 
-test("humanDate is relative for recent values and absolute for old ones", () => {
-  const now = Date.now();
-  assert.equal(humanDate(new Date(now - 5_000).toISOString()), "just now");
-  assert.equal(humanDate(new Date(now - 5 * 60_000).toISOString()), "5m ago");
-  assert.equal(humanDate(new Date(now - 3 * 3_600_000).toISOString()), "3h ago");
-  assert.equal(humanDate(new Date(now - 2 * 86_400_000).toISOString()), "2d ago");
+// Local-time constructors: the formatter shows the user's wall clock, so the
+// fixtures must move with the machine's time zone rather than UTC.
+const local = (...parts) => new Date(...parts).toISOString();
+
+test("humanDate names today and yesterday with the local time", () => {
+  const now = new Date(2025, 9, 12, 15, 30);
+  assert.equal(humanDate(local(2025, 9, 12, 9, 5), now), "Today 09:05");
+  assert.equal(humanDate(local(2025, 9, 12, 0, 0, 0, 0), now), "Today 00:00");
+  assert.equal(humanDate(local(2025, 9, 11, 23, 59, 59), now), "Yesterday 23:59");
+  // Seconds are deliberately dropped: two dates must be comparable at a glance.
+  assert.equal(humanDate(local(2025, 9, 12, 9, 5, 59), now), "Today 09:05");
+});
+
+test("humanDate is absolute outside today and yesterday", () => {
+  const now = new Date(2025, 9, 12, 15, 30);
+  // The same year drops the year; any other year keeps it.
+  assert.equal(humanDate(local(2025, 9, 3, 8, 0), now), "3 Oct");
+  assert.equal(humanDate(local(2025, 0, 1, 8, 0), now), "1 Jan");
+  assert.equal(humanDate(local(2024, 9, 3, 8, 0), now), "3 Oct 2024");
+  assert.equal(humanDate(local(2026, 0, 2, 8, 0), now), "2 Jan 2026");
+  // A future date is not "today"; tomorrow reads as a plain date.
+  assert.equal(humanDate(local(2025, 9, 13, 0, 5), now), "13 Oct");
+});
+
+test("humanDate compares calendar days, not elapsed hours", () => {
+  const newYear = new Date(2026, 0, 1, 0, 30);
+  // Two hours earlier but a different calendar day: still yesterday.
+  assert.equal(humanDate(local(2025, 11, 31, 22, 30), newYear), "Yesterday 22:30");
+  // 23 hours ago but two calendar days back is a plain date, with its year.
+  assert.equal(humanDate(local(2025, 11, 30, 1, 30), newYear), "30 Dec 2025");
+});
+
+test("humanDate defaults now to the current time and is defensive", () => {
+  // No fake clock here: only the shape is asserted, so this cannot drift.
+  assert.match(humanDate(new Date().toISOString()), /^Today \d{2}:\d{2}$/);
   assert.equal(humanDate(null), "—");
+  assert.equal(humanDate(undefined), "—");
+  assert.equal(humanDate(""), "—");
   assert.equal(humanDate("not a date"), "not a date");
 });
 

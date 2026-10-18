@@ -668,7 +668,12 @@ function onDrop(paths: string[]) {
 
         <div class="flex min-h-0 flex-1">
           <div v-if="hasConnection" class="flex min-h-0 min-w-0 flex-1 flex-col">
-            <ObjectList ref="objectList" @contextmenu="rowMenu" @background="backgroundMenu" />
+            <ObjectList
+              ref="objectList"
+              @contextmenu="rowMenu"
+              @background="backgroundMenu"
+              @settings="openSettings"
+            />
           </div>
 
           <div v-else class="flex flex-1 items-center justify-center p-8">

@@ -1,10 +1,11 @@
 import { defineStore } from "pinia";
 import { computed, ref, shallowRef } from "vue";
-import { api } from "@/lib/ipc";
+import { api, ApiError } from "@/lib/ipc";
 import { asFolderPrefix } from "@/lib/keys";
 import { useConnectionsStore } from "@/stores/connections";
 import { useToastsStore } from "@/stores/toasts";
 import type {
+  ListErrorDetail,
   ListingDoneEvent,
   ListingErrorEvent,
   ListingPageEvent,
@@ -34,6 +35,8 @@ export const useObjectsStore = defineStore("objects", () => {
   const truncated = ref(false);
   const warning = ref<string | null>(null);
   const error = ref<string | null>(null);
+  /** Hints, code and request id for the error state; the message stays `error`. */
+  const errorDetail = ref<ListErrorDetail | null>(null);
 
   /** Bulk selection: what the toolbar acts on. */
   const selected = ref(new Set<string>());
@@ -96,6 +99,7 @@ export const useObjectsStore = defineStore("objects", () => {
     loading.value = true;
     awaitingFirstPage.value = true;
     error.value = null;
+    errorDetail.value = null;
     warning.value = null;
     truncated.value = false;
 
@@ -119,6 +123,10 @@ export const useObjectsStore = defineStore("objects", () => {
         loading.value = false;
         awaitingFirstPage.value = false;
         error.value = (failure as Error).message;
+        errorDetail.value =
+          failure instanceof ApiError
+            ? { hints: failure.hints, code: failure.code, requestId: failure.requestId }
+            : null;
         useToastsStore().error((failure as Error).message, "Cannot list this folder");
       }
     } finally {
@@ -173,6 +181,11 @@ export const useObjectsStore = defineStore("objects", () => {
     loading.value = false;
     awaitingFirstPage.value = false;
     error.value = event.error?.message ?? "listing failed";
+    errorDetail.value = {
+      hints: event.error?.hints ?? [],
+      code: event.error?.code ?? null,
+      requestId: event.requestId,
+    };
     useToastsStore().error(event.error?.message ?? "listing failed", "Cannot list this folder");
   }
 
@@ -209,6 +222,7 @@ export const useObjectsStore = defineStore("objects", () => {
     truncated.value = false;
     warning.value = null;
     error.value = null;
+    errorDetail.value = null;
     clearPreview();
   }
 
@@ -399,6 +413,7 @@ export const useObjectsStore = defineStore("objects", () => {
     truncated,
     warning,
     error,
+    errorDetail,
     selected,
     focusedKey,
     selectionAnchor,

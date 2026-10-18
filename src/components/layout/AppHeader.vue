@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { Search, RefreshCw, PanelRight } from "@lucide/vue";
 import AddressBar from "./AddressBar.vue";
 import AppToolbar from "./AppToolbar.vue";
@@ -22,9 +22,27 @@ let filterTimer: ReturnType<typeof setTimeout> | undefined;
 function onFilterInput() {
   if (filterTimer) clearTimeout(filterTimer);
   filterTimer = setTimeout(() => {
+    filterTimer = undefined;
     objects.filter = filterValue.value;
   }, 120);
 }
+
+/**
+ * The store owns the applied filter and clears it when the folder changes
+ * (LST-3), so the field follows it back. Cancelling the pending debounce is part
+ * of the sync: otherwise text typed just before a folder change would be
+ * applied to the new folder a moment later.
+ */
+watch(
+  () => [objects.filter, objects.prefix] as const,
+  () => {
+    if (filterTimer) {
+      clearTimeout(filterTimer);
+      filterTimer = undefined;
+    }
+    if (filterValue.value !== objects.filter) filterValue.value = objects.filter;
+  },
+);
 
 const previewOpen = computed(() => !ui.previewHidden);
 </script>
@@ -42,6 +60,7 @@ const previewOpen = computed(() => !ui.previewHidden);
             type="search"
             :class="[inputClass, 'w-48 py-1 pl-7']"
             placeholder="Filter this folder…"
+            aria-label="Filter this folder"
             data-testid="filter-input"
             autocomplete="off"
             @input="onFilterInput"
@@ -51,6 +70,7 @@ const previewOpen = computed(() => !ui.previewHidden);
         <AppButton
           variant="ghost"
           :icon="RefreshCw"
+          :loading="objects.loading"
           title="Refresh (⌘R)"
           data-testid="refresh"
           @click="objects.reload()"

@@ -20,15 +20,17 @@ const canWrite = computed(() => connections.canWriteActive && Boolean(connection
 const deleteShortcut = IS_MAC ? shortcutLabel("Backspace") : "Del";
 
 const status = computed(() => {
-  const files = objects.entries.filter((entry) => !entry.isFolder).length;
-  const folders = objects.entries.length - files;
-  const bytes = objects.entries.reduce((sum, entry) => sum + (entry.isFolder ? 0 : entry.size), 0);
-  const parts = [
-    `${folders} folder${folders === 1 ? "" : "s"}`,
-    `${files} file${files === 1 ? "" : "s"}`,
-    humanSize(bytes),
-  ];
-  if (objects.loading) parts.push("loading…");
+  // Only what is on screen: a folder with a filter applied must not report the
+  // whole listing (LST-4).
+  const visible = objects.visibleEntries;
+  const files = visible.filter((entry) => !entry.isFolder).length;
+  const folders = visible.length - files;
+  const totalFiles = objects.entries.filter((entry) => !entry.isFolder).length;
+  const bytes = visible.reduce((sum, entry) => sum + (entry.isFolder ? 0 : entry.size), 0);
+  const fileLabel = objects.filter.trim()
+    ? `${files} of ${totalFiles} file${totalFiles === 1 ? "" : "s"}`
+    : `${files} file${files === 1 ? "" : "s"}`;
+  const parts = [`${folders} folder${folders === 1 ? "" : "s"}`, fileLabel, humanSize(bytes)];
   if (objects.truncated) parts.push("truncated");
   return parts.join(" · ");
 });

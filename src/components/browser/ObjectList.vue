@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { AlertTriangle, FolderPlus, RefreshCw, SlidersHorizontal, Upload } from "@lucide/vue";
+import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
+import { useObjectActions } from "@/composables/useObjectActions";
 import ObjectRow from "./ObjectRow.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
+import AppButton from "@/components/ui/AppButton.vue";
 import Spinner from "@/components/ui/Spinner.vue";
 import type { ObjectEntry } from "@/types";
 
@@ -12,9 +16,12 @@ const OVERSCAN = 8;
 const emit = defineEmits<{
   contextmenu: [entry: ObjectEntry, event: MouseEvent];
   background: [event: MouseEvent];
+  settings: [];
 }>();
 
 const objects = useObjectsStore();
+const connections = useConnectionsStore();
+const actions = useObjectActions();
 
 const scroller = ref<HTMLElement | null>(null);
 const scrollTop = ref(0);
@@ -23,17 +30,21 @@ const viewportWidth = ref(900);
 
 /**
  * Columns are dropped as the list narrows rather than being squeezed: a TYPE
- * column clipped to "Cod" and "Bin" is worse than no column at all.
+ * column clipped to "Cod" and "Bin" is worse than no column at all. The
+ * thresholds are low enough for the default 1280×820 window, where the list is
+ * left with roughly 596 px and the dates must still be readable (LST-1).
  */
-const showModified = computed(() => viewportWidth.value >= 620);
-const showType = computed(() => viewportWidth.value >= 760);
+const showModified = computed(() => viewportWidth.value >= 480);
+const showType = computed(() => viewportWidth.value >= 820);
+
+const canWrite = computed(() => connections.canWriteActive);
 
 const gridTemplate = computed(() =>
   [
     "34px",
-    "minmax(180px, 1fr)",
+    "minmax(150px, 1fr)",
     "88px",
-    showModified.value ? "150px" : null,
+    showModified.value ? "132px" : null,
     showType.value ? "86px" : null,
   ]
     .filter(Boolean)
@@ -41,6 +52,17 @@ const gridTemplate = computed(() =>
 );
 
 const rows = computed(() => objects.visibleEntries);
+
+/** Sort state is conveyed in the button's name: `aria-sort` is invalid on a button. */
+function sortLabel(column: { key: string; label: string }): string {
+  if (objects.sortKey !== column.key) return `Sort by ${column.label}`;
+  return `Sort by ${column.label}, ${objects.sortAscending ? "ascending" : "descending"}`;
+}
+
+/** The backend explains the limit; the fallback covers a truncation with no text. */
+const truncationMessage = computed(
+  () => objects.warning ?? `Only the first ${objects.entries.length} objects are shown.`,
+);
 
 const totalHeight = computed(() => rows.value.length * ROW_HEIGHT);
 
@@ -50,6 +72,18 @@ const windowed = computed(() => {
   const count = Math.ceil(viewportHeight.value / ROW_HEIGHT) + OVERSCAN * 2;
   const last = Math.min(rows.value.length, first + count);
   return rows.value.slice(first, last).map((entry, offset) => ({ entry, index: first + offset }));
+});
+
+/**
+ * The focused row is the listbox's active option. Only a row that is actually
+ * drawn can be referenced, so a focus scrolled out of the virtual window (or
+ * filtered out) simply omits the attribute instead of dangling.
+ */
+const activeDescendant = computed(() => {
+  const focused = objects.focusedKey;
+  if (!focused) return undefined;
+  const drawn = windowed.value.find((row) => row.entry.key === focused);
+  return drawn ? `row-${drawn.index}` : undefined;
 });
 
 const selectedVisible = computed(() => {
@@ -175,6 +209,36 @@ defineExpose({ scrollToRow });
 
 <template>
   <div class="flex min-h-0 flex-1 flex-col" data-testid="browser">
+    <!-- Truncation is a fact about the listing, not a toast: it stays until the
+         next complete listing replaces it (LST-2). -->
+    <div
+      v-if="objects.truncated || objects.warning"
+      class="flex shrink-0 items-center gap-2 border-b border-warn/30 bg-warn/10 px-3.5 py-1.5 text-warn"
+      role="status"
+      data-testid="truncation-banner"
+    >
+      <AlertTriangle class="size-3.5 shrink-0" />
+      <p class="min-w-0 flex-1 text-[0.6875rem] leading-relaxed">{{ truncationMessage }}</p>
+      <AppButton
+        variant="ghost"
+        size="sm"
+        :icon="RefreshCw"
+        data-testid="truncation-retry"
+        @click="objects.reload()"
+      >
+        Retry
+      </AppButton>
+      <AppButton
+        variant="ghost"
+        size="sm"
+        :icon="SlidersHorizontal"
+        data-testid="truncation-settings"
+        @click="emit('settings')"
+      >
+        Open settings
+      </AppButton>
+    </div>
+
     <div
       class="grid shrink-0 items-center gap-1.5 border-b border-line px-3.5 text-[0.6875rem] tracking-wide text-subtle uppercase"
       :style="{ gridTemplateColumns: gridTemplate }"
@@ -184,6 +248,7 @@ defineExpose({ scrollToRow });
         <input
           type="checkbox"
           class="size-3.5 cursor-pointer accent-accent"
+          aria-label="Select all visible objects"
           data-testid="select-all"
           :checked="selectedVisible.all"
           :indeterminate="selectedVisible.some"
@@ -206,6 +271,7 @@ defineExpose({ scrollToRow });
             ? 'justify-end'
             : 'justify-start',
         ]"
+        :aria-label="sortLabel(column)"
         @click="objects.setSort(column.key as never)"
       >
         {{ column.label }}
@@ -220,6 +286,11 @@ defineExpose({ scrollToRow });
       class="scrollbar relative min-h-0 flex-1 overflow-y-auto"
       id="object-list"
       data-testid="object-list"
+      role="listbox"
+      aria-multiselectable="true"
+      aria-label="Objects"
+      :aria-activedescendant="activeDescendant"
+      tabindex="0"
       @scroll="onScroll"
       @click="onBackgroundClick"
       @contextmenu="onBackgroundContextMenu"
@@ -231,19 +302,51 @@ defineExpose({ scrollToRow });
           title="Nothing matches the filter"
           description="Clear the filter to see the whole folder."
           data-testid="empty-folder"
-        />
+        >
+          <AppButton size="sm" data-testid="clear-filter" @click="objects.filter = ''">
+            Clear filter
+          </AppButton>
+        </EmptyState>
         <EmptyState
           v-else-if="objects.error"
           title="This folder could not be listed"
           :description="objects.error"
           data-testid="empty-folder"
-        />
+        >
+          <AppButton
+            size="sm"
+            :icon="RefreshCw"
+            data-testid="retry-listing"
+            @click="objects.reload()"
+          >
+            Try again
+          </AppButton>
+        </EmptyState>
         <EmptyState
           v-else
           title="This folder is empty"
           description="Upload a file or create a folder to get started."
           data-testid="empty-folder"
-        />
+        >
+          <div v-if="canWrite" class="flex items-center gap-2">
+            <AppButton
+              size="sm"
+              :icon="Upload"
+              data-testid="empty-upload"
+              @click="actions.upload()"
+            >
+              Upload files
+            </AppButton>
+            <AppButton
+              size="sm"
+              :icon="FolderPlus"
+              data-testid="empty-new-folder"
+              @click="actions.createFolder()"
+            >
+              New folder
+            </AppButton>
+          </div>
+        </EmptyState>
       </div>
 
       <div v-else id="object-rows" :style="{ height: `${totalHeight}px` }" class="relative">
