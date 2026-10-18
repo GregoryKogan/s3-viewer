@@ -25,23 +25,71 @@ pub fn unique_path(dir: &Path, file_name: &str) -> PathBuf {
     if !candidate.exists() {
         return candidate;
     }
-    let path = Path::new(file_name);
-    let stem = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| file_name.to_string());
-    let ext = path.extension().map(|e| e.to_string_lossy().to_string());
     for n in 1..10_000 {
-        let name = match &ext {
-            Some(ext) => format!("{stem} ({n}).{ext}"),
-            None => format!("{stem} ({n})"),
-        };
-        let candidate = dir.join(name);
+        let candidate = dir.join(counter_name(file_name, n));
         if !candidate.exists() {
             return candidate;
         }
     }
-    dir.join(format!("{stem}-{}", uuid::Uuid::new_v4()))
+    dir.join(format!("{}-{}", file_stem(file_name), uuid::Uuid::new_v4()))
+}
+
+/// `photo.png`, 2 -> `photo (2).png`; `LICENSE`, 2 -> `LICENSE (2)`.
+fn counter_name(file_name: &str, n: u32) -> String {
+    let stem = file_stem(file_name);
+    match Path::new(file_name).extension() {
+        Some(ext) => format!("{stem} ({n}).{}", ext.to_string_lossy()),
+        None => format!("{stem} ({n})"),
+    }
+}
+
+fn file_stem(file_name: &str) -> String {
+    Path::new(file_name)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_else(|| file_name.to_string())
+}
+
+/// Reserve a fresh file atomically and return it already opened for writing.
+///
+/// `unique_path` only *looks* for a free name, so two concurrent downloads of
+/// the same basename can both pick `report.pdf` and then truncate each other's
+/// bytes. `create_new` makes "is it free?" and "create it" one filesystem
+/// operation: the loser of that race moves on to `report (1).pdf`.
+pub async fn reserve_unique_path(
+    dir: &Path,
+    file_name: &str,
+) -> AppResult<(PathBuf, tokio::fs::File)> {
+    tokio::fs::create_dir_all(dir)
+        .await
+        .map_err(|e| AppError::msg(format!("cannot create {}: {e}", dir.display())))?;
+    for n in 0..10_000 {
+        let name = if n == 0 {
+            file_name.to_string()
+        } else {
+            counter_name(file_name, n)
+        };
+        let candidate = dir.join(&name);
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+            .await
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(AppError::msg(format!(
+                    "cannot create {}: {e}",
+                    candidate.display()
+                )))
+            }
+        }
+    }
+    Err(AppError::msg(format!(
+        "cannot find a free name for {file_name} in {}",
+        dir.display()
+    )))
 }
 
 /// Open a file with the OS default application.
@@ -163,6 +211,32 @@ mod tests {
         std::fs::write(dir.path().join("LICENSE"), b"x").unwrap();
         let next = unique_path(dir.path(), "LICENSE");
         assert_eq!(next.file_name().unwrap(), "LICENSE (1)");
+    }
+
+    #[tokio::test]
+    async fn reserve_unique_path_never_hands_out_the_same_file_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        // Two downloads of `a/report.pdf` and `b/report.pdf` land in one folder.
+        let (first, first_file) = reserve_unique_path(dir.path(), "report.pdf").await.unwrap();
+        let (second, second_file) = reserve_unique_path(dir.path(), "report.pdf").await.unwrap();
+
+        assert_eq!(first.file_name().unwrap(), "report.pdf");
+        assert_eq!(second.file_name().unwrap(), "report (1).pdf");
+        assert_ne!(first, second);
+        assert!(first.is_file());
+        assert!(second.is_file());
+        drop(first_file);
+        drop(second_file);
+    }
+
+    #[tokio::test]
+    async fn reserve_unique_path_creates_a_missing_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("batch/2024");
+        let (path, file) = reserve_unique_path(&nested, "photo.png").await.unwrap();
+        assert_eq!(path, nested.join("photo.png"));
+        assert!(nested.is_dir());
+        drop(file);
     }
 
     #[test]

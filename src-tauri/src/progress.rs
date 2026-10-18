@@ -72,11 +72,24 @@ impl ProgressTracker {
     pub fn finish(&self, id: &str, result_path: Option<String>) {
         let mut map = self.map();
         if let Some(entry) = map.get_mut(id) {
-            entry.state = ProgressState::Done;
-            if let Some(total) = entry.total {
-                entry.done = total;
+            finish_entry(entry, result_path);
+        }
+    }
+
+    /// Finish only if the entry is still running.
+    ///
+    /// A background transfer checks for cancellation and then records its
+    /// outcome; doing that in two steps would let a cancel slip in between and
+    /// be overwritten by `Done`. This method makes the check and the write one
+    /// locked operation. Returns whether the entry was finished.
+    pub fn finish_if_running(&self, id: &str, result_path: Option<String>) -> bool {
+        let mut map = self.map();
+        match map.get_mut(id) {
+            Some(entry) if entry.state == ProgressState::Running => {
+                finish_entry(entry, result_path);
+                true
             }
-            entry.result_path = result_path;
+            _ => false,
         }
     }
 
@@ -85,6 +98,20 @@ impl ProgressTracker {
         if let Some(entry) = map.get_mut(id) {
             entry.state = ProgressState::Failed;
             entry.error = Some(error.into());
+        }
+    }
+
+    /// Fail only if the entry is still running; a cancelled transfer must not
+    /// be reported as failed after the fact.
+    pub fn fail_if_running(&self, id: &str, error: impl Into<String>) -> bool {
+        let mut map = self.map();
+        match map.get_mut(id) {
+            Some(entry) if entry.state == ProgressState::Running => {
+                entry.state = ProgressState::Failed;
+                entry.error = Some(error.into());
+                true
+            }
+            _ => false,
         }
     }
 
@@ -110,6 +137,15 @@ impl ProgressTracker {
         let mut map = self.map();
         map.retain(|_, e| e.state == ProgressState::Running);
     }
+}
+
+/// Apply a successful finish to an entry. The caller holds the tracker lock.
+fn finish_entry(entry: &mut ProgressEntry, result_path: Option<String>) {
+    entry.state = ProgressState::Done;
+    if let Some(total) = entry.total {
+        entry.done = total;
+    }
+    entry.result_path = result_path;
 }
 
 /// An `AsyncWrite` adapter that ticks progress as bytes flow through.
@@ -203,6 +239,38 @@ mod tests {
         tracker.prune_finished();
         assert!(tracker.get(&a).is_none());
         assert!(tracker.get(&b).is_some());
+    }
+
+    #[test]
+    fn conditional_finish_completes_a_running_entry() {
+        let tracker = ProgressTracker::new();
+        let id = tracker.start("upload", Some(10));
+        assert!(tracker.finish_if_running(&id, Some("dest".into())));
+        let view = tracker.get(&id).unwrap();
+        assert_eq!(view.state, ProgressState::Done);
+        assert_eq!(view.done, 10);
+    }
+
+    #[test]
+    fn conditional_finish_cannot_override_a_cancel() {
+        let tracker = ProgressTracker::new();
+        let id = tracker.start("upload", Some(10));
+        tracker.cancel(&id);
+
+        assert!(!tracker.finish_if_running(&id, None));
+        assert!(!tracker.fail_if_running(&id, "late failure"));
+
+        let view = tracker.get(&id).unwrap();
+        assert_eq!(view.state, ProgressState::Cancelled);
+        assert_eq!(view.error, None);
+        assert_eq!(view.done, 0);
+    }
+
+    #[test]
+    fn conditional_finish_ignores_unknown_ids() {
+        let tracker = ProgressTracker::new();
+        assert!(!tracker.finish_if_running("missing", None));
+        assert!(!tracker.fail_if_running("missing", "error"));
     }
 
     #[tokio::test]

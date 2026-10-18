@@ -95,6 +95,10 @@ impl From<&AppError> for ErrorPayload {
                         "Credentials are valid but lack this permission. Use Test connection to inspect the granted rights."
                             .to_string(),
                     );
+                    hints.push(
+                        "If uploads still work, these credentials may be write-only: PUT is allowed but HEAD (checking whether a key exists) is not."
+                            .to_string(),
+                    );
                 }
                 ErrorPayload {
                     kind: "s3",

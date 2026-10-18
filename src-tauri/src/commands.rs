@@ -14,6 +14,7 @@ use crate::s3::{AnyStore, ObjectStore};
 use crate::state::AppCore;
 use crate::store::{AppSettings, ConnectionInput, Theme};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
@@ -588,8 +589,13 @@ pub async fn download_object(
     let core = ctx.core();
     let conn = core.connection(&input.connection_id).map_err(err)?;
     let store = core.client(&input.connection_id).map_err(err)?;
-    let dest = match input.dest_path.clone() {
-        Some(path) => PathBuf::from(path),
+    // Reserve the destination before spawning. `unique_path` only checks that a
+    // name is free; two concurrent downloads with the same basename could both
+    // pick it, truncate each other and both report success. The reservation
+    // (`create_new`) returns the already-open file, so the spawn writes exactly
+    // the slot the caller was told about.
+    let (dest, reserved_file) = match input.dest_path.clone() {
+        Some(path) => (PathBuf::from(path), None),
         None => {
             let base = match input
                 .dest_dir
@@ -597,21 +603,19 @@ pub async fn download_object(
                 .filter(|dir| !dir.trim().is_empty())
             {
                 // A batch destination is chosen in one dialog and may not exist
-                // yet, so create it before looking for a free name in it.
-                Some(dir) => {
-                    let dir = PathBuf::from(dir);
-                    tokio::fs::create_dir_all(&dir).await.map_err(|e| {
-                        AppError::msg(format!("cannot create {}: {e}", dir.display()))
-                    })?;
-                    dir
-                }
+                // yet; the reservation creates it.
+                Some(dir) => PathBuf::from(dir),
                 None => core
                     .settings()
                     .download_dir
                     .map(PathBuf::from)
                     .unwrap_or_else(crate::fsutil::download_dir),
             };
-            crate::fsutil::unique_path(&base, &default_file_name(&input.key))
+            let file_name = default_file_name(&input.key);
+            let (path, file) = crate::fsutil::reserve_unique_path(&base, &file_name)
+                .await
+                .map_err(err)?;
+            (path, Some(file))
         }
     };
 
@@ -625,16 +629,27 @@ pub async fn download_object(
     let dest_task = dest.clone();
     let conn_name = conn.name.clone();
 
+    let reserved = reserved_file.is_some();
     tauri::async_runtime::spawn(async move {
-        // Cancelled before the task got scheduled: do not start the GET at all.
+        // Cancelled before the task got scheduled: drop the reservation instead
+        // of leaving an empty file behind.
         if !entry_is_running(&tracker, &progress_id_task) {
+            drop(reserved_file);
+            if reserved {
+                let _ = tokio::fs::remove_file(&dest_task).await;
+            }
             return;
         }
         let outcome = async {
-            if let Some(parent) = dest_task.parent() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
-            let mut file = tokio::fs::File::create(&dest_task).await?;
+            let mut file = match reserved_file {
+                Some(file) => file,
+                None => {
+                    if let Some(parent) = dest_task.parent() {
+                        tokio::fs::create_dir_all(parent).await?;
+                    }
+                    tokio::fs::File::create(&dest_task).await?
+                }
+            };
             // Size is best-effort: a failed HEAD must not block the download.
             let total = store.stat(&key).await.ok().and_then(|m| m.size);
             let written = store.get_to(&key, &mut file).await?;
@@ -645,19 +660,21 @@ pub async fn download_object(
 
         // A GET that has already started cannot be aborted either. If the user
         // cancelled, the entry stays cancelled and the file is dropped instead
-        // of being reported as a finished download.
-        let cancelled = !entry_is_running(&tracker, &progress_id_task);
+        // of being reported as a finished download. `finish_if_running` makes
+        // the check and the state write one locked operation, so a cancel that
+        // lands in between cannot be overwritten by `Done`.
         match outcome {
-            Ok(_) if cancelled => {
-                let _ = tokio::fs::remove_file(&dest_task).await;
+            Ok(_) => {
+                if !tracker
+                    .finish_if_running(&progress_id_task, Some(dest_task.display().to_string()))
+                {
+                    let _ = tokio::fs::remove_file(&dest_task).await;
+                }
             }
-            Ok(_) => tracker.finish(&progress_id_task, Some(dest_task.display().to_string())),
             Err(e) => {
                 // Do not leave a half-written file behind.
                 let _ = tokio::fs::remove_file(&dest_task).await;
-                if !cancelled {
-                    tracker.fail(&progress_id_task, crate::model::describe_error(&e));
-                }
+                tracker.fail_if_running(&progress_id_task, crate::model::describe_error(&e));
             }
         }
     });
@@ -690,6 +707,12 @@ pub struct UploadInput {
     /// Leave keys that already exist untouched instead of uploading them.
     #[serde(default)]
     pub skip_existing: bool,
+    /// Keys the caller already knows exist (normally the answer from
+    /// `upload_conflicts`). With `skip_existing` set these are skipped without a
+    /// second HEAD scan; an empty list falls back to scanning for legacy
+    /// callers.
+    #[serde(default)]
+    pub skip_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -722,47 +745,111 @@ pub struct PlannedUpload {
 /// background PUTs.
 pub const MAX_PLAN_ITEMS: usize = 10_000;
 /// `upload_conflicts` is a pre-flight check the user waits on, so it is capped
-/// well below the upload cap.
+/// well below the upload cap and stops walking as soon as the cap is hit.
 const MAX_CONFLICT_SCAN: usize = 2_000;
 /// Most existence checks in flight at once.
 const STAT_CONCURRENCY: usize = 16;
 
+/// Why a plan is being built. The cap and its error message differ between a
+/// real upload and the conflict pre-flight check.
+#[derive(Debug, Clone, Copy)]
+enum PlanPurpose {
+    Upload,
+    Conflicts,
+}
+
+impl PlanPurpose {
+    fn cap_message(self, max_items: usize) -> String {
+        match self {
+            PlanPurpose::Upload => format!(
+                "refusing to upload more than {max_items} items at once; select fewer files or split the folder"
+            ),
+            PlanPurpose::Conflicts => {
+                format!("too many files to check for conflicts (the limit is {max_items})")
+            }
+        }
+    }
+}
+
+/// Accumulates a plan, keeping keys unique and the item count capped.
+struct PlanBuilder {
+    items: Vec<PlannedUpload>,
+    seen: HashSet<String>,
+    max_items: usize,
+    cap_message: String,
+}
+
+impl PlanBuilder {
+    fn new(max_items: usize, purpose: PlanPurpose) -> Self {
+        PlanBuilder {
+            items: Vec::new(),
+            seen: HashSet::new(),
+            max_items,
+            cap_message: purpose.cap_message(max_items),
+        }
+    }
+
+    /// Add one item. Duplicate keys are dropped: a drop list can contain the
+    /// same path twice, and that must not PUT the same key twice.
+    fn push(&mut self, local_path: PathBuf, key: String, is_marker: bool) -> AppResult<()> {
+        if !self.seen.insert(key.clone()) {
+            return Ok(());
+        }
+        if self.items.len() >= self.max_items {
+            return Err(AppError::invalid(self.cap_message.clone()));
+        }
+        self.items.push(PlannedUpload {
+            local_path,
+            key,
+            is_marker,
+        });
+        Ok(())
+    }
+
+    fn into_items(self) -> Vec<PlannedUpload> {
+        self.items
+    }
+}
+
 /// Build the upload plan for a set of local paths.
 ///
-/// Files keep their name (`prefix + name`). Directories are walked recursively,
-/// without following symlinks, and keep their structure under
+/// Files keep their name (`prefix + name`). Directories are walked recursively
+/// without following symlinks and keep their structure under
 /// `prefix + dir_name/`. Every directory that ends up with no files below it
 /// gets a zero-byte marker, so an empty folder survives the round trip.
 ///
 /// The walk is deterministic: entries are sorted by name before they are
-/// visited, so the same tree always produces the same plan.
+/// visited, so the same tree always produces the same plan. A top-level path
+/// that is a symlink is followed deliberately (the user picked it); nothing
+/// below a walked directory is ever followed.
 pub fn plan_uploads(paths: &[String], prefix: &str) -> AppResult<Vec<PlannedUpload>> {
-    plan_uploads_capped(paths, prefix, MAX_PLAN_ITEMS)
+    plan_uploads_for(paths, prefix, PlanPurpose::Upload, MAX_PLAN_ITEMS)
 }
 
-fn plan_uploads_capped(
+/// The conflict pre-flight uses the same walk but stops at 2 000 items instead
+/// of walking a 10 000-file tree and only then rejecting it.
+fn plan_conflicts(paths: &[String], prefix: &str) -> AppResult<Vec<PlannedUpload>> {
+    plan_uploads_for(paths, prefix, PlanPurpose::Conflicts, MAX_CONFLICT_SCAN)
+}
+
+fn plan_uploads_for(
     paths: &[String],
     prefix: &str,
+    purpose: PlanPurpose,
     max_items: usize,
 ) -> AppResult<Vec<PlannedUpload>> {
     let prefix = as_folder_prefix(prefix);
-    let mut plan = Vec::new();
+    let mut plan = PlanBuilder::new(max_items, purpose);
     for raw in paths {
         let path = PathBuf::from(raw);
-        // Top-level paths come from a file dialog or a drop, so a symlink picked
-        // explicitly is followed; symlinks *inside* a directory are not.
         let meta = std::fs::metadata(&path)
             .map_err(|e| AppError::invalid(format!("cannot read {}: {e}", path.display())))?;
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .filter(|name| !name.is_empty())
-            .ok_or_else(|| AppError::invalid(format!("bad local path: {raw}")))?;
+        let name = utf8_file_name(&path)?;
         if meta.is_dir() {
             let key_prefix = format!("{prefix}{name}/");
-            walk_upload_dir(&path, &key_prefix, max_items, &mut plan)?;
+            walk_upload_dir(&path, &key_prefix, &mut plan)?;
         } else if meta.is_file() {
-            push_planned(&mut plan, path, format!("{prefix}{name}"), false, max_items)?;
+            plan.push(path, format!("{prefix}{name}"), false)?;
         } else {
             return Err(AppError::invalid(format!(
                 "{} is not a file or a directory",
@@ -770,7 +857,26 @@ fn plan_uploads_capped(
             )));
         }
     }
-    Ok(plan)
+    Ok(plan.into_items())
+}
+
+/// File name as UTF-8.
+///
+/// `to_string_lossy` would map two distinct non-UTF-8 local names onto one key,
+/// silently collapsing files, so such paths are rejected instead.
+fn utf8_file_name(path: &Path) -> AppResult<String> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| AppError::invalid(format!("bad local path: {}", path.display())))?;
+    name.to_str()
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            AppError::invalid(format!(
+                "local file name is not valid UTF-8: {}",
+                path.display()
+            ))
+        })
 }
 
 /// Walk one directory in sorted order, appending files and folder markers.
@@ -780,12 +886,7 @@ fn plan_uploads_capped(
 /// containing only symlinks/special files) gets a marker so the folder does not
 /// vanish; that marker also keeps every ancestor visible, so no ancestor adds
 /// one of its own.
-fn walk_upload_dir(
-    dir: &Path,
-    key_prefix: &str,
-    max_items: usize,
-    plan: &mut Vec<PlannedUpload>,
-) -> AppResult<bool> {
+fn walk_upload_dir(dir: &Path, key_prefix: &str, plan: &mut PlanBuilder) -> AppResult<bool> {
     let read_error = |e: std::io::Error| {
         AppError::invalid(format!("cannot read directory {}: {e}", dir.display()))
     };
@@ -807,27 +908,21 @@ fn walk_upload_dir(
         if file_type.is_symlink() {
             continue;
         }
-        let name = entry.file_name().to_string_lossy().to_string();
+        let name = utf8_file_name(&path)?;
         if file_type.is_dir() {
             let child_prefix = format!("{key_prefix}{name}/");
-            if walk_upload_dir(&path, &child_prefix, max_items, plan)? {
+            if walk_upload_dir(&path, &child_prefix, plan)? {
                 planned = true;
             }
         } else if file_type.is_file() {
-            push_planned(plan, path, format!("{key_prefix}{name}"), false, max_items)?;
+            plan.push(path, format!("{key_prefix}{name}"), false)?;
             planned = true;
         }
         // Sockets, FIFOs and devices are skipped: a PUT of one would block or
         // fail, and they have no place in S3.
     }
     if !planned {
-        push_planned(
-            plan,
-            dir.to_path_buf(),
-            key_prefix.to_string(),
-            true,
-            max_items,
-        )?;
+        plan.push(dir.to_path_buf(), key_prefix.to_string(), true)?;
         // The marker keeps this level (and every ancestor) visible, so the
         // caller must not add a marker of its own.
         planned = true;
@@ -835,34 +930,17 @@ fn walk_upload_dir(
     Ok(planned)
 }
 
-fn push_planned(
-    plan: &mut Vec<PlannedUpload>,
-    local_path: PathBuf,
-    key: String,
-    is_marker: bool,
-    max_items: usize,
-) -> AppResult<()> {
-    if plan.len() >= max_items {
-        return Err(AppError::invalid(format!(
-            "refusing to upload more than {max_items} items at once; select fewer files or split the folder"
-        )));
-    }
-    plan.push(PlannedUpload {
-        local_path,
-        key,
-        is_marker,
-    });
-    Ok(())
-}
-
 /// Is this error S3 saying "there is no such key"?
 fn is_missing(err: &AppError) -> bool {
     match err {
         AppError::NotFound(_) => true,
-        AppError::S3 { code, .. } => matches!(
-            code.as_str(),
-            "NotFound" | "NoSuchKey" | "NoSuchObject" | "HTTP404" | "404"
-        ),
+        AppError::S3 { code, status, .. } => {
+            *status == Some(404)
+                || matches!(
+                    code.as_str(),
+                    "NotFound" | "NoSuchKey" | "NoSuchObject" | "HTTP404" | "404"
+                )
+        }
         _ => false,
     }
 }
@@ -870,8 +948,10 @@ fn is_missing(err: &AppError) -> bool {
 /// Which of `keys` already exist, with at most [`STAT_CONCURRENCY`] HEADs in
 /// flight.
 ///
-/// A missing key is `false`. Any other failure is returned: a policy that says
-/// "skip what exists" must not silently overwrite data because HEAD was denied.
+/// A missing key is `false`. Any other failure is returned **unchanged** so the
+/// original S3 code, status and hints still reach the UI (a HEAD denied for
+/// write-only credentials must not become an opaque wrapper); the call stays
+/// fail-closed.
 async fn keys_that_exist(store: &AnyStore, keys: &[String]) -> AppResult<Vec<bool>> {
     let mut exists = vec![false; keys.len()];
     for (chunk_index, chunk) in keys.chunks(STAT_CONCURRENCY).enumerate() {
@@ -890,11 +970,45 @@ async fn keys_that_exist(store: &AnyStore, keys: &[String]) -> AppResult<Vec<boo
             match result {
                 Ok(_) => exists[index] = true,
                 Err(e) if is_missing(&e) => {}
-                Err(e) => return Err(AppError::msg(format!("cannot check {}: {e}", keys[index]))),
+                Err(e) => return Err(e),
             }
         }
     }
     Ok(exists)
+}
+
+/// Which planned items the caller already knows exist.
+///
+/// The UI passes the list it got from `upload_conflicts`, so the upload does not
+/// repeat those HEADs. Markers are never skipped: writing a zero-byte marker
+/// again is harmless and keeps an empty folder visible.
+fn skipped_from_keys(plan: &[PlannedUpload], skip_keys: &[String]) -> Vec<bool> {
+    if skip_keys.is_empty() {
+        return vec![false; plan.len()];
+    }
+    let skip: HashSet<&str> = skip_keys.iter().map(String::as_str).collect();
+    plan.iter()
+        .map(|item| !item.is_marker && skip.contains(item.key.as_str()))
+        .collect()
+}
+
+/// Planning touches the filesystem, so keep it off the async worker thread.
+async fn plan_uploads_off_thread(
+    paths: Vec<String>,
+    prefix: String,
+) -> AppResult<Vec<PlannedUpload>> {
+    tokio::task::spawn_blocking(move || plan_uploads(&paths, &prefix))
+        .await
+        .map_err(|e| AppError::msg(format!("upload planning failed: {e}")))?
+}
+
+async fn plan_conflicts_off_thread(
+    paths: Vec<String>,
+    prefix: String,
+) -> AppResult<Vec<PlannedUpload>> {
+    tokio::task::spawn_blocking(move || plan_conflicts(&paths, &prefix))
+        .await
+        .map_err(|e| AppError::msg(format!("upload planning failed: {e}")))?
 }
 
 /// Is this progress entry still waiting for its transfer to finish?
@@ -942,13 +1056,19 @@ pub async fn upload_files_impl(
     let store = core.client(&input.connection_id)?;
 
     // Build the whole plan before touching progress: a bad path or an oversized
-    // tree must fail without leaving a single entry behind.
-    let plan = plan_uploads(&input.local_paths, &input.prefix)?;
+    // tree must fail without leaving a single entry behind. The walk is blocking
+    // `std::fs`, so it runs on the blocking pool.
+    let plan = plan_uploads_off_thread(input.local_paths.clone(), input.prefix.clone()).await?;
 
-    // Pre-flight existence check. Markers are not checked: writing a zero-byte
-    // marker again is harmless and must not make an empty folder look skipped.
-    let mut skipped = vec![false; plan.len()];
-    if input.skip_existing {
+    // The UI already ran `upload_conflicts`, so its conflict list is used as-is:
+    // no second HEAD scan and no delay before the rows (and their cancel
+    // buttons) exist. An empty list means an old caller that did not pre-check;
+    // only then does the backend ask the bucket itself.
+    let skipped = if !input.skip_existing {
+        vec![false; plan.len()]
+    } else if !input.skip_keys.is_empty() {
+        skipped_from_keys(&plan, &input.skip_keys)
+    } else {
         let indexes: Vec<usize> = plan
             .iter()
             .enumerate()
@@ -960,10 +1080,12 @@ pub async fn upload_files_impl(
             .map(|index| plan[*index].key.clone())
             .collect();
         let existing = keys_that_exist(&store, &keys).await?;
+        let mut flags = vec![false; plan.len()];
         for (index, exists) in indexes.into_iter().zip(existing) {
-            skipped[index] = exists;
+            flags[index] = exists;
         }
-    }
+        flags
+    };
 
     let tracker = core.progress.clone();
     let mut plan_items = Vec::with_capacity(plan.len());
@@ -1021,33 +1143,48 @@ pub async fn upload_files_impl(
                 let result = store
                     .put_bytes(&task.key, Vec::new(), Some("application/x-directory"))
                     .await;
-                if entry_is_running(&tracker_task, &task.id) {
-                    match result {
-                        Ok(()) => tracker_task.finish(&task.id, Some(task.key.clone())),
-                        Err(e) => tracker_task.fail(&task.id, crate::model::describe_error(&e)),
+                match result {
+                    Ok(()) => {
+                        tracker_task.finish_if_running(&task.id, Some(task.key.clone()));
+                    }
+                    Err(e) => {
+                        tracker_task.fail_if_running(&task.id, crate::model::describe_error(&e));
                     }
                 }
                 continue;
             }
             // Keep the pre-existing guard for callers that do not use
             // `skip_existing`: with neither flag set an existing key fails
-            // instead of being replaced without being asked.
-            if !overwrite && store.stat(&task.key).await.is_ok() {
-                if entry_is_running(&tracker_task, &task.id) {
-                    tracker_task.fail(
-                        &task.id,
-                        format!("{} already exists (overwrite is disabled)", task.key),
-                    );
+            // instead of being replaced without being asked. The check is
+            // fail-closed: a HEAD that fails for any reason other than "missing"
+            // fails the entry instead of being read as "does not exist".
+            if !overwrite {
+                match store.stat(&task.key).await {
+                    Ok(_) => {
+                        tracker_task.fail_if_running(
+                            &task.id,
+                            format!("{} already exists (overwrite is disabled)", task.key),
+                        );
+                        continue;
+                    }
+                    Err(e) if is_missing(&e) => {}
+                    Err(e) => {
+                        tracker_task.fail_if_running(&task.id, crate::model::describe_error(&e));
+                        continue;
+                    }
                 }
-                continue;
             }
-            let result = store.put_file(&task.key, &task.local_path, None).await;
             if !entry_is_running(&tracker_task, &task.id) {
                 continue;
             }
+            let result = store.put_file(&task.key, &task.local_path, None).await;
             match result {
-                Ok(()) => tracker_task.finish(&task.id, Some(task.key)),
-                Err(e) => tracker_task.fail(&task.id, crate::model::describe_error(&e)),
+                Ok(()) => {
+                    tracker_task.finish_if_running(&task.id, Some(task.key));
+                }
+                Err(e) => {
+                    tracker_task.fail_if_running(&task.id, crate::model::describe_error(&e));
+                }
             }
         }
     });
@@ -1073,25 +1210,18 @@ pub async fn upload_conflicts_impl(
     input: UploadInput,
 ) -> crate::error::AppResult<Vec<String>> {
     let store = core.client(&input.connection_id)?;
-    let plan = plan_uploads(&input.local_paths, &input.prefix)?;
+    // The conflict walk is capped at 2 000 items from the start: a huge folder
+    // fails before it is fully walked, not after planning all 10 000 keys.
+    let plan = plan_conflicts_off_thread(input.local_paths.clone(), input.prefix.clone()).await?;
     let keys: Vec<String> = plan
         .into_iter()
         .filter(|item| !item.is_marker)
         .map(|item| item.key)
         .collect();
-    if keys.len() > MAX_CONFLICT_SCAN {
-        return Err(AppError::invalid(format!(
-            "too many files to check for conflicts ({} files; the limit is {MAX_CONFLICT_SCAN})",
-            keys.len()
-        )));
-    }
     let existing = keys_that_exist(&store, &keys).await?;
-    // The same key can appear twice when a folder and a file inside it are
-    // selected together; report each conflict once.
-    let mut seen = std::collections::HashSet::new();
     let mut conflicts = Vec::new();
     for (key, exists) in keys.into_iter().zip(existing) {
-        if exists && seen.insert(key.clone()) {
+        if exists {
             conflicts.push(key);
         }
     }
@@ -1321,8 +1451,8 @@ pub async fn delete_objects(
     let progress_id_task = progress_id.clone();
     tauri::async_runtime::spawn(async move {
         match store_task.delete_many(&keys_task).await {
-            Ok(()) => tracker.finish(&progress_id_task, None),
-            Err(e) => tracker.fail(&progress_id_task, crate::model::describe_error(&e)),
+            Ok(()) => tracker.finish_if_running(&progress_id_task, None),
+            Err(e) => tracker.fail_if_running(&progress_id_task, crate::model::describe_error(&e)),
         }
     });
 
@@ -1417,7 +1547,7 @@ pub async fn copy_objects(
         let mut done = 0u64;
         for (from, to) in &pairs_task {
             if let Err(e) = dst_task.copy_object(from, to).await {
-                tracker.fail(
+                tracker.fail_if_running(
                     &progress_id,
                     format!("copy {from}: {}", crate::model::describe_error(&e)),
                 );
@@ -1425,7 +1555,7 @@ pub async fn copy_objects(
             }
             if move_objects {
                 if let Err(e) = src_task.delete_object(from).await {
-                    tracker.fail(
+                    tracker.fail_if_running(
                         &progress_id,
                         format!("delete {from}: {}", crate::model::describe_error(&e)),
                     );
@@ -1436,7 +1566,7 @@ pub async fn copy_objects(
             tracker.advance(&progress_id, 1);
         }
         let _ = done;
-        tracker.finish(&progress_id, None);
+        tracker.finish_if_running(&progress_id, None);
     });
 
     Ok(CopyOutcome {
@@ -1717,13 +1847,93 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_paths_do_not_plan_the_same_key_twice() {
+        let root = TempTree::new();
+        let shots = root.path().join("shots");
+        std::fs::create_dir_all(&shots).unwrap();
+        let file = shots.join("a.png");
+        std::fs::write(&file, b"a").unwrap();
+
+        // A drop list can repeat the same entry; the key must still be planned
+        // (and PUT) only once.
+        let files = plan_uploads(
+            &[file.display().to_string(), file.display().to_string()],
+            "up/",
+        )
+        .unwrap();
+        assert_eq!(planned_keys(&files), vec!["up/a.png"]);
+
+        let folders = plan_uploads(
+            &[shots.display().to_string(), shots.display().to_string()],
+            "",
+        )
+        .unwrap();
+        assert_eq!(planned_keys(&folders), vec!["shots/a.png"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_file_names_are_rejected() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let name = OsString::from_vec(vec![b'f', 0xff, b'.', b't', b'x', b't']);
+        let error = utf8_file_name(Path::new(&name)).unwrap_err();
+
+        assert!(
+            error.to_string().contains("UTF-8"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn skip_keys_mark_planned_items_without_a_scan() {
+        let item = |key: &str, is_marker: bool| PlannedUpload {
+            local_path: PathBuf::from("/tmp/example"),
+            key: key.to_string(),
+            is_marker,
+        };
+        let plan = vec![
+            item("up/a.png", false),
+            item("up/empty/", true),
+            item("up/b.png", false),
+        ];
+
+        let skipped = skipped_from_keys(&plan, &["up/a.png".to_string(), "up/empty/".to_string()]);
+
+        // Markers are never skipped, even if a caller put one in the list.
+        assert_eq!(skipped, vec![true, false, false]);
+        // With no list there is nothing to mark; the caller falls back to a scan.
+        assert_eq!(skipped_from_keys(&plan, &[]), vec![false, false, false]);
+    }
+
+    #[test]
+    fn conflict_planning_uses_the_preflight_cap_message() {
+        let root = TempTree::new();
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(root.path().join(name), b"x").unwrap();
+        }
+        let raw = root.path().display().to_string();
+
+        let error = plan_uploads_for(std::slice::from_ref(&raw), "", PlanPurpose::Conflicts, 2)
+            .unwrap_err();
+
+        assert!(
+            error.to_string().contains("too many files to check"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
     fn plan_refuses_more_items_than_the_cap() {
         let root = TempTree::new();
         for name in ["a.txt", "b.txt", "c.txt"] {
             std::fs::write(root.path().join(name), b"x").unwrap();
         }
 
-        let error = plan_uploads_capped(&[root.path().display().to_string()], "", 2).unwrap_err();
+        let raw = root.path().display().to_string();
+        let error =
+            plan_uploads_for(std::slice::from_ref(&raw), "", PlanPurpose::Upload, 2).unwrap_err();
 
         assert!(
             error.to_string().contains("more than 2"),

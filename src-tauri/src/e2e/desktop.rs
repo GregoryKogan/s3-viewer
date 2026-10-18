@@ -411,6 +411,7 @@ pub async fn e2e_readonly_check(
             local_paths: vec![local.display().to_string()],
             overwrite: true,
             skip_existing: false,
+            skip_keys: Vec::new(),
         },
     )
     .await;

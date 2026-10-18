@@ -277,6 +277,11 @@ export interface UploadInput {
   overwrite: boolean;
   /** Leave keys that already exist untouched instead of uploading them. */
   skipExisting?: boolean;
+  /**
+   * Keys the caller already knows exist (the `uploadConflicts` answer). With
+   * `skipExisting` they are skipped without a second HEAD scan.
+   */
+  skipKeys?: string[];
 }
 
 export interface DeleteInput {
