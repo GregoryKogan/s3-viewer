@@ -5,6 +5,7 @@ import AddressBar from "./AddressBar.vue";
 import AppToolbar from "./AppToolbar.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import { inputClass } from "@/components/ui/controls";
+import { shortcutLabel } from "@/lib/keyboard";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
 import { useUiStore } from "@/stores/ui";
@@ -80,7 +81,7 @@ function togglePreviewPanel() {
           variant="ghost"
           :icon="RefreshCw"
           :busy="objects.loading"
-          title="Refresh (⌘R)"
+          :title="`Refresh (${shortcutLabel('R')})`"
           data-testid="refresh"
           @click="objects.reload()"
         />
@@ -90,7 +91,7 @@ function togglePreviewPanel() {
           :icon="PanelRight"
           :title="previewOpen ? 'Hide the preview panel' : 'Show the preview panel'"
           :aria-pressed="previewOpen"
-          :class="previewOpen ? 'bg-hover text-content' : ''"
+          :class="previewOpen ? 'bg-active text-content' : ''"
           data-testid="toggle-preview"
           @click="togglePreviewPanel()"
         />

@@ -16,9 +16,4 @@ export const checkboxClass =
 
 export const codeClass =
   "overflow-x-auto rounded-control border border-line bg-inset p-2.5 font-mono " +
-  "text-[0.6875rem] leading-relaxed text-content/90 whitespace-pre";
-
-/** Hover-revealed row affordance, e.g. a per-row action button. */
-export const rowActionClass =
-  "grid size-5 shrink-0 place-items-center rounded-[4px] text-subtle transition-colors " +
-  "hover:bg-active hover:text-content";
+  "text-meta leading-relaxed text-content/90 whitespace-pre";

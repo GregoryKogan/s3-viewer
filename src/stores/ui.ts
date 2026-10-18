@@ -45,7 +45,6 @@ export const useUiStore = defineStore("ui", () => {
    * maximised preview is a momentary inspection, not a workspace layout.
    */
   const previewExpanded = ref(false);
-  const transfersVisible = ref(false);
   const ready = ref(false);
 
   const theme = computed<Theme>(() => settings.value?.theme ?? "dark");
@@ -220,7 +219,6 @@ export const useUiStore = defineStore("ui", () => {
     layout,
     previewHidden,
     previewExpanded,
-    transfersVisible,
     ready,
     theme,
     previewMaxBytes,
@@ -240,10 +238,5 @@ export const useUiStore = defineStore("ui", () => {
     clampLayoutToWindow,
   };
 });
-
-/** Kept in one place so components do not invent their own default. */
-export function defaultLayout(): LayoutSettings {
-  return { ...LAYOUT_DEFAULTS };
-}
 
 export type { TransferResult };

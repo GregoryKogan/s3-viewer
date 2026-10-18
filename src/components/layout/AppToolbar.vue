@@ -94,7 +94,7 @@ const status = computed(() => {
         data-testid="copy-uri"
         @click="actions.copySelectionUris()"
       >
-        URI
+        Copy URI
       </AppButton>
       <AppButton
         :icon="MoveRight"
@@ -134,6 +134,6 @@ const status = computed(() => {
     </template>
 
     <span class="flex-1" />
-    <span class="tabular text-[0.6875rem] text-subtle" data-testid="folder-status">{{ status }}</span>
+    <span class="tabular text-meta text-subtle" data-testid="folder-status">{{ status }}</span>
   </div>
 </template>

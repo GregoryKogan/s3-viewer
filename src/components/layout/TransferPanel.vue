@@ -82,7 +82,7 @@ async function dismiss() {
     data-testid="transfers"
   >
     <div class="flex items-center justify-between">
-      <span class="text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+      <span class="text-meta font-semibold tracking-wider text-subtle uppercase">
         Transfers
         <template v-if="progress.running.length">({{ progress.running.length }})</template>
       </span>
@@ -96,10 +96,10 @@ async function dismiss() {
       :data-testid="`transfer-${item.state}`"
     >
       <div class="flex items-baseline gap-2">
-        <span class="min-w-0 flex-1 truncate text-[0.6875rem] text-content" :title="item.label">
+        <span class="min-w-0 flex-1 truncate text-meta text-content" :title="item.label">
           {{ item.label }}
         </span>
-        <span class="tabular shrink-0 text-[0.625rem] text-subtle">{{ label(item) }}</span>
+        <span class="tabular shrink-0 text-micro text-subtle">{{ label(item) }}</span>
       </div>
 
       <div class="h-1 overflow-hidden rounded-full bg-hover">
@@ -110,7 +110,7 @@ async function dismiss() {
         />
       </div>
 
-      <p v-if="item.error" class="text-[0.625rem] leading-relaxed text-danger">{{ item.error }}</p>
+      <p v-if="item.error" class="text-micro leading-relaxed text-danger">{{ item.error }}</p>
 
       <div
         v-if="item.state === 'running' || ((item.state === 'failed' || item.state === 'cancelled') && progress.hasRetry(item.id))"
@@ -138,7 +138,7 @@ async function dismiss() {
         </AppButton>
       </div>
 
-      <div v-if="item.state === 'done' && item.resultPath" class="flex items-center gap-1 text-[0.625rem] text-ok">
+      <div v-if="item.state === 'done' && item.resultPath" class="flex items-center gap-1 text-micro text-ok">
         <Check class="size-2.5 shrink-0" />
         <span class="min-w-0 flex-1 truncate" :title="item.resultPath">{{ item.resultPath }}</span>
         <AppButton size="sm" variant="ghost" :icon="FolderOpen" title="Reveal" @click="api.revealInFileManager(item.resultPath)" />

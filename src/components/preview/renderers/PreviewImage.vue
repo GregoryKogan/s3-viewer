@@ -110,7 +110,7 @@ function toggleFit() {
       />
       <button
         type="button"
-        class="tabular min-w-11 rounded-control px-1 py-0.5 text-[0.6875rem] text-muted transition-colors hover:bg-hover hover:text-content"
+        class="tabular min-w-11 rounded-control px-1 py-0.5 text-meta text-muted transition-colors hover:bg-hover hover:text-content"
         :title="fitted ? 'Show at 100%' : 'Fit to the panel'"
         data-testid="preview-image-zoom"
         @click="toggleFit()"
@@ -128,7 +128,7 @@ function toggleFit() {
       />
     </div>
 
-    <div v-if="failed" class="p-4 text-[0.6875rem] leading-relaxed text-muted">
+    <div v-if="failed" class="p-4 text-meta leading-relaxed text-muted">
       This image cannot be rendered by the webview — the format may be unsupported.
       Download the file and open it locally.
     </div>

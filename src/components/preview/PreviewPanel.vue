@@ -146,7 +146,7 @@ function onToggleView(view: "rendered" | "raw") {
         </span>
         <span
           v-if="meta"
-          class="tabular truncate text-[0.6875rem] text-subtle"
+          class="tabular truncate text-meta text-subtle"
           :title="objects.previewKey ?? ''"
           data-testid="preview-meta"
         >
@@ -161,7 +161,7 @@ function onToggleView(view: "rendered" | "raw") {
         >
           <button
             type="button"
-            class="rounded-[4px] px-1.5 py-0.5 text-[0.6875rem] transition-colors"
+            class="rounded-[4px] px-1.5 py-0.5 text-meta transition-colors"
             :class="objects.previewView === 'rendered' ? 'bg-accent text-white' : 'text-muted hover:bg-hover'"
             data-testid="md-view-rendered"
             @click="onToggleView('rendered')"
@@ -170,7 +170,7 @@ function onToggleView(view: "rendered" | "raw") {
           </button>
           <button
             type="button"
-            class="rounded-[4px] px-1.5 py-0.5 text-[0.6875rem] transition-colors"
+            class="rounded-[4px] px-1.5 py-0.5 text-meta transition-colors"
             :class="objects.previewView === 'raw' ? 'bg-accent text-white' : 'text-muted hover:bg-hover'"
             data-testid="md-view-raw"
             @click="onToggleView('raw')"
@@ -277,9 +277,9 @@ function onToggleView(view: "rendered" | "raw") {
             <li
               v-for="shortcut in shortcuts"
               :key="shortcut.label"
-              class="flex items-center justify-between gap-4 text-[0.6875rem] text-muted"
+              class="flex items-center justify-between gap-4 text-meta text-muted"
             >
-              <kbd class="rounded-[4px] border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[0.6875rem] text-content">
+              <kbd class="rounded-[4px] border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-meta text-content">
                 {{ shortcut.keys }}
               </kbd>
               <span>{{ shortcut.label }}</span>
@@ -299,12 +299,12 @@ function onToggleView(view: "rendered" | "raw") {
         <div class="flex min-w-0 max-w-full flex-col items-center gap-1 text-center">
           <p class="max-w-full truncate text-xs font-medium text-content">{{ shownName }}</p>
           <p
-            class="scrollbar max-w-full overflow-x-auto font-mono text-[0.6875rem] whitespace-nowrap text-subtle"
+            class="scrollbar max-w-full overflow-x-auto font-mono text-meta whitespace-nowrap text-subtle"
             :title="objects.previewKey ?? ''"
           >
             {{ objects.previewKey }}
           </p>
-          <p v-if="folderEntry" class="tabular text-[0.6875rem] text-subtle">
+          <p v-if="folderEntry" class="tabular text-meta text-subtle">
             {{ humanDate(folderEntry.lastModified) }}
           </p>
         </div>
@@ -338,7 +338,7 @@ function onToggleView(view: "rendered" | "raw") {
           <ImageOff class="mt-0.5 size-4 shrink-0 text-warn" />
           <div class="flex flex-col gap-1">
             <p class="text-xs font-medium text-content">Preview unavailable</p>
-            <p class="text-[0.6875rem] leading-relaxed text-muted">{{ objects.previewUnavailable }}</p>
+            <p class="text-meta leading-relaxed text-muted">{{ objects.previewUnavailable }}</p>
           </div>
         </div>
       </div>

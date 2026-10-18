@@ -151,7 +151,7 @@ async function save() {
 <template>
   <ModalFrame title="Settings" :icon="SlidersHorizontal" :size="props.size" @close="cancel">
     <fieldset class="rounded-control border border-line p-3">
-      <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+      <legend class="px-1 text-meta font-semibold tracking-wider text-subtle uppercase">
         Preview
       </legend>
       <AppField
@@ -168,7 +168,7 @@ async function save() {
     </fieldset>
 
     <fieldset class="rounded-control border border-line p-3">
-      <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+      <legend class="px-1 text-meta font-semibold tracking-wider text-subtle uppercase">
         Browsing
       </legend>
       <div class="grid grid-cols-2 gap-3">
@@ -195,7 +195,7 @@ async function save() {
           <input v-model="form.showSystemObjects" type="checkbox" :class="checkboxClass" class="mt-0.5" data-testid="settings-show-system" />
           <span>
             Show system objects
-            <span class="block text-[0.6875rem] text-muted">
+            <span class="block text-meta text-muted">
               _SUCCESS, _temporary, .DS_Store and *.crc are hidden by default.
             </span>
           </span>
@@ -204,7 +204,7 @@ async function save() {
     </fieldset>
 
     <fieldset class="rounded-control border border-line p-3">
-      <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+      <legend class="px-1 text-meta font-semibold tracking-wider text-subtle uppercase">
         Downloads
       </legend>
       <AppField label="Download folder" hint="Leave empty to use the operating system's Downloads folder." wide>
@@ -235,7 +235,7 @@ async function save() {
         />
         <span>
           Ask where to save each download
-          <span class="block text-[0.6875rem] text-muted">
+          <span class="block text-meta text-muted">
             When this is off, files go straight to the folder above.
           </span>
         </span>
@@ -243,7 +243,7 @@ async function save() {
     </fieldset>
 
     <fieldset class="rounded-control border border-line p-3" data-testid="settings-shortcuts">
-      <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+      <legend class="px-1 text-meta font-semibold tracking-wider text-subtle uppercase">
         Keyboard shortcuts
       </legend>
       <dl class="grid grid-cols-2 gap-x-6 gap-y-1.5">
@@ -254,7 +254,7 @@ async function save() {
         >
           <dt class="min-w-0 truncate text-muted">{{ item.action }}</dt>
           <dd class="shrink-0">
-            <kbd class="rounded-[4px] border border-line-strong bg-inset px-1.5 py-px font-mono text-[0.625rem] text-content">
+            <kbd class="rounded-[4px] border border-line-strong bg-inset px-1.5 py-px font-mono text-micro text-content">
               {{ item.keys }}
             </kbd>
           </dd>
@@ -263,7 +263,7 @@ async function save() {
     </fieldset>
 
     <fieldset class="rounded-control border border-line p-3" data-testid="settings-application">
-      <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+      <legend class="px-1 text-meta font-semibold tracking-wider text-subtle uppercase">
         Application
       </legend>
       <div class="flex items-center gap-3">
@@ -271,7 +271,7 @@ async function save() {
           <p class="text-xs font-medium text-content">
             S3 Viewer {{ updates.runningVersion || "—" }}
           </p>
-          <p class="mt-0.5 text-[0.6875rem] leading-relaxed text-muted">
+          <p class="mt-0.5 text-meta leading-relaxed text-muted">
             Updates are checked at launch. A newer version downloads as one signed archive,
             installs in place and restarts the app.
           </p>
@@ -288,10 +288,10 @@ async function save() {
     </fieldset>
 
     <fieldset v-if="ui.security" class="rounded-control border border-line p-3" data-testid="security-summary">
-      <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+      <legend class="px-1 text-meta font-semibold tracking-wider text-subtle uppercase">
         Security
       </legend>
-      <div class="flex flex-col gap-2 text-[0.6875rem] leading-relaxed text-muted">
+      <div class="flex flex-col gap-2 text-meta leading-relaxed text-muted">
         <div class="flex items-center gap-2">
           <ShieldCheck class="size-3.5 shrink-0 text-ok" />
           <span class="font-medium text-content">Master key storage</span>

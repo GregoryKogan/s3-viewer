@@ -56,13 +56,13 @@ function onContentClick(event: MouseEvent) {
 
     <pre
       v-else
-      class="scrollbar min-h-0 flex-1 overflow-auto p-3 font-mono text-[0.6875rem] leading-relaxed whitespace-pre text-content"
+      class="scrollbar min-h-0 flex-1 overflow-auto p-3 font-mono text-meta leading-relaxed whitespace-pre text-content"
       data-testid="preview-code"
     ><code class="hljs">{{ source }}</code></pre>
 
     <p
       v-if="props.data.truncated"
-      class="shrink-0 border-t border-line bg-warn/10 px-3 py-1.5 text-[0.6875rem] text-warn"
+      class="shrink-0 border-t border-line bg-warn/10 px-3 py-1.5 text-meta text-warn"
       data-testid="preview-truncated"
     >
       Showing only the beginning of the file.

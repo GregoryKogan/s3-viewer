@@ -228,7 +228,7 @@ watch(
         <button
           type="button"
           class="ml-1 grid size-6 shrink-0 place-items-center rounded-control text-subtle transition-colors hover:bg-hover hover:text-content"
-          title="Type or paste an S3 address (⌘L)"
+          :title="`Type or paste an S3 address (${shortcutLabel('L')})`"
           data-testid="address-edit"
           @click="startEditing"
         >
@@ -255,9 +255,9 @@ watch(
           @keydown.esc.prevent="cancel"
           @blur="!busy && !invalid && cancel()"
         />
-        <span v-if="busy" class="text-[0.6875rem] text-subtle">opening…</span>
+        <span v-if="busy" class="text-meta text-subtle">opening…</span>
       </div>
-      <p v-if="invalid" class="text-[0.6875rem] leading-snug text-danger" data-testid="address-error">
+      <p v-if="invalid" class="text-meta leading-snug text-danger" data-testid="address-error">
         {{ invalid }}
       </p>
     </form>

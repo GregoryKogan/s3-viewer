@@ -61,7 +61,7 @@ function onEnter(event: KeyboardEvent) {
 
     <ul
       v-if="props.details.length"
-      class="scrollbar max-h-52 list-disc space-y-1 overflow-y-auto rounded-control border border-line bg-inset p-3 pl-7 text-[0.6875rem] leading-relaxed text-muted"
+      class="scrollbar max-h-52 list-disc space-y-1 overflow-y-auto rounded-control border border-line bg-inset p-3 pl-7 text-meta leading-relaxed text-muted"
       data-testid="confirm-details"
     >
       <li v-for="(line, index) in props.details" :key="index" class="break-all">{{ line }}</li>

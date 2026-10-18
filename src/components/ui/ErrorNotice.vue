@@ -30,19 +30,19 @@ const props = withDefaults(
 <template>
   <div class="flex min-w-0 flex-col gap-2">
     <p v-if="props.title" class="text-xs font-medium text-content">{{ props.title }}</p>
-    <p class="text-[0.6875rem] leading-relaxed break-words text-muted" data-testid="error-message">
+    <p class="text-meta leading-relaxed break-words text-muted" data-testid="error-message">
       {{ props.message }}
     </p>
     <ul
       v-if="props.hints.length"
-      class="list-disc space-y-1 pl-4 text-[0.6875rem] leading-relaxed break-words text-muted"
+      class="list-disc space-y-1 pl-4 text-meta leading-relaxed break-words text-muted"
       data-testid="error-hints"
     >
       <li v-for="(hint, index) in props.hints" :key="index">{{ hint }}</li>
     </ul>
     <p
       v-if="props.code || props.requestId"
-      class="font-mono text-[0.625rem] leading-relaxed break-all text-subtle"
+      class="font-mono text-micro leading-relaxed break-all text-subtle"
       data-testid="error-details"
     >
       <span v-if="props.code">Code {{ props.code }}</span>

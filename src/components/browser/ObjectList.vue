@@ -222,7 +222,7 @@ defineExpose({ scrollToRow });
       data-testid="truncation-banner"
     >
       <AlertTriangle class="size-3.5 shrink-0" />
-      <p class="min-w-0 flex-1 text-[0.6875rem] leading-relaxed">{{ truncationMessage }}</p>
+      <p class="min-w-0 flex-1 text-meta leading-relaxed">{{ truncationMessage }}</p>
       <AppButton
         variant="ghost"
         size="sm"
@@ -244,7 +244,7 @@ defineExpose({ scrollToRow });
     </div>
 
     <div
-      class="grid shrink-0 items-center gap-1.5 border-b border-line px-3.5 text-[0.6875rem] tracking-wide text-subtle uppercase"
+      class="grid shrink-0 items-center gap-1.5 border-b border-line px-3.5 text-meta tracking-wide text-subtle uppercase"
       :style="{ gridTemplateColumns: gridTemplate }"
       data-testid="table-head"
     >
@@ -268,7 +268,7 @@ defineExpose({ scrollToRow });
         ].filter((column) => column.shown)"
         :key="column.key"
         type="button"
-        class="flex items-center gap-1 text-[0.6875rem] tracking-wide uppercase transition-colors hover:text-content"
+        class="flex items-center gap-1 text-meta tracking-wide uppercase transition-colors hover:text-content"
         :class="[
           objects.sortKey === column.key ? 'text-content' : '',
           column.key === 'size' || column.key === 'modified' || column.key === 'kind'

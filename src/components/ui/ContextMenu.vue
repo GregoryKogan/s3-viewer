@@ -141,7 +141,7 @@ function run(item: MenuItem) {
         >
           <component :is="item.icon" v-if="item.icon" class="size-3.5 shrink-0 opacity-70" />
           <span class="flex-1 truncate">{{ item.label }}</span>
-          <span v-if="item.shortcut" class="text-[0.625rem] text-subtle">{{ item.shortcut }}</span>
+          <span v-if="item.shortcut" class="text-micro text-subtle">{{ item.shortcut }}</span>
         </button>
       </template>
     </div>

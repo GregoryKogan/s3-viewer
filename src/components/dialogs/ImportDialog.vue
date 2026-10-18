@@ -103,12 +103,12 @@ async function run() {
 
 <template>
   <ModalFrame title="Import connections" :icon="FileUp" :size="props.size" @close="cancel">
-    <p class="text-[0.6875rem] leading-relaxed text-muted">
+    <p class="text-meta leading-relaxed text-muted">
       Paste a JSON credentials file or a boto3 client snippet. Secrets are encrypted locally and
       never leave this machine.
     </p>
 
-    <p v-if="fileName" class="flex items-center gap-1.5 text-[0.6875rem] text-muted">
+    <p v-if="fileName" class="flex items-center gap-1.5 text-meta text-muted">
       <FileUp class="size-3.5 shrink-0" />
       <span class="font-mono break-all">{{ fileName }}</span>
     </p>
@@ -130,8 +130,8 @@ async function run() {
     />
 
     <div class="flex flex-col gap-1.5" data-testid="import-preview">
-      <p class="text-[0.6875rem]" :class="problem ? 'text-danger' : 'text-subtle'">{{ hint }}</p>
-      <ul v-if="drafts.length" class="list-disc pl-4 text-[0.6875rem] leading-relaxed text-muted">
+      <p class="text-meta" :class="problem ? 'text-danger' : 'text-subtle'">{{ hint }}</p>
+      <ul v-if="drafts.length" class="list-disc pl-4 text-meta leading-relaxed text-muted">
         <li v-for="(draft, index) in drafts" :key="index">
           {{ draft.name }} → {{ draft.endpointUrl }} / {{ draft.bucket }}
         </li>

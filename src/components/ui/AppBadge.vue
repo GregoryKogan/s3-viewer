@@ -34,7 +34,7 @@ const DOTS: Record<Tone, string> = {
   <span
     :title="props.title"
     :class="[
-      'inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[0.625rem] leading-[1.5] whitespace-nowrap',
+      'inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-micro leading-[1.5] whitespace-nowrap',
       TONES[props.tone],
     ]"
   >

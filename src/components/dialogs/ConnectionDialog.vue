@@ -330,14 +330,14 @@ async function copySnippet() {
     :size="props.size"
     @close="cancel"
   >
-    <p class="text-[0.6875rem] leading-relaxed text-muted">
+    <p class="text-meta leading-relaxed text-muted">
       Copy the settings from a working Python client and they will behave the same here. The basic
       fields are what most connections need; open Advanced for signing, checksums, security and the
       boto3 equivalent.
     </p>
 
     <div class="flex flex-wrap items-center gap-1.5" data-testid="conn-presets">
-      <span class="text-[0.6875rem] text-subtle">Start from a preset:</span>
+      <span class="text-meta text-subtle">Start from a preset:</span>
       <AppButton size="sm" data-testid="conn-preset-aws" @click="applyPreset('aws')">
         AWS S3
       </AppButton>
@@ -347,7 +347,7 @@ async function copySnippet() {
     </div>
 
     <fieldset class="rounded-control border border-line p-3">
-      <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+      <legend class="px-1 text-meta font-semibold tracking-wider text-subtle uppercase">
         Connection
       </legend>
       <div class="grid grid-cols-2 gap-3">
@@ -483,7 +483,7 @@ async function copySnippet() {
           />
         </AppField>
 
-        <label v-if="props.connection?.sessionTokenPresent" class="col-span-full flex items-center gap-2 text-[0.6875rem] text-muted">
+        <label v-if="props.connection?.sessionTokenPresent" class="col-span-full flex items-center gap-2 text-meta text-muted">
           <input v-model="form.clearSessionToken" type="checkbox" :class="checkboxClass" />
           Clear the stored session token
         </label>
@@ -513,14 +513,14 @@ async function copySnippet() {
             { label: 'delete', ok: capabilities.canDelete },
           ]"
           :key="item.label"
-          class="inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[0.625rem]"
+          class="inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-micro"
           :class="item.ok ? 'border-ok/40 text-ok' : 'border-danger/40 text-danger'"
         >
           <component :is="item.ok ? Check : AlertTriangle" class="size-2.5" />
           {{ item.label }}
         </span>
       </div>
-      <ul v-if="capabilities.details?.length" class="list-disc pl-4 text-[0.6875rem] leading-relaxed text-muted">
+      <ul v-if="capabilities.details?.length" class="list-disc pl-4 text-meta leading-relaxed text-muted">
         <li v-for="(detail, index) in capabilities.details" :key="index">{{ detail }}</li>
       </ul>
     </div>
@@ -528,17 +528,17 @@ async function copySnippet() {
     <details class="group/advanced rounded-control border border-line" data-testid="conn-advanced">
       <summary class="flex cursor-pointer list-none items-baseline gap-2 px-3 py-2">
         <ChevronRight class="size-3 shrink-0 self-center text-subtle transition-transform group-open/advanced:rotate-90" />
-        <span class="text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+        <span class="text-meta font-semibold tracking-wider text-subtle uppercase">
           Advanced
         </span>
-        <span class="text-[0.6875rem] text-subtle">
+        <span class="text-meta text-subtle">
           Addressing, signing, checksums, security and the boto3 equivalent
         </span>
       </summary>
 
       <div class="flex flex-col gap-3 border-t border-line p-3">
         <fieldset class="rounded-control border border-line p-3">
-          <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+          <legend class="px-1 text-meta font-semibold tracking-wider text-subtle uppercase">
             S3 behaviour
           </legend>
           <div class="grid grid-cols-2 gap-3">
@@ -578,7 +578,7 @@ async function copySnippet() {
               </select>
             </AppField>
           </div>
-          <p class="mt-2 flex items-start gap-1.5 text-[0.6875rem] leading-relaxed text-subtle">
+          <p class="mt-2 flex items-start gap-1.5 text-meta leading-relaxed text-subtle">
             <AlertTriangle class="mt-0.5 size-3 shrink-0" />
             Some S3-compatible services reject the checksum headers the client adds. Switching both
             to “only when required” is the documented workaround.
@@ -586,7 +586,7 @@ async function copySnippet() {
         </fieldset>
 
         <fieldset class="rounded-control border border-line p-3">
-          <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+          <legend class="px-1 text-meta font-semibold tracking-wider text-subtle uppercase">
             Security
           </legend>
           <div class="flex flex-col gap-2">
@@ -594,7 +594,7 @@ async function copySnippet() {
               <input v-model="form.readOnlyMode" type="checkbox" :class="checkboxClass" class="mt-0.5" />
               <span>
                 Read-only mode
-                <span class="block text-[0.6875rem] text-muted">
+                <span class="block text-meta text-muted">
                   Block every write, upload, rename and delete on this connection.
                 </span>
               </span>
@@ -603,21 +603,21 @@ async function copySnippet() {
               <input v-model="form.confirmDelete" type="checkbox" :class="checkboxClass" class="mt-0.5" />
               <span>
                 Ask before deleting
-                <span class="block text-[0.6875rem] text-muted">Show a confirmation dialog for deletes.</span>
+                <span class="block text-meta text-muted">Show a confirmation dialog for deletes.</span>
               </span>
             </label>
             <label class="flex items-start gap-2 text-xs">
               <input v-model="form.confirmOverwrite" type="checkbox" :class="checkboxClass" class="mt-0.5" />
               <span>
                 Ask before overwriting
-                <span class="block text-[0.6875rem] text-muted">Warn when an upload would replace an object.</span>
+                <span class="block text-meta text-muted">Warn when an upload would replace an object.</span>
               </span>
             </label>
             <label class="flex items-start gap-2 text-xs">
               <input v-model="form.detectPermissions" type="checkbox" :class="checkboxClass" class="mt-0.5" />
               <span>
                 Detect permissions on connect
-                <span class="block text-[0.6875rem] text-muted">
+                <span class="block text-meta text-muted">
                   Probe read / write / delete rights with a temporary object that is removed immediately.
                 </span>
               </span>
@@ -626,7 +626,7 @@ async function copySnippet() {
         </fieldset>
 
         <details class="group/boto3 rounded-control border border-line">
-          <summary class="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-[0.6875rem] font-medium text-muted">
+          <summary class="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-meta font-medium text-muted">
             <ChevronRight class="size-3 shrink-0 text-subtle transition-transform group-open/boto3:rotate-90" />
             Show boto3 equivalent
           </summary>

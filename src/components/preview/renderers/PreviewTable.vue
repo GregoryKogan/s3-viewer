@@ -41,7 +41,7 @@ const note = computed(() => {
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
     <div class="scrollbar min-h-0 flex-1 overflow-auto p-3" data-testid="preview-table">
-      <table v-if="table.rows.length" class="tabular w-full border-collapse text-[0.6875rem]">
+      <table v-if="table.rows.length" class="tabular w-full border-collapse text-meta">
         <thead>
           <tr>
             <th
@@ -68,9 +68,9 @@ const note = computed(() => {
         </tbody>
       </table>
 
-      <p v-else class="text-[0.6875rem] text-muted">This file has no rows.</p>
+      <p v-else class="text-meta text-muted">This file has no rows.</p>
 
-      <p class="mt-2 text-[0.6875rem] text-subtle">{{ note }}</p>
+      <p class="mt-2 text-meta text-subtle">{{ note }}</p>
     </div>
   </div>
 </template>

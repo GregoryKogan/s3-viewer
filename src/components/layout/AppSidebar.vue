@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { ChevronsLeft, ChevronsRight, Ellipsis, HardDrive, Plus, Settings, Upload } from "@lucide/vue";
 import AppBadge from "@/components/ui/AppBadge.vue";
 import AppButton from "@/components/ui/AppButton.vue";
+import { shortcutLabel } from "@/lib/keyboard";
 import { useConnectionsStore, describeCapabilities } from "@/stores/connections";
 import { useUiStore } from "@/stores/ui";
 import type { Capabilities, Connection } from "@/types";
@@ -26,6 +27,28 @@ const collapsed = computed(() => ui.layout.collapsed);
  * there is no in-between state to get wrong.
  */
 const labelFits = computed(() => !collapsed.value && ui.layout.sidebar >= 176);
+
+/** Up to two letters: the first letter of the first two words, else the first two. */
+function initials(name: string): string {
+  const words = name.trim().split(/[\s._-]+/).filter(Boolean);
+  const letters =
+    words.length >= 2
+      ? [Array.from(words[0])[0], Array.from(words[1])[0]]
+      : Array.from(name.trim()).slice(0, 2);
+  return letters.filter(Boolean).join("").toUpperCase();
+}
+
+/**
+ * A stable hue per connection id. The id never changes, so the rail keeps its
+ * colours when connections are edited or reordered.
+ */
+function hueFor(id: string): number {
+  let hash = 0;
+  for (let index = 0; index < id.length; index += 1) {
+    hash = (hash * 31 + id.charCodeAt(index)) >>> 0;
+  }
+  return hash % 360;
+}
 
 function toneFor(connection: Connection): "ok" | "warn" | "danger" | "neutral" {
   const summary = describeCapabilities(connections.capabilitiesOf(connection.id));
@@ -77,8 +100,8 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
     :style="{ width: collapsed ? '4rem' : 'var(--sidebar-width)' }"
     data-testid="sidebar"
   >
-    <div class="drag-region h-[var(--titlebar-height)] shrink-0" aria-hidden="true" />
-
+    <!-- The window is decorated, so there is no title-bar strip to drag: the
+         header starts at the top and lines up with the address row. -->
     <!-- Collapsed: a single centred target. Expanded: the label and the one
          action that belongs at this level. The collapse control lives in the
          footer, so this row never has to squeeze three things into a narrow
@@ -87,7 +110,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
       <button
         type="button"
         class="grid size-9 place-items-center rounded-control bg-accent text-white transition-colors hover:bg-accent-hover"
-        title="Add a connection (⌘N)"
+        :title="`Add a connection (${shortcutLabel('N')})`"
         id="new-connection"
         data-testid="new-connection"
         @click="emit('create')"
@@ -96,10 +119,10 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
       </button>
     </div>
 
-    <div v-else class="flex min-h-9 shrink-0 items-center gap-1 px-2 pt-1 pb-1.5" :class="labelFits ? 'justify-between' : 'justify-center'">
+    <div v-else class="flex min-h-9 shrink-0 items-center gap-1 px-2 pt-2 pb-1.5" :class="labelFits ? 'justify-between' : 'justify-center'">
       <span
         v-if="labelFits"
-        class="sidebar-label min-w-0 truncate text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase"
+        class="sidebar-label min-w-0 truncate text-meta font-semibold tracking-wider text-subtle uppercase"
       >
         Connections
       </span>
@@ -131,7 +154,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
         </p>
         <button
           type="button"
-          class="flex items-center gap-1.5 rounded-control border border-line-strong px-2 py-1 text-[0.6875rem] text-content transition-colors hover:bg-hover"
+          class="flex items-center gap-1.5 rounded-control border border-line-strong px-2 py-1 text-meta text-content transition-colors hover:bg-hover"
           data-testid="import-empty"
           @click="emit('import')"
         >
@@ -153,11 +176,19 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
               : 'border-transparent text-muted hover:bg-hover hover:text-content'
           "
           :title="`${view.connection.name} — ${view.connection.bucket}/${view.connection.prefix}`"
+          :aria-label="view.connection.name"
+          :aria-current="view.connection.id === connections.activeId ? 'true' : undefined"
           :data-testid="`connection-${view.connection.id}`"
           @click="emit('open', view.connection)"
           @contextmenu.prevent="menuAtPointer(view.connection, $event)"
         >
-          <HardDrive class="size-4" />
+          <span
+            class="grid size-5 place-items-center rounded-full text-micro font-semibold text-white"
+            :style="{ backgroundColor: `hsl(${hueFor(view.connection.id)} 42% 32%)` }"
+            aria-hidden="true"
+          >
+            {{ initials(view.connection.name) }}
+          </span>
           <span
             class="absolute right-1 bottom-1 size-1.5 rounded-full"
             :class="{
@@ -207,7 +238,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
               />
             </div>
 
-            <div class="min-w-0 truncate text-[0.6875rem] leading-snug text-subtle" dir="ltr">
+            <div class="min-w-0 truncate text-meta leading-snug text-subtle" dir="ltr">
               {{ view.connection.bucket }}<span class="text-muted">/{{ view.connection.prefix }}</span>
             </div>
             <div class="flex flex-wrap gap-1">
@@ -246,7 +277,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
       <button
         v-if="connections.views.length || collapsed"
         type="button"
-        class="flex shrink-0 items-center gap-1.5 rounded-control text-[0.6875rem] text-muted transition-colors hover:bg-hover hover:text-content"
+        class="flex shrink-0 items-center gap-1.5 rounded-control text-meta text-muted transition-colors hover:bg-hover hover:text-content"
         :class="collapsed ? 'mx-auto size-9 justify-center' : 'mt-1 px-2 py-1.5'"
         title="Import connections from JSON"
         data-testid="import-connections"
@@ -278,7 +309,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
         <button
           type="button"
           class="grid size-9 place-items-center rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
-          title="Expand the sidebar (⌘B)"
+          :title="`Expand the sidebar (${shortcutLabel('B')})`"
           data-testid="collapse-sidebar"
           @click="ui.toggleSidebar()"
         >
@@ -300,7 +331,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
         <button
           type="button"
           class="grid size-7 shrink-0 place-items-center rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
-          title="Collapse the sidebar (⌘B)"
+          :title="`Collapse the sidebar (${shortcutLabel('B')})`"
           data-testid="collapse-sidebar"
           @click="ui.toggleSidebar()"
         >

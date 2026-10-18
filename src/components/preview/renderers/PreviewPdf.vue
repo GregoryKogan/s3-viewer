@@ -5,6 +5,7 @@ import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import AppButton from "@/components/ui/AppButton.vue";
 import Spinner from "@/components/ui/Spinner.vue";
+import { shortcutLabel } from "@/lib/keyboard";
 import type { PreviewData } from "@/types";
 
 const props = defineProps<{ data: PreviewData }>();
@@ -166,23 +167,23 @@ watch(() => props.data.streamUrl, () => void load());
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
     <div class="flex shrink-0 items-center gap-1 border-b border-line px-3 py-1.5">
-      <AppButton size="sm" variant="ghost" :icon="Minus" :disabled="!canZoomOut" title="Zoom out (⌘−)" data-testid="pdf-zoom-out" @click="zoomBy(-0.25)" />
+      <AppButton size="sm" variant="ghost" :icon="Minus" :disabled="!canZoomOut" :title="`Zoom out (${shortcutLabel('-')})`" data-testid="pdf-zoom-out" @click="zoomBy(-0.25)" />
       <button
         type="button"
-        class="tabular min-w-11 rounded-control px-1 py-0.5 text-[0.6875rem] text-muted transition-colors hover:bg-hover hover:text-content"
+        class="tabular min-w-11 rounded-control px-1 py-0.5 text-meta text-muted transition-colors hover:bg-hover hover:text-content"
         title="Reset to 100%"
         data-testid="pdf-zoom"
         @click="setZoom(1)"
       >
         {{ Math.round(zoom * 100) }}%
       </button>
-      <AppButton size="sm" variant="ghost" :icon="Plus" :disabled="!canZoomIn" title="Zoom in (⌘+)" data-testid="pdf-zoom-in" @click="zoomBy(0.25)" />
+      <AppButton size="sm" variant="ghost" :icon="Plus" :disabled="!canZoomIn" :title="`Zoom in (${shortcutLabel('+')})`" data-testid="pdf-zoom-in" @click="zoomBy(0.25)" />
       <AppButton size="sm" variant="ghost" :icon="Maximize2" title="Fit the panel width" @click="fit" />
 
       <span class="mx-1 h-4 w-px bg-line" />
 
       <AppButton size="sm" variant="ghost" :icon="ChevronLeft" :disabled="pageNumber <= 1" @click="goTo(pageNumber - 1)" />
-      <span class="tabular text-[0.6875rem] text-muted" data-testid="pdf-page">
+      <span class="tabular text-meta text-muted" data-testid="pdf-page">
         {{ pageNumber }} / {{ pageCount || "…" }}
       </span>
       <AppButton
@@ -203,7 +204,7 @@ watch(() => props.data.streamUrl, () => void load());
       @keydown="onKeydown"
     >
       <Spinner v-if="loading" label="Loading the document…" />
-      <p v-else-if="error" class="p-3 text-[0.6875rem] leading-relaxed text-danger">
+      <p v-else-if="error" class="p-3 text-meta leading-relaxed text-danger">
         This PDF could not be rendered: {{ error }}
       </p>
       <canvas

@@ -51,7 +51,7 @@ onBeforeUnmount(() => {
 
     <div
       v-if="updates.notes"
-      class="scrollbar max-h-40 overflow-y-auto rounded-control border border-line bg-inset p-3 text-[0.6875rem] leading-relaxed whitespace-pre-wrap text-muted"
+      class="scrollbar max-h-40 overflow-y-auto rounded-control border border-line bg-inset p-3 text-meta leading-relaxed whitespace-pre-wrap text-muted"
       data-testid="update-notes"
     >{{ updates.notes }}</div>
 
@@ -64,7 +64,7 @@ onBeforeUnmount(() => {
         />
         <div v-else class="h-full w-1/3 animate-pulse rounded-full bg-accent" />
       </div>
-      <p class="text-[0.6875rem] text-muted">
+      <p class="text-meta text-muted">
         {{
           updates.phase === "restarting"
             ? "The update is installed. Restarting into the new version…"
@@ -75,7 +75,7 @@ onBeforeUnmount(() => {
 
     <p
       v-if="updates.error"
-      class="rounded-control border border-danger/40 bg-danger-soft p-3 text-[0.6875rem] leading-relaxed text-danger"
+      class="rounded-control border border-danger/40 bg-danger-soft p-3 text-meta leading-relaxed text-danger"
       data-testid="update-error"
     >
       {{ updates.error }} The update did not complete.

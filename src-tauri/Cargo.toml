@@ -22,6 +22,8 @@ tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
+# Restores the window's size and position between launches (PLT-1).
+tauri-plugin-window-state = "2"
 
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }

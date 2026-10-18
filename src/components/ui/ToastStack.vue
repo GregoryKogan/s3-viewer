@@ -48,7 +48,7 @@ function onFocusOut(event: FocusEvent, id: number) {
               v-for="action in toast.actions"
               :key="action.label"
               type="button"
-              class="rounded-[4px] border border-line-strong px-1.5 py-0.5 text-[0.6875rem] transition-colors hover:bg-hover"
+              class="rounded-[4px] border border-line-strong px-1.5 py-0.5 text-meta transition-colors hover:bg-hover"
               @click="
                 action.run();
                 toasts.dismiss(toast.id);

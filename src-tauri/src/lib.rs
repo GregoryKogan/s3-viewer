@@ -29,6 +29,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        // Remembers the window geometry between launches (PLT-1).
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         // Self-updates. The webview drives the check (see `src/stores/updates.ts`),
         // this plugin downloads the signed bundle and swaps it on disk. Without the
         // signing key nothing is ever accepted, so the key lives only in CI secrets.

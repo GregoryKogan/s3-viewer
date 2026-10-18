@@ -46,13 +46,13 @@ function skipExisting() {
 
     <ul
       v-if="shown.length"
-      class="scrollbar max-h-44 list-disc space-y-1 overflow-y-auto rounded-control border border-line bg-inset p-3 pl-7 font-mono text-[0.6875rem] leading-relaxed text-muted"
+      class="scrollbar max-h-44 list-disc space-y-1 overflow-y-auto rounded-control border border-line bg-inset p-3 pl-7 font-mono text-meta leading-relaxed text-muted"
     >
       <li v-for="key in shown" :key="key" class="break-all">{{ key }}</li>
       <li v-if="more" class="list-none text-subtle">…and {{ more }} more</li>
     </ul>
 
-    <p class="text-[0.6875rem] leading-relaxed text-subtle">
+    <p class="text-meta leading-relaxed text-subtle">
       <strong class="font-medium text-content">Replace all</strong> overwrites the existing objects
       with the files you are uploading. <strong class="font-medium text-content">Skip existing</strong>
       leaves those objects untouched and uploads only the new keys.

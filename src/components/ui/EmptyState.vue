@@ -13,7 +13,7 @@ withDefaults(defineProps<{ title: string; description?: string; icon?: Component
       <component :is="icon" class="size-4" />
     </div>
     <p class="text-xs font-medium text-content">{{ title }}</p>
-    <p v-if="description" class="text-[0.6875rem] leading-relaxed text-muted">{{ description }}</p>
+    <p v-if="description" class="text-meta leading-relaxed text-muted">{{ description }}</p>
     <slot />
   </div>
 </template>

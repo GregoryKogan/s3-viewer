@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   AlertTriangle,
   Copy,
@@ -204,6 +204,41 @@ const previewWidth = computed({
 const previewExpanded = computed(
   () => ui.previewExpanded && Boolean(objects.previewKey) && !ui.previewHidden,
 );
+
+// --------------------------------------------------------------- window title
+
+/**
+ * PLT-2: the title bar, the Dock and the app switcher show where the user is.
+ * The prefix is relative to the connection's scope root, which is the part the
+ * user chose when saving the connection.
+ */
+const windowTitle = computed(() => {
+  const connection = connections.active;
+  if (!connection) return "S3 Viewer";
+  const root = connection.prefix ?? "";
+  const relative = objects.prefix.startsWith(root)
+    ? objects.prefix.slice(root.length)
+    : objects.prefix;
+  return `${connection.name} · ${connection.bucket}/${relative}`;
+});
+
+/** The native title is best-effort; `document.title` is the guaranteed part. */
+let titleRequest = 0;
+async function applyWindowTitle(title: string) {
+  document.title = title;
+  if (!("__TAURI__" in globalThis)) return;
+  const request = ++titleRequest;
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    // A slower import must not overwrite a title for a folder the user left.
+    if (request !== titleRequest) return;
+    await getCurrentWindow().setTitle(title);
+  } catch {
+    /* A missing capability or a plain browser still has document.title. */
+  }
+}
+
+watch(windowTitle, (title) => void applyWindowTitle(title), { immediate: true });
 
 // ---------------------------------------------------------------- connections
 
@@ -819,7 +854,7 @@ function onDrop(paths: string[]) {
       >
         <p
           v-if="ui.security?.configPath"
-          class="max-w-full text-[0.6875rem] leading-relaxed break-words text-muted"
+          class="max-w-full text-meta leading-relaxed break-words text-muted"
           data-testid="boot-config-path"
         >
           Config file: <span class="font-mono break-all">{{ ui.security.configPath }}</span>
@@ -917,9 +952,5 @@ function onDrop(paths: string[]) {
     <TransferPanel />
     <ToastStack />
     <DialogHost />
-
-    <div class="pointer-events-none fixed bottom-0 left-0 z-10 p-1">
-      <span class="sr-only">S3 Viewer</span>
-    </div>
   </div>
 </template>

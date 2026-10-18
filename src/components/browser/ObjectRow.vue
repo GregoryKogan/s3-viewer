@@ -97,7 +97,7 @@ const checkboxVisible = computed(
       {{ humanDate(props.entry.lastModified) }}
     </div>
 
-    <div v-if="props.showType" class="truncate text-right text-[0.6875rem] text-subtle">
+    <div v-if="props.showType" class="truncate text-right text-meta text-subtle">
       {{ kindLabel(props.entry.kind) }}
     </div>
   </div>

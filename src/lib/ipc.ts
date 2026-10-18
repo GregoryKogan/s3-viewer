@@ -217,12 +217,6 @@ export const api = {
   uploadConflicts: (input: UploadInput) => invoke<string[]>("upload_conflicts", { input }),
   /** Cancel a transfer that is still running; finished ids are an error. */
   cancelTransfer: (id: string) => invoke<void>("cancel_transfer", { id }),
-  saveTextObject: (input: {
-    connectionId: string;
-    key: string;
-    content: string;
-    contentType?: string | null;
-  }) => invoke<void>("save_text_object", { input }),
   transferProgress: () => invoke<ProgressView[]>("transfer_progress"),
   clearTransfers: () => invoke<number>("clear_transfers"),
 
