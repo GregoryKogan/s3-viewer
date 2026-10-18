@@ -10,11 +10,21 @@ import type { ProgressView } from "@/types";
 const progress = useProgressStore();
 const toasts = useToastsStore();
 
-/** Running transfers first, then the most recent few finished ones. */
+/**
+ * Running transfers first, then every failed/cancelled row, then the most recent
+ * few completed ones.
+ *
+ * A failure is not just a status: it is the Retry affordance. The four-row cap
+ * and the seven-second linger would otherwise hide early failures of a batch
+ * before its summary even arrives, so only `done` rows are limited.
+ */
 const visible = computed<ProgressView[]>(() => {
   const running = progress.items.filter((item) => item.state === "running");
-  const finished = progress.items.filter((item) => item.state !== "running").slice(-4);
-  return [...running, ...finished];
+  const retryable = progress.items.filter(
+    (item) => item.state === "failed" || item.state === "cancelled",
+  );
+  const done = progress.items.filter((item) => item.state === "done").slice(-4);
+  return [...running, ...retryable, ...done];
 });
 
 function percent(item: ProgressView): number | null {
@@ -49,7 +59,13 @@ async function cancel(item: ProgressView) {
 }
 
 async function retry(item: ProgressView) {
-  await progress.retry(item.id);
+  try {
+    await progress.retry(item.id);
+  } catch (error) {
+    // The retry command could not start a replacement: keep the row and its
+    // Retry button so the user can try again.
+    toasts.error((error as Error).message, "Cannot retry");
+  }
   await progress.poll();
 }
 
@@ -97,7 +113,7 @@ async function dismiss() {
       <p v-if="item.error" class="text-[0.625rem] leading-relaxed text-danger">{{ item.error }}</p>
 
       <div
-        v-if="item.state === 'running' || (item.state === 'failed' && progress.hasRetry(item.id))"
+        v-if="item.state === 'running' || ((item.state === 'failed' || item.state === 'cancelled') && progress.hasRetry(item.id))"
         class="flex items-center gap-1"
       >
         <AppButton
@@ -110,7 +126,7 @@ async function dismiss() {
           Cancel
         </AppButton>
         <AppButton
-          v-if="item.state === 'failed' && progress.hasRetry(item.id)"
+          v-if="(item.state === 'failed' || item.state === 'cancelled') && progress.hasRetry(item.id)"
           size="sm"
           variant="ghost"
           data-testid="transfer-retry"

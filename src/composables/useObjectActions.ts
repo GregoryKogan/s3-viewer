@@ -40,6 +40,18 @@ export interface UploadTarget {
   sessionConnectionId: string | null;
 }
 
+interface DeleteOutcome {
+  deleted: number;
+  summary: string;
+  id: string;
+}
+
+interface CopyOutcome {
+  copied: number;
+  summary: string;
+  id: string;
+}
+
 /** One copy/move request, kept whole so Retry can repeat it verbatim. */
 interface CopyRequest {
   sourceConnectionId: string;
@@ -121,17 +133,37 @@ export function useObjectActions(options: Options = {}) {
   // ---------------------------------------------------------------- downloads
 
   /**
+   * Start one download and register a retry for its progress id.
+   *
+   * The captured destination is part of the retry, so a cancelled download can
+   * be repeated without asking for a path again. The backend has created the
+   * progress entry before this resolves; a thrown error means nothing started.
+   */
+  async function startDownload(
+    connectionId: string,
+    key: string,
+    { destPath = null, destDir = null }: { destPath?: string | null; destDir?: string | null } = {},
+  ): Promise<TransferResult> {
+    const result = await api.downloadObject({ connectionId, key, destPath, destDir });
+    transfers.start();
+    transfers.registerRetry(result.id, async () => {
+      await startDownload(connectionId, key, { destPath, destDir });
+    });
+    return result;
+  }
+
+  /**
    * Download one key, honouring the "ask where to save" setting.
    *
    * By key rather than by entry because the preview panel has a key and no row
-   * (PRV-1). Every download path funnels through here so the policy cannot be
-   * bypassed by one of them. A batch passes `destDir`: it chose the folder once,
-   * so no per-file save dialog is allowed to appear (IO-2).
+   * (PRV-1). Every single-object path funnels through here so the policy cannot
+   * be bypassed by one of them. A multi-file batch passes `destDir`: it chose
+   * the folder once, so no per-file save dialog is allowed to appear (IO-2).
    */
   async function downloadKey(
     key: string,
     name?: string,
-    { destDir, quiet = false }: { destDir?: string; quiet?: boolean } = {},
+    { destDir }: { destDir?: string } = {},
   ): Promise<TransferResult | null> {
     const connection = connections.active;
     if (!connection || !sessionMatchesActive()) return null;
@@ -146,17 +178,9 @@ export function useObjectActions(options: Options = {}) {
     }
 
     try {
-      const result = await api.downloadObject({
-        connectionId: connection.id,
-        key,
-        destPath,
-        destDir: destDir ?? null,
-      });
-      transfers.start();
-      return result;
+      return await startDownload(connection.id, key, { destPath, destDir: destDir ?? null });
     } catch (error) {
-      // A batch reports one summary instead of one toast per file.
-      if (!quiet) toasts.error((error as Error).message, "Download failed");
+      toasts.error((error as Error).message, "Download failed");
       return null;
     }
   }
@@ -166,16 +190,24 @@ export function useObjectActions(options: Options = {}) {
   }
 
   async function downloadSelection() {
-    if (!sessionMatchesActive()) return;
+    const connection = connections.active;
+    if (!connection || !sessionMatchesActive()) return;
     const entries = targets.value.filter((entry) => !entry.isFolder);
     if (!entries.length) {
       toasts.warn("Folders cannot be downloaded directly. Open the folder and select its files.", "Nothing to download");
       return;
     }
 
+    // One file keeps the ordinary "ask where to save" policy: a directory
+    // dialog for a single object is a needless extra step (MINOR 1).
+    if (entries.length === 1) {
+      await downloadEntry(entries[0]);
+      return;
+    }
+
     // One directory dialog for the whole batch. Off means the stored download
     // folder, which the backend already applies when `destDir` is absent.
-    let destDir: string | undefined;
+    let destDir: string | null = null;
     if (ui.settings?.askDownloadLocation) {
       try {
         const picked = await pickFiles({ directory: true, multiple: false });
@@ -187,32 +219,37 @@ export function useObjectActions(options: Options = {}) {
       }
     }
 
-    const results = await Promise.all(
-      entries.map((entry) => downloadKey(entry.key, entry.name, { destDir, quiet: true })),
-    );
-    const started = results.filter((result): result is TransferResult => result !== null);
-    const failedToStart = entries.length - started.length;
-    if (failedToStart) {
-      toasts.error(
-        `${failedToStart} of ${entries.length} downloads could not start.`,
-        "Download failed",
-      );
+    // Start every file; a start failure is a batch failure, not one toast per
+    // file. The first error and the counts are reported once the started
+    // transfers have also settled (MINOR 2).
+    const started: TransferResult[] = [];
+    const startErrors: string[] = [];
+    for (const entry of entries) {
+      try {
+        started.push(await startDownload(connection.id, entry.key, { destDir }));
+      } catch (error) {
+        startErrors.push((error as Error).message);
+      }
     }
-    const ids = started.map((result) => result.id);
-    if (!ids.length) return;
 
-    // The batch settles in the background: one summary if something failed.
+    const total = entries.length;
+    if (!started.length) {
+      if (startErrors.length) {
+        toasts.error(
+          `${startErrors.length} of ${total} downloads failed. ${startErrors[0]}`,
+          "Download failed",
+        );
+      }
+      return;
+    }
+
     void (async () => {
-      const outcomes = await transfers.waitForAll(ids);
-      const failed = outcomes.filter((outcome) => outcome.state === "failed");
-      if (!failed.length) return;
-      const first = failed[0].error ?? "the download failed";
-      toasts.error(
-        failed.length === ids.length
-          ? first
-          : `${failed.length} of ${ids.length} downloads failed. ${first}`,
-        "Download failed",
-      );
+      const outcomes = await transfers.waitForAll(started.map((result) => result.id));
+      const lateFailed = outcomes.filter((outcome) => outcome.state === "failed");
+      const failed = startErrors.length + lateFailed.length;
+      if (!failed) return;
+      const first = startErrors[0] ?? lateFailed[0]?.error ?? "the download failed";
+      toasts.error(`${failed} of ${total} downloads failed. ${first}`, "Download failed");
     })();
   }
 
@@ -293,7 +330,11 @@ export function useObjectActions(options: Options = {}) {
         });
       } catch (error) {
         // Fail closed: an unknown conflict state must not silently overwrite.
-        toasts.error((error as Error).message, "Cannot check for existing files");
+        const message = (error as Error).message;
+        const actionable = /too many files to check/i.test(message)
+          ? `${message} Turn off “Ask before overwriting” for this connection to replace without the pre-check, or upload a smaller folder.`
+          : message;
+        toasts.error(actionable, "Cannot check for existing files");
         return;
       }
 
@@ -356,14 +397,17 @@ export function useObjectActions(options: Options = {}) {
       // Every transfer can be repeated on its own: a partially failed folder
       // upload is the case Retry exists for (IO-3).
       registerUploadRetries(plan, captured);
-
-      const outcomes = await transfers.waitForAll(plan.map((item) => item.id));
-      reportUploadBatch(plan, outcomes, captured);
-
-      if (sameTarget(captured)) await objects.reload();
+      await settleUpload(plan, captured);
     } catch (error) {
       toasts.error((error as Error).message, "Cannot upload");
     }
+  }
+
+  /** Wait for a started upload and report its one summary. */
+  async function settleUpload(plan: UploadPlanItem[], target: UploadTarget) {
+    const outcomes = await transfers.waitForAll(plan.map((item) => item.id));
+    reportUploadBatch(plan, outcomes, target);
+    if (sameTarget(target)) await objects.reload();
   }
 
   function registerUploadRetries(plan: UploadPlanItem[], target: UploadTarget) {
@@ -373,28 +417,25 @@ export function useObjectActions(options: Options = {}) {
     }
   }
 
-  /** Re-upload exactly one plan item to its key, replacing any existing key. */
+  /**
+   * Start a retry for exactly one plan item.
+   *
+   * This resolves once the replacement transfers exist and rejects when nothing
+   * could start, so the progress store only drops the old Retry affordance on a
+   * successful start. The wait and the summary continue in the background.
+   */
   async function retryUpload(item: UploadPlanItem, target: UploadTarget) {
-    try {
-      const prefix = uploadScopeFor(item.key, leafName(item.localPath));
-      const plan = await api.uploadFiles({
-        connectionId: target.connectionId,
-        prefix,
-        localPaths: [item.localPath],
-        overwrite: true,
-      });
-      transfers.start();
-      if (!plan.length) {
-        toasts.warn(`Nothing to upload for ${item.key}.`, "Retry skipped");
-        return;
-      }
-      registerUploadRetries(plan, target);
-      const outcomes = await transfers.waitForAll(plan.map((entry) => entry.id));
-      reportUploadBatch(plan, outcomes, target);
-      if (sameTarget(target)) await objects.reload();
-    } catch (error) {
-      toasts.error((error as Error).message, "Cannot retry the upload");
-    }
+    const prefix = uploadScopeFor(item.key, leafName(item.localPath));
+    const plan = await api.uploadFiles({
+      connectionId: target.connectionId,
+      prefix,
+      localPaths: [item.localPath],
+      overwrite: true,
+    });
+    transfers.start();
+    if (!plan.length) throw new Error(`Nothing to upload for ${item.key}.`);
+    registerUploadRetries(plan, target);
+    void settleUpload(plan, target);
   }
 
   /**
@@ -556,6 +597,43 @@ export function useObjectActions(options: Options = {}) {
     );
   }
 
+  /** Start the delete request and register its retry. Throws if nothing starts. */
+  async function startDelete(target: UploadTarget, keys: string[]): Promise<DeleteOutcome> {
+    const result = await api.deleteObjects({ connectionId: target.connectionId, keys });
+    transfers.start();
+    transfers.registerRetry(result.id, () => retryDelete(target, keys));
+    // The request was accepted, so the rows are going away; a failed start
+    // leaves the selection intact.
+    objects.clearSelection();
+    if (objects.previewKey && keys.some((key) => key === objects.previewKey)) {
+      objects.clearPreview();
+    }
+    return result;
+  }
+
+  /** Retry start: resolves once the replacement exists, settles in the background. */
+  async function retryDelete(target: UploadTarget, keys: string[]) {
+    const result = await startDelete(target, keys);
+    void settleDelete(result, target);
+  }
+
+  async function settleDelete(result: DeleteOutcome, target: UploadTarget) {
+    const [outcome] = await transfers.waitForAll([result.id]);
+    if (outcome.state === "failed") {
+      toasts.error(outcome.error ?? "the delete failed", "Delete failed");
+    } else if (outcome.state === "cancelled") {
+      toasts.warn(
+        "The delete was cancelled. Some objects may already be gone.",
+        "Delete cancelled",
+      );
+    } else {
+      toasts.ok(`${result.deleted} object(s) deleted.`);
+    }
+    // A partial delete leaves a half-old listing; refresh whenever the session
+    // still points at the folder that was acted on.
+    if (sameTarget(target)) await objects.reload();
+  }
+
   /**
    * Delete `keys` and wait for the single progress entry.
    *
@@ -564,29 +642,8 @@ export function useObjectActions(options: Options = {}) {
    */
   async function executeDelete(target: UploadTarget, keys: string[]) {
     try {
-      const result = await api.deleteObjects({ connectionId: target.connectionId, keys });
-      transfers.start();
-      transfers.registerRetry(result.id, () => executeDelete(target, keys));
-      // The request was accepted, so the rows are going away; a failed start
-      // leaves the selection intact.
-      objects.clearSelection();
-      if (objects.previewKey && keys.some((key) => key === objects.previewKey)) {
-        objects.clearPreview();
-      }
-      // A copy of the keys is deleted, but the screen may have moved on; the
-      // listing is only refreshed when it still shows the same folder.
-      const [outcome] = await transfers.waitForAll([result.id]);
-      if (outcome.state === "failed") {
-        toasts.error(outcome.error ?? "the delete failed", "Delete failed");
-      } else if (outcome.state === "cancelled") {
-        toasts.warn(
-          "The delete was cancelled. Some objects may already be gone.",
-          "Delete cancelled",
-        );
-      } else {
-        toasts.ok(`${result.deleted} object(s) deleted.`);
-      }
-      if (sameTarget(target)) await objects.reload();
+      const result = await startDelete(target, keys);
+      await settleDelete(result, target);
     } catch (error) {
       toasts.error((error as Error).message, "Cannot delete");
     }
@@ -626,28 +683,45 @@ export function useObjectActions(options: Options = {}) {
     );
   }
 
+  /** Start one copy/move request and register its retry. */
+  async function startCopy(request: CopyRequest, target: UploadTarget): Promise<CopyOutcome> {
+    const outcome = await api.copyObjects(request);
+    transfers.start();
+    transfers.registerRetry(outcome.id, () => retryCopy(request, target));
+    return outcome;
+  }
+
+  /** Retry start: resolves once the replacement exists, settles in the background. */
+  async function retryCopy(request: CopyRequest, target: UploadTarget) {
+    const outcome = await startCopy(request, target);
+    void settleCopy(outcome, request, target);
+  }
+
+  async function settleCopy(outcome: CopyOutcome, request: CopyRequest, target: UploadTarget) {
+    const [settled] = await transfers.waitForAll([outcome.id]);
+    if (settled.state === "failed") {
+      toasts.error(settled.error ?? "the operation failed", request.moveObjects ? "Move failed" : "Copy failed");
+    } else if (settled.state === "cancelled") {
+      toasts.warn(
+        `The ${request.moveObjects ? "move" : "copy"} was cancelled. Some objects may already have ${request.moveObjects ? "moved" : "been copied"}.`,
+        request.moveObjects ? "Move cancelled" : "Copy cancelled",
+      );
+    } else {
+      toasts.ok(
+        `${outcome.copied} object(s).`,
+        request.moveObjects ? "Moved" : "Copied",
+      );
+    }
+    // A failed or cancelled move can still have moved some keys; refresh on
+    // every terminal outcome so the listing is never half-stale (MINOR 5).
+    if (sameTarget(target)) await objects.reload();
+  }
+
   /** Run one copy/move request and wait for its single progress entry. */
   async function executeCopy(request: CopyRequest, target: UploadTarget) {
-    const title = request.moveObjects ? "Move failed" : "Copy failed";
     try {
-      const outcome = await api.copyObjects(request);
-      transfers.start();
-      transfers.registerRetry(outcome.id, () => executeCopy(request, target));
-      const [settled] = await transfers.waitForAll([outcome.id]);
-      if (settled.state === "failed") {
-        toasts.error(settled.error ?? "the operation failed", title);
-      } else if (settled.state === "cancelled") {
-        toasts.warn(
-          `The ${request.moveObjects ? "move" : "copy"} was cancelled. Some objects may already have ${request.moveObjects ? "moved" : "been copied"}.`,
-          request.moveObjects ? "Move cancelled" : "Copy cancelled",
-        );
-      } else {
-        toasts.ok(
-          `${outcome.copied} object(s).`,
-          request.moveObjects ? "Moved" : "Copied",
-        );
-        if (sameTarget(target)) await objects.reload();
-      }
+      const outcome = await startCopy(request, target);
+      await settleCopy(outcome, request, target);
     } catch (error) {
       toasts.error((error as Error).message, request.moveObjects ? "Cannot move" : "Cannot copy");
     }

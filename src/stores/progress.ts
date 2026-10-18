@@ -38,41 +38,78 @@ export const useProgressStore = defineStore("transfers", () => {
   const watched = new Set<string>();
   const settled = new Map<string, ProgressView>();
 
+  /**
+   * Ids whose failed/cancelled row was already retried.
+   *
+   * Failed and cancelled rows are kept until Clear or Retry (they carry the only
+   * recovery affordance), so a successful retry must also suppress the old row
+   * from the next snapshot instead of letting it pop back.
+   */
+  const suppressed = new Set<string>();
+
   const running = computed(() => items.value.filter((item) => item.state === "running"));
 
-  async function poll() {
+  /** Resolve an id that vanished from both the list and the cache. */
+  function clearedOutcome(id: string): ProgressView {
+    return {
+      id,
+      label: "cleared",
+      done: 0,
+      // Not success: a row that was cleared before its settle was observed is
+      // terminal but unknown, so batch summaries must not report it as done.
+      state: "cancelled",
+      error: "the transfer was cleared before it settled",
+    };
+  }
+
+  /** Refresh the list; returns false when the backend could not be asked. */
+  async function poll(): Promise<boolean> {
     let snapshot: ProgressView[];
     try {
       snapshot = await api.transferProgress();
     } catch {
-      return; // keep the previous snapshot
+      return false; // keep the previous snapshot
     }
 
     const now = Date.now();
     for (const item of snapshot) {
       if (item.state === "running") {
         finishedAt.delete(item.id);
-      } else {
-        if (!finishedAt.has(item.id)) finishedAt.set(item.id, now);
-        // Keep one copy for a waiter, even if the row is about to leave the
-        // local list (Clear, linger).
-        if (watched.has(item.id)) settled.set(item.id, item);
+        continue;
       }
+      if (item.state === "done") {
+        if (!finishedAt.has(item.id)) finishedAt.set(item.id, now);
+        // A completed transfer no longer needs its retry callback; keeping it
+        // would grow the map for the life of the session.
+        if (retries.value.has(item.id)) retries.value.delete(item.id);
+      }
+      // Keep one copy for a waiter, even if the row is about to leave the local
+      // list (Clear, linger).
+      if (watched.has(item.id)) settled.set(item.id, item);
     }
 
     items.value = snapshot
       .filter((item) => {
+        if (suppressed.has(item.id)) return false;
         if (item.state === "running") return true;
+        // A failure or cancellation stays until the user clears or retries it
+        // (IO-3): the seven-second linger would otherwise remove Retry before a
+        // batch summary even appears.
+        if (item.state !== "done") return true;
         const at = finishedAt.get(item.id);
         return at === undefined || now - at < LINGER_MS;
       })
       .map((item) => item);
 
-    // Forget ids the backend no longer reports, so the map cannot grow.
+    // Forget ids the backend no longer reports, so the maps cannot grow.
     const live = new Set(snapshot.map((item) => item.id));
     for (const id of [...finishedAt.keys()]) {
       if (!live.has(id)) finishedAt.delete(id);
     }
+    for (const id of [...suppressed]) {
+      if (!live.has(id)) suppressed.delete(id);
+    }
+    return true;
   }
 
   function start() {
@@ -87,6 +124,13 @@ export const useProgressStore = defineStore("transfers", () => {
   }
 
   async function clear() {
+    // A waiter may be between polls when the user clears: snapshot every
+    // watched row the local list still considers terminal *before* the backend
+    // prunes it, or the id would disappear from both sides.
+    for (const item of items.value) {
+      if (item.state !== "running" && watched.has(item.id)) settled.set(item.id, item);
+    }
+
     // The backend can only forget finished entries; the local list must do the
     // same and keep running transfers visible (their cancel buttons live there).
     await api.clearTransfers().catch(() => {});
@@ -101,6 +145,8 @@ export const useProgressStore = defineStore("transfers", () => {
     for (const id of [...retries.value.keys()]) {
       if (!runningIds.has(id)) retries.value.delete(id);
     }
+    // Keep `suppressed`: a retried row must stay hidden even if the backend
+    // prune failed. The next poll drops ids the backend no longer reports.
   }
 
   /** Wait for one queued transfer to settle. */
@@ -109,11 +155,14 @@ export const useProgressStore = defineStore("transfers", () => {
     watched.add(id);
     try {
       for (;;) {
-        await poll();
+        const fresh = await poll();
         const item = items.value.find((entry) => entry.id === id);
         if (item && item.state !== "running") return item;
         const cached = settled.get(id);
         if (cached) return cached;
+        // A successful poll that no longer reports the id means it was pruned
+        // after Clear. Resolve instead of waiting for a row that cannot return.
+        if (fresh && !item) return clearedOutcome(id);
         if (Date.now() > deadline) {
           return { id, label: "", done: 0, state: "failed", error: "timed out waiting for the transfer" };
         }
@@ -139,13 +188,23 @@ export const useProgressStore = defineStore("transfers", () => {
     for (const id of ids) watched.add(id);
     try {
       while (remaining.size > 0) {
-        await poll();
+        const fresh = await poll();
         // One index per snapshot, so a large batch does not fan out into a
         // `find` per id per tick.
         const current = new Map(items.value.map((item) => [item.id, item]));
         for (const id of [...remaining]) {
           const item = current.get(id) ?? settled.get(id);
-          if (!item || item.state === "running") continue;
+          if (!item) {
+            // The backend answered and the id is gone, or the local list was
+            // cleared after the transfer settled. Either way it is terminal and
+            // must not keep the batch pending; only a failed poll is ignored.
+            if (fresh) {
+              results.set(id, clearedOutcome(id));
+              remaining.delete(id);
+            }
+            continue;
+          }
+          if (item.state === "running") continue;
           results.set(id, item);
           remaining.delete(id);
         }
@@ -168,20 +227,19 @@ export const useProgressStore = defineStore("transfers", () => {
   const hasRetry = (id: string) => retries.value.has(id);
 
   /**
-   * Repeat a failed transfer.
+   * Repeat a failed or cancelled transfer.
    *
-   * The old row is dropped from the local list immediately (its settled time is
-   * moved past the linger window), so the retry's own progress entry is the one
-   * the user sees. `poll` cannot bring the old row back while the backend still
-   * reports it.
+   * The callback resolves once a replacement transfer has started and rejects if
+   * it could not start. The old row and its callback are only dropped after a
+   * successful start, so a failed Retry command leaves the affordance in place.
    */
   async function retry(id: string) {
     const run = retries.value.get(id);
     if (!run) return;
-    retries.value.delete(id);
-    finishedAt.set(id, Date.now() - LINGER_MS);
-    items.value = items.value.filter((item) => item.id !== id);
     await run();
+    retries.value.delete(id);
+    suppressed.add(id);
+    items.value = items.value.filter((item) => item.id !== id);
   }
 
   return {

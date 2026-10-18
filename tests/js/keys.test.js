@@ -39,6 +39,15 @@ test("uploadScopeFor strips exactly the planned suffix from the key", () => {
   assert.equal(uploadScopeFor("root/sub/dir/", "dir/"), "root/sub/");
 });
 
+test("uploadScopeFor keeps unicode names and a leading-slash prefix", () => {
+  assert.equal(uploadScopeFor("root/sub/файл.txt", "файл.txt"), "root/sub/");
+  assert.equal(uploadScopeFor("root/sub/папка/", "папка"), "root/sub/");
+  // Some buckets keep keys that start with a literal slash; a retry must not
+  // double it.
+  assert.equal(uploadScopeFor("/a.txt", "a.txt"), "/");
+  assert.equal(uploadScopeFor("/root/файл.txt", "файл.txt"), "/root/");
+});
+
 test("uploadScopeFor falls back to the key's parent prefix", () => {
   assert.equal(uploadScopeFor("data", "a.txt"), "");
   assert.equal(uploadScopeFor("root/other.txt", "a.txt"), "root/");
