@@ -5,6 +5,7 @@ import ModalFrame from "@/components/ui/ModalFrame.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppField from "@/components/ui/AppField.vue";
 import { inputClass, textareaClass } from "@/components/ui/controls";
+import type { ModalSize } from "@/components/ui/types";
 import { joinKey, validateKey } from "@/lib/keys";
 
 export interface CreateFileResult {
@@ -14,6 +15,7 @@ export interface CreateFileResult {
 
 const props = defineProps<{
   dialogId?: number;
+  size?: ModalSize;
   prefix: string;
   resolve: (result: CreateFileResult | null) => void;
 }>();
@@ -57,7 +59,7 @@ function submit() {
 </script>
 
 <template>
-  <ModalFrame title="New file" :icon="FilePlus" @close="cancel">
+  <ModalFrame title="New file" :icon="FilePlus" :size="props.size" @close="cancel">
     <AppField
       label="File name"
       :error="error"
@@ -70,6 +72,7 @@ function submit() {
         type="text"
         placeholder="config.yaml"
         autocomplete="off"
+        autofocus
         data-testid="new-file-name"
         @input="error = null"
         @keydown.enter.prevent="submit"

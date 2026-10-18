@@ -10,12 +10,22 @@ const TONES: Record<Toast["level"], string> = {
   warn: "border-l-warn",
   error: "border-l-danger",
 };
+
+/** Moving focus between two controls inside one toast is not a leave. */
+function onFocusOut(event: FocusEvent, id: number) {
+  const next = event.relatedTarget;
+  const current = event.currentTarget as HTMLElement | null;
+  if (next instanceof Node && current?.contains(next)) return;
+  toasts.resume(id);
+}
 </script>
 
 <template>
   <Teleport to="body">
     <div
       class="pointer-events-none fixed bottom-4 left-1/2 z-[80] flex w-max max-w-[min(40rem,80vw)] -translate-x-1/2 flex-col gap-2"
+      aria-live="polite"
+      aria-atomic="false"
       data-testid="toasts"
     >
       <div
@@ -23,7 +33,12 @@ const TONES: Record<Toast["level"], string> = {
         :key="toast.id"
         class="pointer-events-auto flex items-start gap-2.5 rounded-panel border border-line-strong border-l-2 bg-elevated px-3 py-2 shadow-xl shadow-black/35"
         :class="TONES[toast.level]"
+        :role="toast.level === 'error' ? 'alert' : 'status'"
         :data-testid="`toast-${toast.level}`"
+        @mouseenter="toasts.pause(toast.id)"
+        @mouseleave="toasts.resume(toast.id)"
+        @focusin="toasts.pause(toast.id)"
+        @focusout="onFocusOut($event, toast.id)"
       >
         <div class="flex min-w-0 flex-col gap-0.5">
           <p v-if="toast.title" class="text-xs font-semibold text-content">{{ toast.title }}</p>

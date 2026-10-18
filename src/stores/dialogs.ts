@@ -1,15 +1,28 @@
 import { defineStore } from "pinia";
 import { markRaw, ref, type Component } from "vue";
-/** Kept local so the store does not import from a component module. */
-type DialogSize = "normal" | "narrow" | "wide";
+/** Shared geometry, from a plain module so the store imports no component. */
+import type { ModalSize } from "@/components/ui/types";
+
+export type DialogSize = ModalSize;
 
 export interface DialogRequest<P = Record<string, unknown>> {
   id: number;
   component: Component;
   props: P;
   size: DialogSize;
+  /**
+   * Whether a backdrop click may close it. Forms with unsaved input opt out so
+   * a stray click cannot throw the work away (DLG-2); Escape and the close
+   * button still work.
+   */
+  dismissible: boolean;
   /** Reject-free cancellation: everything resolves, `null` means "cancelled". */
   onCancel?: () => void;
+}
+
+export interface DialogOpenOptions {
+  /** Defaults to `true`; pass `false` for a form the user is filling in. */
+  dismissible?: boolean;
 }
 
 /**
@@ -28,6 +41,7 @@ export const useDialogsStore = defineStore("dialogs", () => {
     component: Component,
     buildProps: (settle: (value: R) => void) => Record<string, unknown>,
     size: DialogSize = "normal",
+    options: DialogOpenOptions = {},
   ): Promise<R> {
     const id = nextId++;
     return new Promise<R>((resolve) => {
@@ -40,6 +54,7 @@ export const useDialogsStore = defineStore("dialogs", () => {
           component: markRaw(component),
           props: { ...buildProps(settle), dialogId: id },
           size,
+          dismissible: options.dismissible ?? true,
         },
       ];
     });

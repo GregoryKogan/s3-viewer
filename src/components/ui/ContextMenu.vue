@@ -17,12 +17,33 @@ const emit = defineEmits<{ close: [] }>();
 
 const root = ref<HTMLElement | null>(null);
 const position = ref({ left: props.x, top: props.y });
+/** Where focus goes when the menu closes. */
+let previousFocus: HTMLElement | null = null;
+
+/** Menu items that can actually run; disabled entries are skipped by the arrows. */
+function enabledItems(): HTMLElement[] {
+  if (!root.value) return [];
+  return Array.from(root.value.querySelectorAll<HTMLElement>('[role="menuitem"]')).filter(
+    (item) => item.getAttribute("aria-disabled") !== "true",
+  );
+}
+
+function focusItem(index: number) {
+  const items = enabledItems();
+  if (!items.length) {
+    root.value?.focus();
+    return;
+  }
+  const bounded = ((index % items.length) + items.length) % items.length;
+  items[bounded].focus();
+}
 
 /**
  * Keep the menu inside the window: a right-click near the bottom or right edge
  * would otherwise open a menu the user cannot reach.
  */
 onMounted(() => {
+  previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const element = root.value;
   if (!element) return;
   const { width, height } = element.getBoundingClientRect();
@@ -31,7 +52,8 @@ onMounted(() => {
     left: Math.max(margin, Math.min(props.x, globalThis.innerWidth - width - margin)),
     top: Math.max(margin, Math.min(props.y, globalThis.innerHeight - height - margin)),
   };
-  element.focus();
+  // The first runnable item, not the menu itself: arrow keys start from there.
+  focusItem(0);
   window.addEventListener("pointerdown", onPointerDown, true);
   window.addEventListener("keydown", onKeydown, true);
 });
@@ -39,6 +61,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener("pointerdown", onPointerDown, true);
   window.removeEventListener("keydown", onKeydown, true);
+  // An action may have removed the row that opened the menu; never focus a
+  // detached node.
+  if (previousFocus?.isConnected) previousFocus.focus();
 });
 
 function onPointerDown(event: PointerEvent) {
@@ -46,9 +71,32 @@ function onPointerDown(event: PointerEvent) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape") {
+  const items = enabledItems();
+  const current = items.indexOf(document.activeElement as HTMLElement);
+  const move = (index: number) => {
     event.preventDefault();
-    emit("close");
+    focusItem(index);
+  };
+
+  switch (event.key) {
+    case "Escape":
+      event.preventDefault();
+      emit("close");
+      return;
+    case "ArrowDown":
+      move(current === -1 ? 0 : current + 1);
+      return;
+    case "ArrowUp":
+      move(current === -1 ? items.length - 1 : current - 1);
+      return;
+    case "Home":
+      move(0);
+      return;
+    case "End":
+      move(items.length - 1);
+      return;
+    default:
+      return;
   }
 }
 
@@ -70,6 +118,7 @@ function run(item: MenuItem) {
       class="fixed z-[60] min-w-52 overflow-hidden rounded-panel border border-line-strong bg-elevated py-1 shadow-2xl shadow-black/50"
       :style="style"
       role="menu"
+      aria-label="Context menu"
       tabindex="-1"
       data-testid="context-menu"
     >
@@ -87,6 +136,7 @@ function run(item: MenuItem) {
                 : 'text-content hover:bg-hover',
           ]"
           :disabled="item.disabled"
+          :aria-disabled="item.disabled ? 'true' : undefined"
           @click="run(item)"
         >
           <component :is="item.icon" v-if="item.icon" class="size-3.5 shrink-0 opacity-70" />

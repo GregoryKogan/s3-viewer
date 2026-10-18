@@ -4,8 +4,18 @@ import { useDialogsStore } from "@/stores/dialogs";
 
 const dialogs = useDialogsStore();
 
+function topDialog() {
+  return dialogs.stack[dialogs.stack.length - 1];
+}
+
+/** A backdrop click only closes a dialog that opted into it (DLG-2). */
+function onBackdropClick() {
+  const top = topDialog();
+  if (top?.dismissible) dialogs.cancel(top.id);
+}
+
 function onKeydown(event: KeyboardEvent) {
-  const top = dialogs.stack[dialogs.stack.length - 1];
+  const top = topDialog();
   if (!top) return;
   if (event.key === "Escape") {
     event.preventDefault();
@@ -24,7 +34,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true));
       v-if="dialogs.stack.length"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6"
       data-testid="modal-root"
-      @click.self="dialogs.cancel(dialogs.stack[dialogs.stack.length - 1].id)"
+      @click.self="onBackdropClick"
     >
       <component
         :is="dialog.component"
@@ -33,6 +43,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true));
         :key="dialog.id"
         v-bind="dialog.props"
         :dialog-id="dialog.id"
+        :size="dialog.size"
       />
     </div>
   </Teleport>

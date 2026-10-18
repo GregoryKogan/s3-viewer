@@ -53,7 +53,7 @@ async function cancel(item: ProgressView) {
   } catch (error) {
     // The transfer may have finished between the click and the command; say so
     // instead of leaving a button that appears to do nothing.
-    toasts.error((error as Error).message, "Cannot cancel");
+    toasts.apiError(error, "Cannot cancel");
   }
   await progress.poll();
 }
@@ -64,7 +64,7 @@ async function retry(item: ProgressView) {
   } catch (error) {
     // The retry command could not start a replacement: keep the row and its
     // Retry button so the user can try again.
-    toasts.error((error as Error).message, "Cannot retry");
+    toasts.apiError(error, "Cannot retry");
   }
   await progress.poll();
 }

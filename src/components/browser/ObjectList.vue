@@ -6,6 +6,7 @@ import { useObjectsStore } from "@/stores/objects";
 import { useObjectActions } from "@/composables/useObjectActions";
 import ObjectRow from "./ObjectRow.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
+import ErrorNotice from "@/components/ui/ErrorNotice.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import Spinner from "@/components/ui/Spinner.vue";
 import type { ObjectEntry } from "@/types";
@@ -303,17 +304,17 @@ defineExpose({ scrollToRow });
         <EmptyState
           v-else-if="objects.error"
           title="This folder could not be listed"
-          :description="objects.error"
           data-testid="empty-folder"
         >
-          <AppButton
-            size="sm"
-            :icon="RefreshCw"
-            data-testid="retry-listing"
-            @click="objects.reload()"
-          >
-            Try again
-          </AppButton>
+          <ErrorNotice
+            :message="objects.error"
+            :hints="objects.errorDetail?.hints"
+            :code="objects.errorDetail?.code"
+            :request-id="objects.errorDetail?.requestId"
+            :retry="objects.reload"
+            retry-testid="retry-listing"
+            class="w-full text-left"
+          />
         </EmptyState>
         <EmptyState
           v-else-if="objects.filter"

@@ -3,11 +3,13 @@ import { computed } from "vue";
 import { AlertTriangle } from "@lucide/vue";
 import ModalFrame from "@/components/ui/ModalFrame.vue";
 import AppButton from "@/components/ui/AppButton.vue";
+import type { ModalSize } from "@/components/ui/types";
 
 export type UploadConflictChoice = "replace" | "skip";
 
 const props = defineProps<{
   dialogId?: number;
+  size?: ModalSize;
   conflicts: string[];
   prefix: string;
   resolve: (choice: UploadConflictChoice | null) => void;
@@ -31,7 +33,12 @@ function skipExisting() {
 </script>
 
 <template>
-  <ModalFrame title="Some files already exist" size="narrow" :icon="AlertTriangle" @close="cancel">
+  <ModalFrame
+    title="Some files already exist"
+    :size="props.size"
+    :icon="AlertTriangle"
+    @close="cancel"
+  >
     <p class="text-xs leading-relaxed text-content">
       {{ count }} file{{ count === 1 ? "" : "s" }} already exist{{ count === 1 ? "s" : "" }} in
       <span class="font-mono text-content">{{ props.prefix || "/" }}</span>.
@@ -53,7 +60,7 @@ function skipExisting() {
 
     <template #footer>
       <AppButton data-testid="upload-conflict-cancel" @click="cancel">Cancel</AppButton>
-      <AppButton data-testid="upload-conflict-skip" @click="skipExisting">Skip existing</AppButton>
+      <AppButton data-testid="upload-conflict-skip" autofocus @click="skipExisting">Skip existing</AppButton>
       <AppButton variant="danger" data-testid="upload-conflict-replace" @click="replaceAll">
         Replace all
       </AppButton>

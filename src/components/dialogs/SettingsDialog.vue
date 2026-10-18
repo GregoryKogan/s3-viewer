@@ -6,6 +6,7 @@ import AppButton from "@/components/ui/AppButton.vue";
 import AppField from "@/components/ui/AppField.vue";
 import AppBadge from "@/components/ui/AppBadge.vue";
 import { inputClass, selectClass, checkboxClass } from "@/components/ui/controls";
+import type { ModalSize } from "@/components/ui/types";
 import { pickFiles } from "@/lib/ipc";
 import { humanSize } from "@/lib/format";
 import { IS_MAC, keyLabel, shortcutLabel } from "@/lib/keyboard";
@@ -18,6 +19,7 @@ import type { AppSettings, Theme } from "@/types";
 
 const props = defineProps<{
   dialogId?: number;
+  size?: ModalSize;
   resolve: (saved: AppSettings | null) => void;
 }>();
 
@@ -98,7 +100,7 @@ async function checkForUpdates() {
     }
     toasts.ok("This is the newest version.");
   } catch (error) {
-    toasts.error((error as Error).message, "Cannot check for updates");
+    toasts.apiError(error, "Cannot check for updates");
   } finally {
     checking.value = false;
   }
@@ -139,7 +141,7 @@ async function save() {
     toasts.ok("Settings saved.");
     props.resolve(saved);
   } catch (error) {
-    toasts.error((error as Error).message, "Cannot save settings");
+    toasts.apiError(error, "Cannot save settings");
   } finally {
     saving.value = false;
   }
@@ -147,7 +149,7 @@ async function save() {
 </script>
 
 <template>
-  <ModalFrame title="Settings" :icon="SlidersHorizontal" @close="cancel">
+  <ModalFrame title="Settings" :icon="SlidersHorizontal" :size="props.size" @close="cancel">
     <fieldset class="rounded-control border border-line p-3">
       <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
         Preview
@@ -157,7 +159,7 @@ async function save() {
         hint="Larger files are listed and downloadable, but the preview panel explains the limit instead of loading them."
         wide
       >
-        <select v-model.number="form.previewMaxBytes" :class="selectClass" data-testid="settings-preview-limit">
+        <select v-model.number="form.previewMaxBytes" :class="selectClass" data-testid="settings-preview-limit" autofocus>
           <option v-for="preset in previewOptions" :key="preset.value" :value="preset.value">
             {{ preset.label }}
           </option>

@@ -2,10 +2,12 @@
 import { AlertTriangle } from "@lucide/vue";
 import ModalFrame from "./ModalFrame.vue";
 import AppButton from "./AppButton.vue";
+import type { ModalSize } from "./types";
 
 const props = withDefaults(
   defineProps<{
     dialogId?: number;
+    size?: ModalSize;
     title: string;
     message: string;
     details?: string[];
@@ -24,13 +26,24 @@ function cancel() {
 function confirm() {
   props.resolve(true);
 }
+
+/**
+ * Enter confirms, except for a dangerous action: there the default must be the
+ * safe choice, so Cancel takes focus and Enter falls through to it (DLG-5).
+ */
+function onEnter(event: KeyboardEvent) {
+  if (props.danger) return;
+  event.preventDefault();
+  confirm();
+}
 </script>
 
 <template>
   <ModalFrame
     :title="props.title"
-    size="narrow"
+    :size="props.size"
     :icon="props.danger ? AlertTriangle : undefined"
+    @keydown.enter="onEnter"
     @close="cancel"
   >
     <p class="text-xs leading-relaxed text-content" data-testid="confirm-message">
@@ -46,10 +59,13 @@ function confirm() {
     </ul>
 
     <template #footer>
-      <AppButton data-testid="confirm-cancel" @click="cancel">{{ props.cancelLabel }}</AppButton>
+      <AppButton data-testid="confirm-cancel" :autofocus="props.danger" @click="cancel">
+        {{ props.cancelLabel }}
+      </AppButton>
       <AppButton
         :variant="props.danger ? 'danger' : 'primary'"
         data-testid="confirm-ok"
+        :autofocus="!props.danger"
         @click="confirm"
       >
         {{ props.confirmLabel }}

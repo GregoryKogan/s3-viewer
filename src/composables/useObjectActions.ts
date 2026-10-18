@@ -189,7 +189,7 @@ export function useObjectActions(options: Options = {}) {
     try {
       return await startDownload(connection.id, key, { destPath, destDir: destDir ?? null });
     } catch (error) {
-      toasts.error((error as Error).message, "Download failed");
+      toasts.apiError(error, "Download failed");
       return null;
     }
   }
@@ -223,7 +223,7 @@ export function useObjectActions(options: Options = {}) {
         if (!picked.length) return;
         destDir = picked[0];
       } catch (error) {
-        toasts.error((error as Error).message, "Cannot choose a download folder");
+        toasts.apiError(error, "Cannot choose a download folder");
         return;
       }
     }
@@ -294,7 +294,7 @@ export function useObjectActions(options: Options = {}) {
       if (!paths.length) return;
       await queueUploads(paths);
     } catch (error) {
-      toasts.error((error as Error).message, "Cannot upload");
+      toasts.apiError(error, "Cannot upload");
     }
   }
 
@@ -307,7 +307,7 @@ export function useObjectActions(options: Options = {}) {
       if (!paths.length) return;
       await queueUploads(paths);
     } catch (error) {
-      toasts.error((error as Error).message, "Cannot upload");
+      toasts.apiError(error, "Cannot upload");
     }
   }
 
@@ -343,7 +343,7 @@ export function useObjectActions(options: Options = {}) {
         const actionable = /too many files to check/i.test(message)
           ? `${message} Turn off “Ask before overwriting” for this connection to replace without the pre-check, or upload a smaller folder.`
           : message;
-        toasts.error(actionable, "Cannot check for existing files");
+        toasts.apiError(error, "Cannot check for existing files", actionable);
         return;
       }
 
@@ -352,6 +352,7 @@ export function useObjectActions(options: Options = {}) {
           UploadConflictDialog,
           (settle) => ({ conflicts, prefix: target.prefix, resolve: settle }),
           "narrow",
+          { dismissible: false },
         );
         if (!choice) return;
         policy =
@@ -408,7 +409,7 @@ export function useObjectActions(options: Options = {}) {
       registerUploadRetries(plan, captured);
       await settleUpload(plan, captured);
     } catch (error) {
-      toasts.error((error as Error).message, "Cannot upload");
+      toasts.apiError(error, "Cannot upload");
     }
   }
 
@@ -519,7 +520,7 @@ export function useObjectActions(options: Options = {}) {
       toasts.ok(`Folder “${name}” created.`);
       await objects.reload();
     } catch (error) {
-      toasts.error((error as Error).message, "Cannot create folder");
+      toasts.apiError(error, "Cannot create folder");
     }
   }
 
@@ -533,6 +534,7 @@ export function useObjectActions(options: Options = {}) {
       CreateFileDialog,
       (settle) => ({ prefix: target.prefix, resolve: settle }),
       "normal",
+      { dismissible: false },
     );
     if (!result) return;
 
@@ -550,7 +552,7 @@ export function useObjectActions(options: Options = {}) {
       await objects.reload();
       selectAndPreview(key);
     } catch (error) {
-      toasts.error((error as Error).message, "Cannot create file");
+      toasts.apiError(error, "Cannot create file");
     }
   }
 
@@ -654,7 +656,7 @@ export function useObjectActions(options: Options = {}) {
       const result = await startDelete(target, keys);
       await settleDelete(result, target);
     } catch (error) {
-      toasts.error((error as Error).message, "Cannot delete");
+      toasts.apiError(error, "Cannot delete");
     }
   }
 
@@ -677,6 +679,8 @@ export function useObjectActions(options: Options = {}) {
         entries,
         resolve: settle,
       }),
+      "normal",
+      { dismissible: false },
     );
     if (!result) return;
 
@@ -732,7 +736,7 @@ export function useObjectActions(options: Options = {}) {
       const outcome = await startCopy(request, target);
       await settleCopy(outcome, request, target);
     } catch (error) {
-      toasts.error((error as Error).message, request.moveObjects ? "Cannot move" : "Cannot copy");
+      toasts.apiError(error, request.moveObjects ? "Cannot move" : "Cannot copy");
     }
   }
 

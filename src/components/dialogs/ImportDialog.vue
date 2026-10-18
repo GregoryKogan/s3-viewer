@@ -4,6 +4,7 @@ import { FileUp, Upload } from "@lucide/vue";
 import ModalFrame from "@/components/ui/ModalFrame.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import { textareaClass } from "@/components/ui/controls";
+import type { ModalSize } from "@/components/ui/types";
 import { parseImport } from "@/lib/importParse";
 import { api, pickFiles } from "@/lib/ipc";
 import { useConnectionsStore } from "@/stores/connections";
@@ -12,6 +13,7 @@ import type { ConnectionDraft } from "@/types";
 
 const props = defineProps<{
   dialogId?: number;
+  size?: ModalSize;
   resolve: (imported: string[]) => void;
 }>();
 
@@ -57,7 +59,7 @@ async function readFile() {
       toasts.warn("That file parsed, but no connection was found in it.", "Nothing to import");
     }
   } catch (error) {
-    toasts.error((error as Error).message, "Cannot read the file");
+    toasts.apiError(error, "Cannot read the file");
   }
 }
 
@@ -93,7 +95,7 @@ async function run() {
 </script>
 
 <template>
-  <ModalFrame title="Import connections" :icon="FileUp" @close="cancel">
+  <ModalFrame title="Import connections" :icon="FileUp" :size="props.size" @close="cancel">
     <p class="text-[0.6875rem] leading-relaxed text-muted">
       Paste a JSON credentials file or a boto3 client snippet. Secrets are encrypted locally and
       never leave this machine.
@@ -108,6 +110,7 @@ async function run() {
       v-model="text"
       :class="[textareaClass, 'h-56']"
       spellcheck="false"
+      autofocus
       placeholder='{
   "my-bucket": {
     "access_key": "…",

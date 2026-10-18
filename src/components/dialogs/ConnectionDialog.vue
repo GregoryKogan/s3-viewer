@@ -15,10 +15,12 @@ import {
 import ModalFrame from "@/components/ui/ModalFrame.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppField from "@/components/ui/AppField.vue";
+import ErrorNotice from "@/components/ui/ErrorNotice.vue";
 import { inputClass, selectClass, codeClass, checkboxClass } from "@/components/ui/controls";
+import type { ModalSize } from "@/components/ui/types";
 import { boto3Snippet } from "@/lib/boto3";
 import { highlight } from "@/lib/highlight";
-import { copyText } from "@/lib/ipc";
+import { ApiError, copyText } from "@/lib/ipc";
 import { useConnectionsStore } from "@/stores/connections";
 import { useToastsStore } from "@/stores/toasts";
 import { useDialogs } from "@/composables/useDialogs";
@@ -29,11 +31,13 @@ import type {
   ChecksumValidation,
   Connection,
   ConnectionDraft,
+  ListErrorDetail,
   SignatureVersion,
 } from "@/types";
 
 const props = defineProps<{
   dialogId?: number;
+  size?: ModalSize;
   connection?: Connection | null;
   resolve: (saved: Connection | null) => void;
 }>();
@@ -129,6 +133,8 @@ const probing = ref(false);
 const saving = ref(false);
 const capabilities = ref<Capabilities | null>(null);
 const probeError = ref<string | null>(null);
+/** Hints/code/request id for a failed probe: the fix-it text matters most here. */
+const probeDetail = ref<ListErrorDetail | null>(null);
 const errors = ref<Record<string, string>>({});
 
 const snippet = computed(() =>
@@ -219,6 +225,7 @@ async function testConnection() {
   }
   probing.value = true;
   probeError.value = null;
+  probeDetail.value = null;
   try {
     const outcome = await connections.probeDraft(
       {
@@ -238,7 +245,11 @@ async function testConnection() {
     capabilities.value = outcome.capabilities;
   } catch (error) {
     capabilities.value = null;
-    probeError.value = (error as Error).message;
+    probeError.value = error instanceof Error ? error.message : String(error);
+    probeDetail.value =
+      error instanceof ApiError
+        ? { hints: error.hints, code: error.code, requestId: error.requestId }
+        : null;
   } finally {
     probing.value = false;
   }
@@ -252,7 +263,7 @@ async function save() {
     toasts.ok(`Connection “${saved.name}” saved.`, "Saved");
     props.resolve(saved);
   } catch (error) {
-    toasts.error((error as Error).message, "Cannot save");
+    toasts.apiError(error, "Cannot save");
   } finally {
     saving.value = false;
   }
@@ -265,7 +276,7 @@ async function duplicate() {
     toasts.ok("Connection duplicated.");
     props.resolve(null);
   } catch (error) {
-    toasts.error((error as Error).message, "Cannot duplicate");
+    toasts.apiError(error, "Cannot duplicate");
   }
 }
 
@@ -287,7 +298,7 @@ async function removeConnection() {
     toasts.ok(`Connection “${connection.name}” removed.`);
     props.resolve(null);
   } catch (error) {
-    toasts.error((error as Error).message, "Cannot remove connection");
+    toasts.apiError(error, "Cannot remove connection");
   }
 }
 
@@ -316,7 +327,7 @@ async function copySnippet() {
   <ModalFrame
     :title="isEdit ? `Edit “${props.connection?.name}”` : 'New connection'"
     :icon="isEdit ? Server : Sparkles"
-    size="wide"
+    :size="props.size"
     @close="cancel"
   >
     <p class="text-[0.6875rem] leading-relaxed text-muted">
@@ -352,6 +363,7 @@ async function copySnippet() {
             :class="inputClass"
             data-testid="conn-name"
             placeholder="Dev bucket"
+            autofocus
             :aria-invalid="errors.name ? 'true' : undefined"
           />
         </AppField>
@@ -478,8 +490,17 @@ async function copySnippet() {
       </div>
     </fieldset>
 
-    <div v-if="probeError" class="rounded-control border border-danger/40 bg-danger-soft px-2.5 py-1.5 text-[0.6875rem] leading-relaxed text-danger">
-      {{ probeError }}
+    <div
+      v-if="probeError"
+      class="rounded-control border border-danger/40 bg-danger-soft px-2.5 py-1.5"
+      data-testid="probe-error"
+    >
+      <ErrorNotice
+        :message="probeError"
+        :hints="probeDetail?.hints"
+        :code="probeDetail?.code"
+        :request-id="probeDetail?.requestId"
+      />
     </div>
 
     <div v-if="capabilities" class="flex flex-col gap-1.5" data-testid="probe-output">

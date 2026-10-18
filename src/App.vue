@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
+  AlertTriangle,
   Copy,
   Download,
   Eye,
@@ -27,6 +28,7 @@ import ToastStack from "@/components/ui/ToastStack.vue";
 import DialogHost from "@/components/ui/DialogHost.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 import ContextMenu, { type MenuItem } from "@/components/ui/ContextMenu.vue";
 import ConnectionDialog from "@/components/dialogs/ConnectionDialog.vue";
 import SettingsDialog from "@/components/dialogs/SettingsDialog.vue";
@@ -63,6 +65,16 @@ const actions = useObjectActions();
 const confirmations = useDialogs();
 
 const objectList = ref<InstanceType<typeof ObjectList> | null>(null);
+
+/**
+ * Launch state. `loading` paints a neutral shell with a spinner instead of the
+ * empty "No connection selected" card, which used to flash before the first
+ * connection opened (DLG-7). `error` is a real failure of the start-up reads
+ * with a way to try again instead of a dead, unexplained window (DLG-8).
+ */
+type BootState = "loading" | "ready" | "error";
+const bootState = ref<BootState>("loading");
+const bootError = ref<string | null>(null);
 
 /** Right-click menu: either on one row, or on the empty background. */
 const menu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null);
@@ -207,6 +219,7 @@ async function createConnection() {
     ConnectionDialog,
     (settle) => ({ connection: null, resolve: settle }),
     "wide",
+    { dismissible: false },
   );
   if (!saved) return;
   await connections.load();
@@ -219,6 +232,7 @@ async function editConnection(connection: Connection | undefined = connections.a
     ConnectionDialog,
     (settle) => ({ connection, resolve: settle }),
     "wide",
+    { dismissible: false },
   );
   if (!saved) return;
   // `connections.save` already reloaded the list; probe again because the saved
@@ -272,7 +286,7 @@ async function duplicateConnection(connection: Connection) {
     const copy = await connections.duplicate(connection.id);
     toasts.ok(`Connection “${copy.name}” created.`);
   } catch (error) {
-    toasts.error((error as Error).message, "Cannot duplicate");
+    toasts.apiError(error, "Cannot duplicate");
   }
 }
 
@@ -300,7 +314,7 @@ async function removeConnection(connection: Connection) {
     await connections.remove(connection.id);
     toasts.ok(`Connection “${connection.name}” removed.`);
   } catch (error) {
-    toasts.error((error as Error).message, "Cannot remove connection");
+    toasts.apiError(error, "Cannot remove connection");
   }
 }
 
@@ -309,6 +323,7 @@ async function openSettings() {
     SettingsDialog,
     (settle) => ({ resolve: settle }),
     "normal",
+    { dismissible: false },
   );
   if (!saved) return;
   // Settings such as "show system objects" and the page size only take effect
@@ -322,6 +337,7 @@ async function openImport() {
     ImportDialog,
     (settle) => ({ resolve: settle }),
     "normal",
+    { dismissible: false },
   );
   if (!imported?.length) return;
   await connections.load();
@@ -566,28 +582,47 @@ async function onKeydown(event: KeyboardEvent) {
   }
 }
 
-// -------------------------------------------------------------------- listing
+// ------------------------------------------------------------------ start-up
 
-onMounted(async () => {
-  await ui.load();
-  await connections.load();
-  progress.start();
+/**
+ * One-time wiring. `Try again` re-runs `boot`, but listeners and the progress
+ * poller must exist exactly once.
+ */
+let globalsAttached = false;
+let ipcListeners: Promise<() => void>[] | null = null;
+let ipcListenersAttached = false;
+let updateCheckScheduled = false;
 
-  unsubscribers.push(
-    await listen<ListingPageEvent>("listing://page", (payload) => objects.onListingPage(payload)),
-    await listen<ListingDoneEvent>("listing://done", (payload) => objects.onListingDone(payload)),
-    await listen<ListingErrorEvent>("listing://error", (payload) => objects.onListingError(payload)),
-  );
+function onWindowResize() {
+  ui.clampLayoutToWindow();
+}
 
+function attachGlobals() {
+  if (globalsAttached) return;
+  globalsAttached = true;
   window.addEventListener("keydown", onKeydown);
-  window.addEventListener("resize", () => ui.clampLayoutToWindow());
+  window.addEventListener("resize", onWindowResize);
+  progress.start();
+}
 
-  // The first connection opens automatically, which is what a returning user
-  // expects: one click less before they can see their files.
-  const first = connections.all[0];
-  if (first) await openConnection(first);
+/**
+ * Start the backend subscriptions without awaiting them.
+ *
+ * They are created before the first `await` in `boot`, so a slow or failing
+ * settings read cannot leave the app running without its listing events
+ * (DLG-8). The promises are shared, so a retry cannot subscribe twice.
+ */
+function ensureIpcListeners(): Promise<() => void>[] {
+  ipcListeners ??= [
+    listen<ListingPageEvent>("listing://page", (payload) => objects.onListingPage(payload)),
+    listen<ListingDoneEvent>("listing://done", (payload) => objects.onListingDone(payload)),
+    listen<ListingErrorEvent>("listing://error", (payload) => objects.onListingError(payload)),
+  ].map((registration) => registration.catch(() => () => {}));
+  return ipcListeners;
+}
 
-  // The e2e scenario drives the UI through this surface.
+/** The e2e scenario drives the UI through this surface. */
+function publishHarness() {
   const api = {
     // `state` mirrors what the harness reads: the visible rows, the selection and
     // the preview key. Getters keep it live without duplicating store state.
@@ -658,13 +693,51 @@ onMounted(async () => {
   (window as unknown as { __s3viewer: unknown }).__s3viewer = api;
   (window as unknown as { __s3viewerReady: boolean }).__s3viewerReady = true;
 
-  // Deliberately after the ready flag: the e2e harness should never race a
-  // network request, and in practice no release is newer than a local build.
-  window.setTimeout(() => void checkForUpdates(), 2500);
+  if (!updateCheckScheduled) {
+    updateCheckScheduled = true;
+    // Deliberately after the ready flag: the e2e harness should never race a
+    // network request, and in practice no release is newer than a local build.
+    window.setTimeout(() => void checkForUpdates(), 2500);
+  }
+}
+
+async function boot() {
+  bootState.value = "loading";
+  bootError.value = null;
+
+  // Everything that does not depend on IPC is live before the first await: a
+  // failed settings read must not cost the user the keyboard or the poller.
+  attachGlobals();
+  const listeners = ensureIpcListeners();
+
+  try {
+    await ui.load();
+    await connections.load();
+    if (!ipcListenersAttached) {
+      unsubscribers.push(...(await Promise.all(listeners)));
+      ipcListenersAttached = true;
+    }
+
+    // The first connection opens automatically, which is what a returning user
+    // expects: one click less before they can see their files.
+    const first = connections.all[0];
+    if (first) await openConnection(first);
+
+    bootState.value = "ready";
+    publishHarness();
+  } catch (error) {
+    bootError.value = error instanceof Error ? error.message : String(error);
+    bootState.value = "error";
+  }
+}
+
+onMounted(() => {
+  void boot();
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeydown);
+  window.removeEventListener("resize", onWindowResize);
   clearTypeAhead();
   for (const unsubscribe of unsubscribers) unsubscribe();
   progress.stop();
@@ -690,7 +763,29 @@ function onDrop(paths: string[]) {
 
 <template>
   <div class="flex h-full flex-col overflow-hidden bg-bg" data-testid="app">
-    <div class="flex min-h-0 flex-1">
+    <div
+      v-if="bootState === 'loading'"
+      class="flex flex-1 items-center justify-center bg-bg"
+      data-testid="boot-loading"
+    >
+      <Spinner label="Starting S3 Viewer…" />
+    </div>
+
+    <div
+      v-else-if="bootState === 'error'"
+      class="flex flex-1 items-center justify-center p-8"
+      data-testid="boot-error"
+    >
+      <EmptyState
+        :icon="AlertTriangle"
+        title="Could not start"
+        :description="bootError ?? 'The app could not finish starting.'"
+      >
+        <AppButton variant="primary" data-testid="boot-retry" @click="boot">Try again</AppButton>
+      </EmptyState>
+    </div>
+
+    <div v-else class="flex min-h-0 flex-1">
       <div class="relative flex min-h-0 shrink-0" :style="{ width: ui.layout.collapsed ? undefined : `${sidebarWidth}px` }">
         <AppSidebar
           @create="createConnection"

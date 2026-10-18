@@ -5,6 +5,7 @@ import ModalFrame from "@/components/ui/ModalFrame.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppField from "@/components/ui/AppField.vue";
 import { inputClass, selectClass } from "@/components/ui/controls";
+import type { ModalSize } from "@/components/ui/types";
 import { asFolderPrefix, joinKey } from "@/lib/keys";
 import type { Connection, ObjectEntry } from "@/types";
 
@@ -15,6 +16,7 @@ export interface CopyMoveResult {
 
 const props = defineProps<{
   dialogId?: number;
+  size?: ModalSize;
   moveObjects: boolean;
   connections: Connection[];
   sourceConnectionId: string;
@@ -84,6 +86,7 @@ function confirm() {
   <ModalFrame
     :title="props.moveObjects ? 'Move objects' : 'Copy objects'"
     :icon="props.moveObjects ? ArrowRightLeft : Copy"
+    :size="props.size"
     @close="cancel"
   >
     <p class="text-xs leading-relaxed text-muted">
@@ -112,6 +115,7 @@ function confirm() {
           type="text"
           placeholder="target/prefix/"
           data-testid="transfer-prefix"
+          autofocus
         />
       </AppField>
     </div>

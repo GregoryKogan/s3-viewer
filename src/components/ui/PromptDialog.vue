@@ -4,10 +4,12 @@ import ModalFrame from "./ModalFrame.vue";
 import AppButton from "./AppButton.vue";
 import AppField from "./AppField.vue";
 import { inputClass } from "./controls";
+import type { ModalSize } from "./types";
 
 const props = withDefaults(
   defineProps<{
     dialogId?: number;
+    size?: ModalSize;
     title: string;
     label: string;
     initial?: string;
@@ -49,7 +51,7 @@ function submit() {
 </script>
 
 <template>
-  <ModalFrame :title="props.title" size="narrow" @close="cancel">
+  <ModalFrame :title="props.title" :size="props.size" @close="cancel">
     <AppField :label="props.label" :hint="props.hint" :error="error">
       <input
         ref="input"
@@ -57,6 +59,7 @@ function submit() {
         :class="inputClass"
         type="text"
         :placeholder="props.placeholder"
+        autofocus
         data-testid="prompt-input"
         @keydown.enter.prevent="submit"
         @input="error = null"

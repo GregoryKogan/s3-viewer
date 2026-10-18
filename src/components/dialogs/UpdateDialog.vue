@@ -3,10 +3,12 @@ import { computed, onBeforeUnmount } from "vue";
 import { Download } from "@lucide/vue";
 import ModalFrame from "@/components/ui/ModalFrame.vue";
 import AppButton from "@/components/ui/AppButton.vue";
+import type { ModalSize } from "@/components/ui/types";
 import { useUpdatesStore } from "@/stores/updates";
 
 const props = defineProps<{
   dialogId?: number;
+  size?: ModalSize;
   resolve: (value: null) => void;
 }>();
 
@@ -41,7 +43,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <ModalFrame :title="title" :icon="Download" @close="close">
+  <ModalFrame :title="title" :icon="Download" :size="props.size" @close="close">
     <p class="text-xs leading-relaxed text-content">
       You are running {{ updates.runningVersion || "an older build" }}. The new version downloads as one
       archive, verifies its signature and replaces the app in place.
@@ -86,6 +88,7 @@ onBeforeUnmount(() => {
         :loading="installing"
         :disabled="updates.phase === 'restarting'"
         data-testid="update-install"
+        autofocus
         @click="install"
       >
         {{ primaryLabel }}

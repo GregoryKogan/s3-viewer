@@ -14,6 +14,7 @@ import {
 } from "@lucide/vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import Spinner from "@/components/ui/Spinner.vue";
+import ErrorNotice from "@/components/ui/ErrorNotice.vue";
 import { useObjectsStore } from "@/stores/objects";
 import { useConnectionsStore } from "@/stores/connections";
 import { useUiStore } from "@/stores/ui";
@@ -254,10 +255,15 @@ function onToggleView(view: "rendered" | "raw") {
       <div v-else-if="objects.previewError" class="p-4" data-testid="preview-unavailable">
         <div class="flex items-start gap-2">
           <ImageOff class="mt-0.5 size-4 shrink-0 text-danger" />
-          <div class="flex flex-col gap-1">
-            <p class="text-xs font-medium text-content">Preview unavailable</p>
-            <p class="text-[0.6875rem] leading-relaxed text-muted">{{ objects.previewError }}</p>
-          </div>
+          <ErrorNotice
+            class="min-w-0 flex-1"
+            title="Preview unavailable"
+            :message="objects.previewError"
+            :hints="objects.previewErrorDetail?.hints"
+            :code="objects.previewErrorDetail?.code"
+            :request-id="objects.previewErrorDetail?.requestId"
+            :retry="objects.refreshPreview"
+          />
         </div>
       </div>
 
