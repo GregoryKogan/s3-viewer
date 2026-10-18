@@ -205,6 +205,20 @@ The landing page lives in [`site/`](site/) and is published by
 `.github/workflows/site.yml`; see [`site/README.md`](site/README.md) for the
 one-time Pages setting.
 
+### Auto-updates
+
+Every launch asks GitHub Releases whether a newer version exists and, if it does,
+offers to download and install it. On macOS the `.app` is replaced in place; on
+Linux an AppImage updates itself, while a `.deb` install asks for the
+administrator password and installs through `pkexec`. Both then restart into the
+new version.
+
+Bundles are signed with a minisign key baked into the app, so a tampered or
+corrupted download is rejected instead of installed. The private key never lives
+in the repo: CI reads it from the `TAURI_SIGNING_PRIVATE_KEY` secret, and a release
+made without it fails on purpose. [`AGENTS.md`](AGENTS.md) spells out the whole
+contract, including the version bump every release needs.
+
 ## Building
 
 Requirements: Rust (stable), Node.js with pnpm, and the platform toolchain.
@@ -232,13 +246,43 @@ and notarisation to `src-tauri/tauri.conf.json`.
 Linux packages are built by `.github/workflows/release.yml` on `ubuntu-22.04`,
 which is the practical baseline for a `.deb` users can install.
 
+Local builds are unaffected by the updater: `createUpdaterArtifacts` is passed by
+CI rather than set in `tauri.conf.json`, precisely so that a build without a
+signing key still works.
+
+## Releasing
+
+A release is a tag push:
+
+```bash
+# 1. the same version in all three files
+#    src-tauri/tauri.conf.json, src-tauri/Cargo.toml, package.json
+git commit -am "chore(release): 0.2.0"
+git tag v0.2.0
+git push origin main v0.2.0
+```
+
+CI checks that the tag matches `tauri.conf.json`, builds both platforms, signs
+the `.app`, the AppImage and the `.deb`, writes `latest.json` and publishes the
+GitHub Release. Nothing else is needed — the app picks the release up on its next
+launch.
+
+The signing key is a repository secret: *Settings → Secrets and variables →
+Actions → `TAURI_SIGNING_PRIVATE_KEY`*, holding the single-line content of
+`~/.tauri/s3-viewer.key`. It is never committed, and losing it means no installed
+copy can be updated again.
+
+`latest.json` lists every platform with the signature of its bundle; the app
+fetches it through `releases/latest/download/latest.json`. Drafts and
+prereleases are invisible to the updater.
+
 ## Testing
 
 Three layers, all runnable locally:
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml     # 80 tests: crypto, store, S3, SigV2, previews
-pnpm test:js                                        # 17 tests: formatting, CSV parsing, boto3 snippet
+pnpm test:js                                        # 36 tests: formatting, CSV, boto3, versions, latest.json
 node e2e/run.mjs                                    # 33 checks against a real bucket
 ```
 

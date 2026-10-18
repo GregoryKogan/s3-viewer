@@ -1,6 +1,6 @@
 {
   "name": "s3-viewer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Minimal, fast S3 browser with rich in-app preview. macOS + Linux.",
   "license": "MIT",
@@ -34,6 +34,8 @@
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-clipboard-manager": "^2.5.0",
     "@tauri-apps/plugin-dialog": "^2.8.3",
+    "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-updater": "^2.14.0",
     "pdfjs-dist": "^6.4.299",
     "pinia": "^4.1.0",
     "vue": "^3.5.44"

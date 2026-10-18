@@ -34,6 +34,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The updater only compares version numbers, so a tag that disagrees with
+      # `tauri.conf.json` makes every installed copy offer the same update again
+      # on every launch. Fail here instead of shipping that.
+      - name: The tag must match the version in tauri.conf.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python3 -c 'import json;print(json.load(open("src-tauri/tauri.conf.json"))["version"])')"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match tauri.conf.json ($version)."
+            exit 1
+          fi
+
       - name: Install Linux dependencies
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -79,6 +93,10 @@ jobs:
       - name: Run the Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      # Includes the check that the three version files agree.
+      - name: Run the JS tests
+        run: pnpm test:js
+
       # An unset secret still arrives as an empty string, and Tauri treats "the
       # variable exists" as "sign with it" — which failed with an unhelpful
       # "the password must match the one used to export it". The variables are
@@ -110,28 +128,66 @@ jobs:
           echo "Signing and notarisation are configured."
 
       - name: Build the application
+        shell: bash
         env:
           # Stops the macOS bundler from asking Finder to arrange the disk image,
           # which needs Automation permission and times out on a build runner.
           CI: "true"
+          # Signing key for the updater bundles. Never committed, never needed
+          # locally: `createUpdaterArtifacts` is switched on only from here.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
+          set -euo pipefail
+          config='{"bundle":{"createUpdaterArtifacts":true}}'
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+              echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set, so the release would not be installable as an update."
+              exit 1
+            fi
+            echo "::warning::No signing key: building without updater artifacts."
+            config='{}'
+          fi
           args="--bundles ${{ matrix.bundles }}"
           if [ -n "${{ matrix.target }}" ]; then args="--target ${{ matrix.target }} $args"; fi
-          pnpm tauri build $args
+          pnpm tauri build $args --config "$config"
 
       # Asset names are fixed so that `releases/latest/download/<name>` — which is
-      # what the landing page links to — keeps working across versions.
+      # what the landing page links to and what `latest.json` points at — keeps
+      # working across versions. `.github/scripts/latest-json.mjs` expects these
+      # exact names.
       - name: Collect installers under stable names
         shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           mkdir -p release-assets
           base="src-tauri/target"
           if [ -n "${{ matrix.target }}" ]; then base="$base/${{ matrix.target }}"; fi
           base="$base/release/bundle"
-          find "$base" -type f -name '*.dmg' -exec cp {} release-assets/S3-Viewer.dmg \;
-          find "$base" -type f -name '*.AppImage' -exec cp {} release-assets/S3-Viewer.AppImage \;
-          find "$base" -type f -name '*.deb' -exec cp {} release-assets/S3-Viewer-amd64.deb \;
+
+          copy_first() {
+            if [ -d "$1" ]; then
+              find "$1" -type f -name "$2" -exec cp {} "$3" \;
+            fi
+          }
+
+          copy_first "$base/dmg" '*.dmg' release-assets/S3-Viewer.dmg
+          copy_first "$base/macos" '*.app.tar.gz' release-assets/S3-Viewer.app.tar.gz
+          copy_first "$base/macos" '*.app.tar.gz.sig' release-assets/S3-Viewer.app.tar.gz.sig
+          copy_first "$base/appimage" '*.AppImage' release-assets/S3-Viewer.AppImage
+          copy_first "$base/appimage" '*.AppImage.sig' release-assets/S3-Viewer.AppImage.sig
+          copy_first "$base/deb" '*.deb' release-assets/S3-Viewer-amd64.deb
+
+          # The bundler signs the .app and the AppImage but not the .deb, while
+          # the updater verifies whatever it installs. Sign it here with the same
+          # key so Debian installs update too (through `pkexec dpkg -i`).
+          if [ -f release-assets/S3-Viewer-amd64.deb ]; then
+            pnpm tauri signer sign release-assets/S3-Viewer-amd64.deb
+          fi
+
           ls -lh release-assets
           if [ -z "$(ls -A release-assets)" ]; then
             echo "no installer was produced" >&2
@@ -151,6 +207,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
@@ -161,6 +219,22 @@ jobs:
         run: |
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
+
+      # The running app fetches this file through
+      # `releases/latest/download/latest.json`; it lists every platform with the
+      # signature of its bundle. Assets are uploaded in the same step as the
+      # release below, so `latest` and the manifest always agree.
+      - name: Write the updater manifest
+        env:
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          node .github/scripts/latest-json.mjs \
+            --assets release-assets \
+            --version "${TAG#v}" \
+            --base-url "https://github.com/${GH_REPO}/releases/latest/download" \
+            --out release-assets/latest.json
+          cat release-assets/latest.json
 
       - name: Create the release
         env:

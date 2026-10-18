@@ -28,6 +28,7 @@ import EmptyState from "@/components/ui/EmptyState.vue";
 import ContextMenu, { type MenuItem } from "@/components/ui/ContextMenu.vue";
 import ConnectionDialog from "@/components/dialogs/ConnectionDialog.vue";
 import SettingsDialog from "@/components/dialogs/SettingsDialog.vue";
+import UpdateDialog from "@/components/dialogs/UpdateDialog.vue";
 import ImportDialog from "@/components/dialogs/ImportDialog.vue";
 import { copyText, listen } from "@/lib/ipc";
 import { clamp } from "@/lib/format";
@@ -37,6 +38,7 @@ import { useProgressStore } from "@/stores/progress";
 import { useUiStore } from "@/stores/ui";
 import { useDialogsStore } from "@/stores/dialogs";
 import { useToastsStore } from "@/stores/toasts";
+import { useUpdatesStore } from "@/stores/updates";
 import { useObjectActions } from "@/composables/useObjectActions";
 import type {
   Connection,
@@ -51,6 +53,7 @@ const objects = useObjectsStore();
 const progress = useProgressStore();
 const dialogs = useDialogsStore();
 const toasts = useToastsStore();
+const updates = useUpdatesStore();
 const actions = useObjectActions();
 
 const objectList = ref<InstanceType<typeof ObjectList> | null>(null);
@@ -177,6 +180,38 @@ async function openImport() {
   await connections.load();
   const first = connections.all[0];
   if (first) await openConnection(first);
+}
+
+// -------------------------------------------------------------------- updates
+
+async function openUpdateDialog() {
+  await dialogs.open<null>(UpdateDialog, (settle) => ({ resolve: settle }), "normal");
+}
+
+/**
+ * Runs once per launch, a few seconds in so it does not compete with the first
+ * paint and the first listing. Silence is the right outcome for every case that
+ * is not "a newer version exists": no update, no network, GitHub unreachable.
+ */
+async function checkForUpdates() {
+  try {
+    if (!(await updates.check())) return;
+  } catch {
+    return;
+  }
+
+  if (dialogs.isOpen()) {
+    // Never stack the prompt on top of something the user is already doing.
+    toasts.push({
+      level: "info",
+      title: "Update available",
+      message: `S3 Viewer ${updates.nextVersion ?? "a new version"} is ready to install.`,
+      actions: [{ label: "Install…", run: () => void openUpdateDialog() }],
+    });
+    return;
+  }
+
+  await openUpdateDialog();
 }
 
 // ------------------------------------------------------------------- keyboard
@@ -361,6 +396,10 @@ onMounted(async () => {
   });
   (window as unknown as { __s3viewer: unknown }).__s3viewer = api;
   (window as unknown as { __s3viewerReady: boolean }).__s3viewerReady = true;
+
+  // Deliberately after the ready flag: the e2e harness should never race a
+  // network request, and in practice no release is newer than a local build.
+  window.setTimeout(() => void checkForUpdates(), 2500);
 });
 
 onBeforeUnmount(() => {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { FolderOpen, ShieldCheck, SlidersHorizontal } from "@lucide/vue";
+import { FolderOpen, RefreshCw, ShieldCheck, SlidersHorizontal } from "@lucide/vue";
 import ModalFrame from "@/components/ui/ModalFrame.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppField from "@/components/ui/AppField.vue";
@@ -9,7 +9,10 @@ import { inputClass, selectClass, checkboxClass } from "@/components/ui/controls
 import { pickFiles } from "@/lib/ipc";
 import { humanSize } from "@/lib/format";
 import { useUiStore } from "@/stores/ui";
+import { useDialogsStore } from "@/stores/dialogs";
 import { useToastsStore } from "@/stores/toasts";
+import { useUpdatesStore } from "@/stores/updates";
+import UpdateDialog from "@/components/dialogs/UpdateDialog.vue";
 import type { AppSettings, Theme } from "@/types";
 
 const props = defineProps<{
@@ -18,7 +21,9 @@ const props = defineProps<{
 }>();
 
 const ui = useUiStore();
+const dialogs = useDialogsStore();
 const toasts = useToastsStore();
+const updates = useUpdatesStore();
 
 const PRESETS = [
   { value: 2 * 1024 * 1024, label: "2 MB — safest" },
@@ -48,7 +53,26 @@ const previewOptions = computed(() => {
 
 onMounted(() => {
   void ui.loadSecurity();
+  void updates.loadVersion();
 });
+
+const checking = ref(false);
+
+/** Manual check: unlike the launch check, every outcome here is worth a message. */
+async function checkForUpdates() {
+  checking.value = true;
+  try {
+    if (await updates.check()) {
+      await dialogs.open<null>(UpdateDialog, (settle) => ({ resolve: settle }), "normal");
+      return;
+    }
+    toasts.ok("This is the newest version.");
+  } catch (error) {
+    toasts.error((error as Error).message, "Cannot check for updates");
+  } finally {
+    checking.value = false;
+  }
+}
 
 async function chooseDownloadDir() {
   try {
@@ -176,6 +200,31 @@ async function save() {
           </span>
         </span>
       </label>
+    </fieldset>
+
+    <fieldset class="rounded-control border border-line p-3" data-testid="settings-application">
+      <legend class="px-1 text-[0.6875rem] font-semibold tracking-wider text-subtle uppercase">
+        Application
+      </legend>
+      <div class="flex items-center gap-3">
+        <div class="min-w-0 flex-1">
+          <p class="text-xs font-medium text-content">
+            S3 Viewer {{ updates.runningVersion || "—" }}
+          </p>
+          <p class="mt-0.5 text-[0.6875rem] leading-relaxed text-muted">
+            Updates are checked at launch. A newer version downloads as one signed archive,
+            installs in place and restarts the app.
+          </p>
+        </div>
+        <AppButton
+          :icon="RefreshCw"
+          :loading="checking"
+          data-testid="settings-check-updates"
+          @click="checkForUpdates"
+        >
+          Check now
+        </AppButton>
+      </div>
     </fieldset>
 
     <fieldset v-if="ui.security" class="rounded-control border border-line p-3" data-testid="security-summary">

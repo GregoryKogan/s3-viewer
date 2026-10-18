@@ -1,9 +1,9 @@
 [package]
 name = "s3viewer"
-version = "0.1.0"
+version = "0.2.0"
 description = "Minimal S3 browser with rich in-app preview"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.90"
 license = "MIT"
 
 [lib]
@@ -64,6 +64,12 @@ reqwest = { version = "0.12", default-features = false, features = [
     "stream",
     "http2",
 ] }
+# Auto-updates. Every downloaded bundle is checked against the minisign public
+# key in `tauri.conf.json`; a build made without a signing key still runs, it
+# just never sees an update. See AGENTS.md before touching the version or the
+# release workflow.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

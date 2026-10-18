@@ -29,6 +29,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        // Self-updates. The webview drives the check (see `src/stores/updates.ts`),
+        // this plugin downloads the signed bundle and swaps it on disk. Without the
+        // signing key nothing is ever accepted, so the key lives only in CI secrets.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .register_asynchronous_uri_scheme_protocol("s3stream", move |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             let core = app.state::<Arc<AppCore>>().inner().clone();
