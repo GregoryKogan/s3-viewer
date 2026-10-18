@@ -80,5 +80,32 @@ export const useProgressStore = defineStore("transfers", () => {
     }
   }
 
-  return { items, running, poll, start, stop, clear, waitFor };
+  /**
+   * Wait for a batch of transfers to settle with one shared poll loop.
+   *
+   * There is no deadline on purpose: a large upload legitimately outlasts any
+   * fixed cap, and answering "timed out" would toast a false failure and reload
+   * the folder while the PUT is still running. A genuinely hung transfer leaves
+   * this pending; the transfers panel stays visible and Task 6 adds cancel.
+   */
+  async function waitForAll(ids: string[]): Promise<ProgressView[]> {
+    const settled = new Map<string, ProgressView>();
+    const remaining = new Set(ids);
+    while (remaining.size > 0) {
+      await poll();
+      // One index per snapshot, so a large batch does not fan out into a
+      // `find` per id per tick.
+      const current = new Map(items.value.map((item) => [item.id, item]));
+      for (const id of [...remaining]) {
+        const item = current.get(id);
+        if (!item || item.state === "running") continue;
+        settled.set(id, item);
+        remaining.delete(id);
+      }
+      if (remaining.size > 0) await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return ids.map((id) => settled.get(id)!);
+  }
+
+  return { items, running, poll, start, stop, clear, waitFor, waitForAll };
 });

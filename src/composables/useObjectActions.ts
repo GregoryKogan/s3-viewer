@@ -138,18 +138,22 @@ export function useObjectActions(options: Options = {}) {
   async function uploadPaths(paths: string[]) {
     const connection = connections.active;
     if (!connection || !paths.length || !sessionMatchesActive() || !canWrite()) return;
+    // Capture the folder the files belong to: a slow upload can outlive the user
+    // navigating away, and reloading whatever is on screen then would be wrong.
+    const sessionConnectionId = objects.sessionConnectionId;
+    const prefix = objects.prefix;
     try {
       const plan = await api.uploadFiles({
         connectionId: connection.id,
-        prefix: objects.prefix,
+        prefix,
         localPaths: paths,
         overwrite: false,
       });
       transfers.start();
       // The plan ids are the progress ids, so the upload is done only when every
-      // one of them settles. Without this the empty folder stayed empty until the
-      // next manual refresh (IO-7).
-      const outcomes = await Promise.all(plan.map((item) => transfers.waitFor(item.id)));
+      // one of them settles. One shared, unbounded wait: the old per-item 120 s
+      // cap reported a slow upload as failed while the PUT was still running.
+      const outcomes = await transfers.waitForAll(plan.map((item) => item.id));
       const failed = outcomes.filter((outcome) => outcome.state === "failed");
       if (failed.length) {
         const first = failed[0].error ?? "the transfer failed";
@@ -161,10 +165,12 @@ export function useObjectActions(options: Options = {}) {
         );
       } else {
         toasts.ok(
-          `${plan.length} file${plan.length === 1 ? "" : "s"} uploaded to ${objects.prefix || "/"}.`,
+          `${plan.length} file${plan.length === 1 ? "" : "s"} uploaded to ${prefix || "/"}.`,
         );
       }
-      await objects.reload();
+      if (objects.sessionConnectionId === sessionConnectionId && objects.prefix === prefix) {
+        await objects.reload();
+      }
     } catch (error) {
       toasts.error((error as Error).message, "Cannot upload");
     }
