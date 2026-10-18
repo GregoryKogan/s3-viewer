@@ -279,7 +279,7 @@ defineExpose({ scrollToRow });
         @click="objects.setSort(column.key as never)"
       >
         {{ column.label }}
-        <span v-if="objects.sortKey === column.key" class="text-accent">
+        <span v-if="objects.sortKey === column.key" class="text-accent-text">
           {{ objects.sortAscending ? "↑" : "↓" }}
         </span>
       </button>

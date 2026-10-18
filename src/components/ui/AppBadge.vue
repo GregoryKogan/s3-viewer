@@ -18,7 +18,7 @@ const TONES: Record<Tone, string> = {
   ok: "border-ok/40 text-ok",
   warn: "border-warn/40 text-warn",
   danger: "border-danger/40 text-danger",
-  accent: "border-accent/40 text-accent",
+  accent: "border-accent/40 text-accent-text",
 };
 
 const DOTS: Record<Tone, string> = {
@@ -34,7 +34,7 @@ const DOTS: Record<Tone, string> = {
   <span
     :title="props.title"
     :class="[
-      'inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-micro leading-[1.5] whitespace-nowrap',
+      'inline-flex items-center gap-1 rounded-full border bg-surface px-1.5 py-px text-micro leading-[1.5] whitespace-nowrap',
       TONES[props.tone],
     ]"
   >

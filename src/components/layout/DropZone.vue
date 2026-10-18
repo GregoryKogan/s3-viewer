@@ -39,7 +39,7 @@ defineExpose({ isActive: () => active.value });
     :class="active ? 'flex' : 'hidden'"
     data-testid="dropzone"
   >
-    <div class="flex flex-col items-center gap-2 text-accent">
+    <div class="flex flex-col items-center gap-2 text-accent-text">
       <Upload class="size-6" />
       <p class="text-sm font-medium">Drop files to upload</p>
     </div>

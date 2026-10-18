@@ -22,6 +22,7 @@
   --c-text-subtle: #9aa3b2;
   --c-accent: #2f6fed;
   --c-accent-hover: #2a63d6;
+  --c-accent-text: #3b82f6;
   --c-accent-soft: #1d2a44;
   --c-danger: #ea5a5f;
   --c-danger-soft: #2a1a1c;
@@ -69,28 +70,28 @@
   --c-border: #e0e4ea;
   --c-border-strong: #c8cfda;
   --c-text: #151922;
-  --c-text-muted: #5d6675;
-  --c-text-subtle: #6b7078;
+  --c-text-muted: #4f5764;
+  --c-text-subtle: #5c6470;
   --c-accent: #2563eb;
   --c-accent-hover: #1d4ed8;
+  --c-accent-text: #2563eb;
   --c-accent-soft: #dbe6ff;
   --c-danger: #b91c1c;
   --c-danger-soft: #fdeaea;
   --c-ok: #15803d;
-  --c-warn: #b45309;
+  --c-warn: #92400e;
 
-  /* Opaque 600/700 shades: at least 3:1 on --c-surface (#ffffff), and 4.5:1
-     wherever the 600 shade already reaches it. */
-  --kind-folder: #d97706;
-  --kind-image: #0284c7;
-  --kind-audio: #059669;
-  --kind-video: #7c3aed;
-  --kind-pdf: #e11d48;
-  --kind-markdown: #0369a1;
-  --kind-json: #b45309;
-  --kind-csv: #047857;
+  /* Opaque 700 shades: at least 3:1 even on the tinted hover/selected rows. */
+  --kind-folder: #b45309;
+  --kind-image: #0369a1;
+  --kind-audio: #047857;
+  --kind-video: #6d28d9;
+  --kind-pdf: #be123c;
+  --kind-markdown: #0e7490;
+  --kind-json: #a16207;
+  --kind-csv: #15803d;
   --kind-parquet: #0f766e;
-  --kind-code: #4f46e5;
+  --kind-code: #4338ca;
   --kind-text: #334155;
   --kind-archive: #c2410c;
   --kind-binary: #475569;
@@ -122,6 +123,7 @@
   --color-subtle: var(--c-text-subtle);
   --color-accent: var(--c-accent);
   --color-accent-hover: var(--c-accent-hover);
+  --color-accent-text: var(--c-accent-text);
   --color-accent-soft: var(--c-accent-soft);
   --color-danger: var(--c-danger);
   --color-danger-soft: var(--c-danger-soft);
@@ -455,7 +457,7 @@
   color: var(--c-text-muted);
 }
 .markdown a {
-  color: var(--c-accent);
+  color: var(--c-accent-text);
   text-decoration: none;
 }
 .markdown a:hover {
