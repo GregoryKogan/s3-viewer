@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>S3 Viewer — browse and preview S3 buckets on your Mac</title>
+    <meta
+      name="description"
+      content="A native S3 browser for macOS and Linux. Look inside images, audio, video, PDFs, Markdown, code, CSV and Parquet files without downloading them first. Credentials stay encrypted on your machine."
+    />
+    <meta name="theme-color" content="#0f1115" />
+    <meta property="og:title" content="S3 Viewer" />
+    <meta
+      property="og:description"
+      content="Browse S3 buckets and look inside files without downloading them. Native, keyboard-driven, credentials encrypted at rest."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://gregorykogan.github.io/s3-viewer/assets/app-window.png" />
+    <meta property="og:url" content="https://gregorykogan.github.io/s3-viewer/" />
+    <link rel="canonical" href="https://gregorykogan.github.io/s3-viewer/" />
+    <link rel="icon" href="assets/icon.png" type="image/png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#download">Skip to download</a>
+
+    <header class="topbar">
+      <div class="wrap topbar__inner">
+        <a class="brand" href="#top" aria-label="S3 Viewer home">
+          <img src="assets/icon.png" alt="" width="22" height="22" />
+          <span>S3 Viewer</span>
+        </a>
+        <nav class="nav" aria-label="Main">
+          <a href="#features">Features</a>
+          <a href="#install">Install</a>
+          <a href="#security">Security</a>
+          <a href="https://github.com/GregoryKogan/s3-viewer" rel="noreferrer">Source</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero wrap">
+        <p class="eyebrow">macOS · Linux · MIT</p>
+        <h1>Look inside your bucket<br />before you download it.</h1>
+        <p class="lede">
+          An S3 browser that renders images, audio, video, PDFs, Markdown, source code, CSV and
+          Parquet tables in place. Ranged reads mean a 4 GB video starts playing immediately, and
+          your access keys never leave the machine in cleartext.
+        </p>
+
+        <div class="actions" id="download">
+          <a
+            class="button button--primary"
+            href="https://github.com/GregoryKogan/s3-viewer/releases/latest/download/S3-Viewer.dmg"
+          >
+            Download for macOS
+          </a>
+          <a class="button" href="https://github.com/GregoryKogan/s3-viewer/releases/latest">
+            All releases
+          </a>
+        </div>
+
+        <p class="meta">
+          macOS 11 or later · Apple Silicon and Intel · about 5 MB · Linux
+          <a href="https://github.com/GregoryKogan/s3-viewer/releases/latest">.deb and AppImage</a>
+          in the same release
+        </p>
+
+        <figure class="shot">
+          <img
+            src="assets/app-window.png"
+            srcset="assets/app-window@1x.png 1280w, assets/app-window.png 2560w"
+            sizes="(max-width: 1120px) 100vw, 1120px"
+            alt="The S3 Viewer window: a connection in the sidebar, a file list with folders and files, and the preview panel."
+            width="2560"
+            height="1640"
+            loading="eager"
+          />
+        </figure>
+      </section>
+
+      <section class="band" id="features">
+        <div class="wrap">
+          <h2>Everything you would otherwise download to check</h2>
+          <p class="section-lede">
+            Most S3 tools show you a file name and a size. This one shows you the file.
+          </p>
+
+          <div class="grid">
+            <article class="card">
+              <h3>Media, without waiting</h3>
+              <p>
+                Images, audio and video are streamed from S3 with HTTP range requests. Playback
+                starts on the first bytes; seeking fetches only what you seek to.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>PDFs you can actually read</h3>
+              <p>
+                Rendered with pdf.js: zoom, fit to width, page navigation. Pages load on demand
+                instead of pulling the whole document.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>Text, highlighted</h3>
+              <p>
+                Markdown renders with a sanitised preview and a raw toggle. Code is highlighted for
+                about 30 languages, JSON is pretty-printed, CSV becomes a table.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>Parquet as a table</h3>
+              <p>
+                Columnar files are read properly — schema, columns and the first rows — instead of
+                being treated as opaque bytes.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>Files with no extension</h3>
+              <p>
+                SSH keys, <code>.pub</code>, <code>.pem</code>, dotfiles and extensionless files are
+                shown as text when the bytes say they are text, rather than being labelled binary.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>Large folders stay responsive</h3>
+              <p>
+                Listings stream in pages and the table renders only the rows on screen, so a prefix
+                with a hundred thousand objects scrolls like any other.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>Honest about what it can do</h3>
+              <p>
+                A probe tells you whether these credentials can list, read, write and delete.
+                Per-connection read-only mode blocks every write in the interface.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>Keyboard first</h3>
+              <p>
+                <kbd>⌘L</kbd> to paste an <code>s3://</code> address, <kbd>⌘R</kbd> refresh,
+                <kbd>⌘U</kbd> upload, <kbd>⌘B</kbd> collapse, <kbd>⌘A</kbd> select all, Shift+click
+                for ranges. Right-click any row for the rest.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="band band--split wrap" id="install">
+        <div>
+          <h2>Install</h2>
+          <ol class="steps">
+            <li>Download the disk image and open it.</li>
+            <li>Drag <strong>S3&nbsp;Viewer</strong> into <strong>Applications</strong>.</li>
+            <li>Add a connection: the fields mirror a boto3 client one to one.</li>
+          </ol>
+          <p class="muted">
+            Linux releases are a <code>.deb</code> and an <code>AppImage</code> in the same release.
+            On Linux there is an extra step before that: nothing — they just run.
+          </p>
+        </div>
+
+        <aside class="notice" aria-labelledby="gatekeeper-title">
+          <h3 id="gatekeeper-title">First launch on macOS</h3>
+          <p>
+            The app is not notarised by Apple yet, so macOS will say it cannot verify the developer.
+            That is expected. Allow it once, one of two ways:
+          </p>
+          <p class="notice__option">
+            <strong>System Settings → Privacy &amp; Security</strong>, scroll down, press
+            <em>Open Anyway</em>.
+          </p>
+          <p class="notice__option">Or remove the download flag from Terminal:</p>
+          <div class="command">
+            <code id="xattr-command">xattr -dr com.apple.quarantine "/Applications/S3 Viewer.app"</code>
+            <button class="copy" type="button" data-copy="#xattr-command" aria-label="Copy the command">
+              Copy
+            </button>
+          </div>
+          <p class="notice__small">
+            You will see the same prompt once per new version until the build is signed with an
+            Apple Developer ID. Verify what you downloaded against the
+            <code>.sha256</code> file published with each release.
+          </p>
+        </aside>
+      </section>
+
+      <section class="band band--split wrap" id="security">
+        <div>
+          <h2>Where your keys live</h2>
+          <ul class="ticks">
+            <li>Secret keys are sealed with XChaCha20-Poly1305 before anything is written to disk.</li>
+            <li>The master key lives in the OS keychain, not in a file.</li>
+            <li>The config file is <code>0600</code> inside a <code>0700</code> directory, written atomically.</li>
+            <li>No telemetry. The only network traffic is to the endpoint you configure.</li>
+          </ul>
+        </div>
+        <div>
+          <h2>What it connects to</h2>
+          <ul class="ticks">
+            <li>Any S3-compatible endpoint, not just AWS.</li>
+            <li>Signature V4, or legacy V2 where the service needs it.</li>
+            <li>Path-style or virtual-host addressing.</li>
+            <li>Both checksum switches, for services that reject the defaults.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="band wrap finale">
+        <h2>Take a look before you download</h2>
+        <p class="section-lede">Free, MIT licensed, and the source is the same code you run.</p>
+        <div class="actions">
+          <a
+            class="button button--primary"
+            href="https://github.com/GregoryKogan/s3-viewer/releases/latest/download/S3-Viewer.dmg"
+          >
+            Download for macOS
+          </a>
+          <a class="button" href="https://github.com/GregoryKogan/s3-viewer">View the source</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap footer__inner">
+        <span>MIT © Gregory Koganovsky</span>
+        <nav aria-label="Footer">
+          <a href="https://github.com/GregoryKogan/s3-viewer/releases">Releases</a>
+          <a href="https://github.com/GregoryKogan/s3-viewer/issues">Issues</a>
+          <a href="https://github.com/GregoryKogan/s3-viewer/blob/main/LICENSE">License</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script>
+      // Copy buttons: the page stays script-free apart from this, and it degrades
+      // to a selectable command if the clipboard API is unavailable.
+      for (const button of document.querySelectorAll(".copy")) {
+        button.addEventListener("click", async () => {
+          const target = document.querySelector(button.dataset.copy);
+          if (!target) return;
+          const text = target.textContent.trim();
+          try {
+            await navigator.clipboard.writeText(text);
+            const original = button.textContent;
+            button.textContent = "Copied";
+            setTimeout(() => {
+              button.textContent = original;
+            }, 1600);
+          } catch {
+            button.textContent = "Select it";
+          }
+        });
+      }
+    </script>
+  </body>
+</html>

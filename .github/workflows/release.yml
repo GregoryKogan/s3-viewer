@@ -1,4 +1,4 @@
-name: Build
+name: Release
 
 on:
   push:
@@ -11,22 +11,25 @@ permissions:
 
 jobs:
   build:
-    name: ${{ matrix.name }}
+    name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Apple Silicon. Intel users can build locally with the same command.
-          - name: macOS (arm64)
+          # One macOS download for both architectures: the landing page links to a
+          # single file, and Intel Macs still exist.
+          - name: macOS (universal)
             os: macos-14
-            args: --bundles dmg,app
-            artifact: s3viewer-macos-arm64
+            target: universal-apple-darwin
+            bundles: dmg,app
+            artifact: macos
           # 22.04 is the practical baseline for an installable .deb.
           - name: Linux (x86_64)
             os: ubuntu-22.04
-            args: --bundles deb,appimage
-            artifact: s3viewer-linux-x86_64
+            target: ""
+            bundles: deb,appimage
+            artifact: linux
 
     steps:
       - uses: actions/checkout@v4
@@ -55,15 +58,23 @@ jobs:
           cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
+
+      # A universal binary needs both slices, so the Intel target is added
+      # explicitly on the arm64 runner.
+      - name: Add the Intel target
+        if: matrix.target == 'universal-apple-darwin'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.artifact }}
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build the webview bundle
-        run: pnpm build:frontend --minify
+        run: pnpm build:frontend
 
       - name: Run the Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
@@ -73,27 +84,70 @@ jobs:
           # Stops the macOS bundler from asking Finder to arrange the disk image,
           # which needs Automation permission and times out on a build runner.
           CI: "true"
-        run: pnpm tauri build ${{ matrix.args }}
+          # Signing and notarisation switch on automatically when these secrets
+          # exist. Without them the build is unsigned and macOS asks the user to
+          # allow it once; the landing page explains that step.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          args="--bundles ${{ matrix.bundles }}"
+          if [ -n "${{ matrix.target }}" ]; then args="--target ${{ matrix.target }} $args"; fi
+          pnpm tauri build $args
 
-      - name: Collect the installers
+      # Asset names are fixed so that `releases/latest/download/<name>` — which is
+      # what the landing page links to — keeps working across versions.
+      - name: Collect installers under stable names
         shell: bash
         run: |
-          mkdir -p artifacts
-          find src-tauri/target/release/bundle -type f \
-            \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \) \
-            -exec cp {} artifacts/ \;
-          ls -lh artifacts
+          set -euo pipefail
+          mkdir -p dist
+          base="src-tauri/target"
+          if [ -n "${{ matrix.target }}" ]; then base="$base/${{ matrix.target }}"; fi
+          base="$base/release/bundle"
+          find "$base" -type f -name '*.dmg' -exec cp {} dist/S3-Viewer.dmg \;
+          find "$base" -type f -name '*.AppImage' -exec cp {} dist/S3-Viewer.AppImage \;
+          find "$base" -type f -name '*.deb' -exec cp {} dist/S3-Viewer-amd64.deb \;
+          ls -lh dist
+          if [ -z "$(ls -A dist)" ]; then
+            echo "no installer was produced" >&2
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: artifacts/*
+          name: installers-${{ matrix.artifact }}
+          path: dist/*
           if-no-files-found: error
 
-      - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  publish:
+    name: Publish the release
+    needs: build
+    # A manual run has no tag to publish under.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          files: artifacts/*
-          draft: false
-          generate_release_notes: true
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --title "S3 Viewer ${TAG#v}" \
+            --generate-notes \
+            --verify-tag

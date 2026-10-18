@@ -183,6 +183,28 @@ Two rules worth knowing before editing:
   attributes on the root element. That is what the shell is laid out from, so the
   DOM cannot drift from the store.
 
+## Downloading
+
+Prebuilt releases are on the [landing page](https://gregorykogan.github.io/s3-viewer/)
+or directly under [Releases](https://github.com/GregoryKogan/s3-viewer/releases/latest):
+
+| Asset | Platform |
+| --- | --- |
+| `S3-Viewer.dmg` | macOS 11+, universal (Apple Silicon and Intel) |
+| `S3-Viewer.AppImage` | Linux, portable |
+| `S3-Viewer-amd64.deb` | Linux, Debian/Ubuntu |
+
+The macOS build is not notarised by Apple yet, so the first launch needs one
+allowance — System Settings → Privacy & Security → *Open Anyway*, or
+`xattr -dr com.apple.quarantine "/Applications/S3 Viewer.app"`. That prompt
+returns for each new version until the build is signed with a Developer ID.
+Release assets are named without a version on purpose, so
+`releases/latest/download/S3-Viewer.dmg` always points at the newest build.
+
+The landing page lives in [`site/`](site/) and is published by
+`.github/workflows/site.yml`; see [`site/README.md`](site/README.md) for the
+one-time Pages setting.
+
 ## Building
 
 Requirements: Rust (stable), Node.js with pnpm, and the platform toolchain.
