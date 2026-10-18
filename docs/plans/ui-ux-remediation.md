@@ -54,14 +54,14 @@
    - Selected: `bg-accent/20`; focused and not selected: `bg-accent/[0.07]` plus a 2 px left accent bar (`before:` pseudo-element or an inset box-shadow).
    - `aria-selected` is `props.selected` only.
    - The row keeps `role="option"`, gets `id="row-<index>"` and `aria-label` = name.
-   - Checkboxes remain visible only on hover or while a selection exists; keep the existing `data-testid` pattern.
+   - Checkboxes remain visible on hover, on the focused row, or while a selection exists (SEL-2); keep the existing `data-testid` pattern and update the e2e at-rest check to clear focus.
 4. `AppToolbar`:
    - Create actions are always visible: `Upload`, `New folder`, `New file` (testids `upload`, `new-folder`, `new-file`).
    - When a selection exists, append a divider, `<N> selected`, then `Download`, `Copy URI`, `Copy to…`, `Move to…`, `Delete`, and the clear button. Do not hide the create actions.
    - Add `title` attributes with platform labels.
 5. Context menus in `App.vue`:
-   - Row menu: `Preview`/`Open` for the clicked row; `Download`, `Copy s3://`, `Copy name` act on the clicked row when it is not selected, otherwise on the selection; labels include the count when > 1 (`Download 3 files`). `Copy to…`, `Move to…`, `Delete` act on the selection (or the clicked row when nothing is selected). Add shortcut labels (`⌫`/`Del`) where applicable.
-   - Background menu: `Upload files…`, `Upload folder…`, `New folder…`, `New file…`, `Refresh`. Write actions are omitted when `!connections.canWriteActive`.
+   - Row menu: right-clicking a row that is outside the current selection first selects that row alone (clears the other rows), then opens the menu. Every item therefore targets one set: the clicked row when it is the only selection, otherwise the selection. Labels include the count when > 1 (`Download 3 files`, count files only, not folders). `Copy to…`, `Move to…`, `Delete` use the same set. Add shortcut labels (`⌫`/`Del`) where applicable.
+   - Background menu: `Upload files…`, `New folder…`, `New file…`, `Refresh`. Write actions are omitted when `!connections.canWriteActive`. `Upload folder…` is deliberately added in Task 6, after the backend can walk directories.
    - Add `disabled?: boolean` to `MenuItem` and render disabled items as non-clickable with reduced opacity; use it instead of silently omitting where a user would look for the action.
 6. `useObjectActions`:
    - Add `writeTargets` from `deleteTargets`; `deleteSelection` uses it. If the session connection id does not match the active connection, abort with an error toast and reload the active connection's root.
