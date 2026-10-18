@@ -37,8 +37,15 @@ const ui = useUiStore();
 const toasts = useToastsStore();
 const actions = useObjectActions();
 
-/** Expanded, the panel takes the main area and must not carry its own width. */
-const panelWidth = computed(() => (ui.previewExpanded ? null : "var(--preview-width)"));
+/**
+ * Expanded, the panel takes the main area and must not carry its own width.
+ * Gated on a preview key: a stale flag with nothing to show would otherwise hide
+ * the object list behind an empty panel.
+ */
+const expanded = computed(
+  () => ui.previewExpanded && Boolean(objects.previewKey) && !ui.previewHidden,
+);
+const panelWidth = computed(() => (expanded.value ? null : "var(--preview-width)"));
 
 /**
  * The aside owns its own visibility attribute.
@@ -57,12 +64,20 @@ onMounted(() => {
 const data = computed(() => objects.preview);
 const isFolder = computed(() => Boolean(objects.previewKey?.endsWith("/")));
 const isMarkdown = computed(() => data.value?.kind === "markdown");
+const folderEntry = computed(() => objects.folderMeta);
 
 const kind = computed(() => data.value?.kind ?? (isFolder.value ? "folder" : "unknown"));
 
 /** One line for every kind: size · kind · last modified. No truncated ETag (PRV-10). */
 const meta = computed(() => {
-  if (isFolder.value) return kindLabel("folder");
+  if (isFolder.value) {
+    // A folder has no payload, but its listing entry may carry a marker date.
+    return [
+      humanSize(folderEntry.value?.size ?? 0),
+      kindLabel("folder"),
+      humanDate(folderEntry.value?.lastModified),
+    ].join(" · ");
+  }
   if (!data.value) return "";
   const bits = [humanSize(data.value.size), kindLabel(data.value.kind)];
   if (data.value.lastModified) bits.push(humanDate(data.value.lastModified));
@@ -114,7 +129,7 @@ function onToggleView(view: "rendered" | "raw") {
 <template>
   <aside
     class="flex h-full min-h-0 flex-col overflow-hidden border-l border-line bg-surface"
-    :class="ui.previewExpanded ? 'min-w-0 flex-1' : 'shrink-0'"
+    :class="expanded ? 'min-w-0 flex-1' : 'shrink-0'"
     :style="panelWidth ? { width: panelWidth } : undefined"
     id="preview"
     data-testid="preview"
@@ -207,10 +222,10 @@ function onToggleView(view: "rendered" | "raw") {
           v-if="!isFolder"
           size="sm"
           variant="ghost"
-          :icon="ui.previewExpanded ? Minimize2 : Maximize2"
-          :aria-label="ui.previewExpanded ? 'Collapse preview' : 'Expand preview'"
-          :title="ui.previewExpanded ? 'Collapse preview' : 'Expand preview'"
-          :aria-pressed="ui.previewExpanded"
+          :icon="expanded ? Minimize2 : Maximize2"
+          :aria-label="expanded ? 'Collapse preview' : 'Expand preview'"
+          :title="expanded ? 'Collapse preview' : 'Expand preview'"
+          :aria-pressed="expanded"
           data-testid="preview-expand"
           @click="ui.togglePreviewExpanded()"
         />
@@ -228,7 +243,13 @@ function onToggleView(view: "rendered" | "raw") {
     </header>
 
     <div id="preview-body" class="scrollbar flex min-h-0 flex-1 flex-col overflow-auto" data-testid="preview-body">
-      <Spinner v-if="objects.previewLoading" label="Loading preview…" data-testid="preview-loading" />
+      <!-- A refresh of the same key keeps its content on screen; only a new
+           object (or the first load) shows the full loading state. -->
+      <Spinner
+        v-if="objects.previewLoading && !data"
+        label="Loading preview…"
+        data-testid="preview-loading"
+      />
 
       <div v-else-if="objects.previewError" class="p-4" data-testid="preview-unavailable">
         <div class="flex items-start gap-2">
@@ -245,12 +266,7 @@ function onToggleView(view: "rendered" | "raw") {
           <div class="grid size-9 place-items-center rounded-full border border-line bg-surface-2 text-subtle">
             <Info class="size-4" />
           </div>
-          <div class="flex flex-col gap-1">
-            <p class="text-xs font-medium text-content">Nothing selected</p>
-            <p class="text-[0.6875rem] leading-relaxed text-muted">
-              Select a file to preview it here.
-            </p>
-          </div>
+          <p class="text-xs font-medium text-content">Select a file to preview it here.</p>
           <ul class="flex w-full flex-col gap-1.5" aria-label="Preview shortcuts">
             <li
               v-for="shortcut in shortcuts"
@@ -281,6 +297,9 @@ function onToggleView(view: "rendered" | "raw") {
             :title="objects.previewKey ?? ''"
           >
             {{ objects.previewKey }}
+          </p>
+          <p v-if="folderEntry" class="tabular text-[0.6875rem] text-subtle">
+            {{ humanDate(folderEntry.lastModified) }}
           </p>
         </div>
         <div class="flex items-center gap-1.5">

@@ -180,6 +180,15 @@ const previewWidth = computed({
   get: () => ui.layout.preview,
   set: (value: number) => ui.setPreviewWidth(value),
 });
+/**
+ * The expanded layout only means something while there is a preview to show.
+ * The objects store resets the flag when the preview clears or the folder
+ * changes; this gate also covers the render before that reset runs, so a stale
+ * flag can never hide the object list behind an empty panel.
+ */
+const previewExpanded = computed(
+  () => ui.previewExpanded && Boolean(objects.previewKey) && !ui.previewHidden,
+);
 
 // ---------------------------------------------------------------- connections
 
@@ -452,7 +461,7 @@ async function onKeydown(event: KeyboardEvent) {
   // Collapsing an expanded preview is global: the user just clicked its Expand
   // button, and Escape must not depend on where focus landed. It is also the
   // smaller, more reversible step, so only the next Escape clears the selection.
-  if (key === "Escape" && ui.previewExpanded) {
+  if (key === "Escape" && previewExpanded.value) {
     event.preventDefault();
     ui.togglePreviewExpanded();
     return;
@@ -681,7 +690,7 @@ function onDrop(paths: string[]) {
           <div
             v-if="hasConnection"
             class="flex min-h-0 min-w-0 flex-1 flex-col"
-            :class="ui.previewExpanded ? 'hidden' : ''"
+            :class="previewExpanded ? 'hidden' : ''"
           >
             <ObjectList
               ref="objectList"
@@ -707,12 +716,12 @@ function onDrop(paths: string[]) {
             class="relative flex min-h-0"
             :class="[
               ui.previewHidden ? 'hidden' : '',
-              ui.previewExpanded && !ui.previewHidden ? 'min-w-0 flex-1' : 'shrink-0',
+              previewExpanded ? 'min-w-0 flex-1' : 'shrink-0',
             ]"
           >
             <PreviewPanel />
             <Resizer
-              v-if="!ui.previewExpanded"
+              v-if="!previewExpanded"
               v-model="previewWidth"
               side="left"
               grow="left"

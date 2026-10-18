@@ -144,8 +144,19 @@ export const useUiStore = defineStore("ui", () => {
   function togglePreview() {
     previewHidden.value = !previewHidden.value;
     // A hidden panel has no expanded state to come back to.
-    if (previewHidden.value) previewExpanded.value = false;
+    if (previewHidden.value) collapsePreview();
     applyLayoutDom();
+  }
+
+  /**
+   * Leave the full-width view.
+   *
+   * The objects store calls this whenever a preview is cleared or another
+   * folder opens: the list is hidden while expanded, so a stale `true` would
+   * strand the user on an empty panel with no way back except Close/Escape.
+   */
+  function collapsePreview() {
+    previewExpanded.value = false;
   }
 
   function togglePreviewExpanded() {
@@ -181,6 +192,7 @@ export const useUiStore = defineStore("ui", () => {
     resetPreviewWidth,
     toggleSidebar,
     togglePreview,
+    collapsePreview,
     togglePreviewExpanded,
     clampLayoutToWindow,
   };
