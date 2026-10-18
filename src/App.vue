@@ -7,6 +7,7 @@ import {
   FilePlus,
   FolderOpen,
   FolderPlus,
+  FolderUp,
   Link2,
   MoveRight,
   PanelLeft,
@@ -156,6 +157,7 @@ function backgroundMenu(event: MouseEvent) {
       ...(writable
         ? [
             { label: "Upload files…", icon: Upload, run: () => void actions.upload() },
+            { label: "Upload folder…", icon: FolderUp, run: () => void actions.uploadFolder() },
             { label: "New folder…", icon: FolderPlus, run: () => void actions.createFolder() },
             { label: "New file…", icon: FilePlus, run: () => void actions.createFile() },
           ]
@@ -654,7 +656,20 @@ onBeforeUnmount(() => {
 });
 
 function onDrop(paths: string[]) {
-  void actions.uploadPaths(paths);
+  // A read-only connection still receives the OS drop; answer it explicitly
+  // instead of starting an upload that the backend would refuse (IO-5).
+  if (!connections.active) {
+    toasts.warn("Open a connection before uploading.", "Nothing to upload to");
+    return;
+  }
+  if (!connections.canWriteActive) {
+    toasts.warn(
+      "This connection does not allow writes. Nothing was uploaded.",
+      "Read-only connection",
+    );
+    return;
+  }
+  void actions.queueUploads(paths);
 }
 </script>
 
@@ -734,7 +749,7 @@ function onDrop(paths: string[]) {
           </div>
         </div>
 
-        <DropZone @drop="onDrop" />
+        <DropZone :enabled="connections.canWriteActive" @drop="onDrop" />
       </main>
     </div>
 

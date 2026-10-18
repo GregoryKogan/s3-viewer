@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { AlertTriangle, FolderPlus, RefreshCw, SlidersHorizontal, Upload } from "@lucide/vue";
+import { AlertTriangle, FolderPlus, FolderUp, RefreshCw, SlidersHorizontal, Upload } from "@lucide/vue";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
 import { useObjectActions } from "@/composables/useObjectActions";
@@ -331,7 +331,7 @@ defineExpose({ scrollToRow });
           description="Upload a file or create a folder to get started."
           data-testid="empty-folder"
         >
-          <div v-if="canWrite" class="flex items-center gap-2">
+          <div v-if="canWrite" class="flex flex-wrap items-center justify-center gap-2">
             <AppButton
               size="sm"
               :icon="Upload"
@@ -339,6 +339,14 @@ defineExpose({ scrollToRow });
               @click="actions.upload()"
             >
               Upload files
+            </AppButton>
+            <AppButton
+              size="sm"
+              :icon="FolderUp"
+              data-testid="empty-upload-folder"
+              @click="actions.uploadFolder()"
+            >
+              Upload folder
             </AppButton>
             <AppButton
               size="sm"

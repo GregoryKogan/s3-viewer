@@ -3,6 +3,8 @@ import { ref } from "vue";
 import { Upload } from "@lucide/vue";
 import { listen } from "@/lib/ipc";
 
+const props = withDefaults(defineProps<{ enabled?: boolean }>(), { enabled: true });
+
 const emit = defineEmits<{ drop: [paths: string[]] }>();
 
 const active = ref(false);
@@ -10,9 +12,12 @@ const active = ref(false);
 /**
  * OS drag & drop. Tauri reports the dragged paths, so the dropzone only has to
  * track the visual state and forward the paths.
+ *
+ * A read-only connection still receives the event (the shell cannot refuse a
+ * drop) but never shows the overlay; `App.onDrop` answers with a warning.
  */
 void listen<unknown>("tauri://drag-enter", () => {
-  active.value = true;
+  active.value = props.enabled;
 }).catch(() => {});
 
 void listen<unknown>("tauri://drag-leave", () => {

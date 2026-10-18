@@ -15,6 +15,10 @@ const connections = useConnectionsStore();
 const actions = useObjectActions({ onChanged: () => emit("moved") });
 
 const selectionCount = computed(() => objects.selected.size);
+/** Folders cannot be downloaded, so a folder-only selection has nothing to do. */
+const fileSelectionCount = computed(
+  () => objects.selectedEntries.filter((entry) => !entry.isFolder).length,
+);
 const canWrite = computed(() => connections.canWriteActive && Boolean(connections.active));
 /** macOS deletes with ⌘⌫; Linux deletes with the forward-delete key. */
 const deleteShortcut = IS_MAC ? shortcutLabel("Backspace") : "Del";
@@ -75,7 +79,10 @@ const status = computed(() => {
       </span>
       <AppButton
         :icon="Download"
-        title="Download the selected files"
+        :disabled="fileSelectionCount === 0"
+        :title="fileSelectionCount
+          ? `Download ${fileSelectionCount} file(s) to one folder`
+          : 'Folders cannot be downloaded; select at least one file'"
         data-testid="download"
         @click="actions.downloadSelection()"
       >

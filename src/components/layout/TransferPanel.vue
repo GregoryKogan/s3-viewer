@@ -25,6 +25,7 @@ function percent(item: ProgressView): number | null {
 function barClass(item: ProgressView): string {
   if (item.state === "done") return "bg-ok";
   if (item.state === "failed") return "bg-danger";
+  if (item.state === "cancelled") return "bg-subtle";
   return percent(item) === null ? "bg-accent" : "bg-accent";
 }
 
@@ -34,6 +35,22 @@ function label(item: ProgressView): string {
   if (item.state === "cancelled") return "cancelled";
   const value = percent(item);
   return value === null ? "working" : `${value}%`;
+}
+
+async function cancel(item: ProgressView) {
+  try {
+    await api.cancelTransfer(item.id);
+  } catch (error) {
+    // The transfer may have finished between the click and the command; say so
+    // instead of leaving a button that appears to do nothing.
+    toasts.error((error as Error).message, "Cannot cancel");
+  }
+  await progress.poll();
+}
+
+async function retry(item: ProgressView) {
+  await progress.retry(item.id);
+  await progress.poll();
 }
 
 async function dismiss() {
@@ -78,6 +95,30 @@ async function dismiss() {
       </div>
 
       <p v-if="item.error" class="text-[0.625rem] leading-relaxed text-danger">{{ item.error }}</p>
+
+      <div
+        v-if="item.state === 'running' || (item.state === 'failed' && progress.hasRetry(item.id))"
+        class="flex items-center gap-1"
+      >
+        <AppButton
+          v-if="item.state === 'running'"
+          size="sm"
+          variant="ghost"
+          data-testid="transfer-cancel"
+          @click="cancel(item)"
+        >
+          Cancel
+        </AppButton>
+        <AppButton
+          v-if="item.state === 'failed' && progress.hasRetry(item.id)"
+          size="sm"
+          variant="ghost"
+          data-testid="transfer-retry"
+          @click="retry(item)"
+        >
+          Retry
+        </AppButton>
+      </div>
 
       <div v-if="item.state === 'done' && item.resultPath" class="flex items-center gap-1 text-[0.625rem] text-ok">
         <Check class="size-2.5 shrink-0" />

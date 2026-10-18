@@ -18,6 +18,26 @@ export const useProgressStore = defineStore("transfers", () => {
   const finishedAt = new Map<string, number>();
   const LINGER_MS = 7000;
 
+  /**
+   * Retry actions registered by the feature that started a transfer.
+   *
+   * Only the owner knows how to repeat an upload (which path went to which key)
+   * or a copy (which endpoints and prefixes were involved), so the store holds
+   * opaque callbacks rather than trying to reconstruct the request.
+   */
+  const retries = ref(new Map<string, () => Promise<void>>());
+
+  /**
+   * Settled snapshots for transfers someone is still waiting on.
+   *
+   * `waitForAll` polls; if the user clears the panel between a transfer settling
+   * and the next poll, the id disappears from the list. Caching the last settled
+   * view for watched ids turns that race into the correct answer instead of a
+   * wait that never ends.
+   */
+  const watched = new Set<string>();
+  const settled = new Map<string, ProgressView>();
+
   const running = computed(() => items.value.filter((item) => item.state === "running"));
 
   async function poll() {
@@ -30,8 +50,14 @@ export const useProgressStore = defineStore("transfers", () => {
 
     const now = Date.now();
     for (const item of snapshot) {
-      if (item.state === "running") finishedAt.delete(item.id);
-      else if (!finishedAt.has(item.id)) finishedAt.set(item.id, now);
+      if (item.state === "running") {
+        finishedAt.delete(item.id);
+      } else {
+        if (!finishedAt.has(item.id)) finishedAt.set(item.id, now);
+        // Keep one copy for a waiter, even if the row is about to leave the
+        // local list (Clear, linger).
+        if (watched.has(item.id)) settled.set(item.id, item);
+      }
     }
 
     items.value = snapshot
@@ -61,22 +87,41 @@ export const useProgressStore = defineStore("transfers", () => {
   }
 
   async function clear() {
+    // The backend can only forget finished entries; the local list must do the
+    // same and keep running transfers visible (their cancel buttons live there).
     await api.clearTransfers().catch(() => {});
-    finishedAt.clear();
-    items.value = [];
+    const stillRunning = items.value.filter((item) => item.state === "running");
+    items.value = stillRunning;
+    const runningIds = new Set(stillRunning.map((item) => item.id));
+    for (const id of [...finishedAt.keys()]) {
+      if (!runningIds.has(id)) finishedAt.delete(id);
+    }
+    // A retry is only reachable from the row it belongs to; dropped rows take
+    // their callbacks with them.
+    for (const id of [...retries.value.keys()]) {
+      if (!runningIds.has(id)) retries.value.delete(id);
+    }
   }
 
   /** Wait for one queued transfer to settle. */
   async function waitFor(id: string, timeoutMs = 120_000): Promise<ProgressView> {
     const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      await poll();
-      const item = items.value.find((entry) => entry.id === id);
-      if (item && item.state !== "running") return item;
-      if (Date.now() > deadline) {
-        return { id, label: "", done: 0, state: "failed", error: "timed out waiting for the transfer" };
+    watched.add(id);
+    try {
+      for (;;) {
+        await poll();
+        const item = items.value.find((entry) => entry.id === id);
+        if (item && item.state !== "running") return item;
+        const cached = settled.get(id);
+        if (cached) return cached;
+        if (Date.now() > deadline) {
+          return { id, label: "", done: 0, state: "failed", error: "timed out waiting for the transfer" };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
       }
-      await new Promise((resolve) => setTimeout(resolve, 250));
+    } finally {
+      watched.delete(id);
+      settled.delete(id);
     }
   }
 
@@ -89,23 +134,68 @@ export const useProgressStore = defineStore("transfers", () => {
    * this pending; the transfers panel stays visible and Task 6 adds cancel.
    */
   async function waitForAll(ids: string[]): Promise<ProgressView[]> {
-    const settled = new Map<string, ProgressView>();
+    const results = new Map<string, ProgressView>();
     const remaining = new Set(ids);
-    while (remaining.size > 0) {
-      await poll();
-      // One index per snapshot, so a large batch does not fan out into a
-      // `find` per id per tick.
-      const current = new Map(items.value.map((item) => [item.id, item]));
-      for (const id of [...remaining]) {
-        const item = current.get(id);
-        if (!item || item.state === "running") continue;
-        settled.set(id, item);
-        remaining.delete(id);
+    for (const id of ids) watched.add(id);
+    try {
+      while (remaining.size > 0) {
+        await poll();
+        // One index per snapshot, so a large batch does not fan out into a
+        // `find` per id per tick.
+        const current = new Map(items.value.map((item) => [item.id, item]));
+        for (const id of [...remaining]) {
+          const item = current.get(id) ?? settled.get(id);
+          if (!item || item.state === "running") continue;
+          results.set(id, item);
+          remaining.delete(id);
+        }
+        if (remaining.size > 0) await new Promise((resolve) => setTimeout(resolve, 250));
       }
-      if (remaining.size > 0) await new Promise((resolve) => setTimeout(resolve, 250));
+    } finally {
+      for (const id of ids) {
+        watched.delete(id);
+        settled.delete(id);
+      }
     }
-    return ids.map((id) => settled.get(id)!);
+    return ids.map((id) => results.get(id)!);
   }
 
-  return { items, running, poll, start, stop, clear, waitFor, waitForAll };
+  /** Remember how to repeat one transfer; a later registration supersedes. */
+  function registerRetry(id: string, run: () => Promise<void>) {
+    retries.value.set(id, run);
+  }
+
+  const hasRetry = (id: string) => retries.value.has(id);
+
+  /**
+   * Repeat a failed transfer.
+   *
+   * The old row is dropped from the local list immediately (its settled time is
+   * moved past the linger window), so the retry's own progress entry is the one
+   * the user sees. `poll` cannot bring the old row back while the backend still
+   * reports it.
+   */
+  async function retry(id: string) {
+    const run = retries.value.get(id);
+    if (!run) return;
+    retries.value.delete(id);
+    finishedAt.set(id, Date.now() - LINGER_MS);
+    items.value = items.value.filter((item) => item.id !== id);
+    await run();
+  }
+
+  return {
+    items,
+    running,
+    retries,
+    poll,
+    start,
+    stop,
+    clear,
+    waitFor,
+    waitForAll,
+    registerRetry,
+    hasRetry,
+    retry,
+  };
 });
