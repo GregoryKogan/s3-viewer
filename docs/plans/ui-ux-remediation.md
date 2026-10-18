@@ -147,7 +147,7 @@ Same as Task 1 (frontend + Rust e2e compiles).
 1. `ObjectList` columns:
    - Order: checkbox, Name, Size, Modified, Type.
    - Show Modified when the list width is ≥ 480 px; show Type when ≥ 820 px. At the default 1280×820 window the list is ~596 px, so Modified must be visible.
-   - Add `aria-sort` to the sortable headers (`ascending`/`descending`/`none`) and keep the arrow.
+   - Expose the sort state accessibly. `aria-sort` is invalid on a plain button, so use an accessible name such as `Sort by Name, ascending` (or introduce proper `columnheader` roles). Do not put `aria-sort` on a button; keep the arrow.
 2. Truncation banner:
    - When `objects.truncated || objects.warning`, render a banner above the table header with an alert icon, `objects.warning ?? "Only the first N objects are shown."`, a `Retry` button (`objects.reload()`) and an `Open settings` button that emits a `settings` event to `App` (App opens Settings).
    - The banner is not dismissible; it disappears when the next listing is complete and not truncated.
@@ -162,6 +162,10 @@ Same as Task 1 (frontend + Rust e2e compiles).
    - Listing error: keep the message text and add a `Try again` button (`objects.reload()`). Do not create `ErrorNotice` here; Task 8 upgrades this block to `ErrorNotice` with `hints`, `code` and `requestId`.
    - Empty folder: `Upload files` and `New folder` buttons when writable; reuse `useObjectActions`.
    - Keep `data-testid="empty-folder"`; add testids for the new buttons.
+   - Error precedence: check `objects.error` before `objects.filter` in the empty-state chain, so a failed refresh with an active filter still shows the error and its Retry.
+   - Upload completion: make `upload_files_impl` use each plan item's `id` as the progress id (do not generate a second UUID); `uploadPaths` waits for those ids, toasts failures, and reloads the folder, so the empty-state Upload leaves the empty state. Task 5 reuses this.
+   - Error detail request id: add `#[serde(rename_all = "camelCase")]` to Rust `ErrorPayload`, add `requestId` to the listing-error event type, store the S3 request id rather than the internal listing counter, and never overwrite a non-null id with a null one from the catch. Accept both `requestId` and `request_id` in `toError` for safety.
+   - The fallback truncation banner text must be count-free (`Only the first objects are shown.`); the backend warning normally supplies the real count.
 6. Dates:
    - `humanDate` returns `Today HH:MM`, `Yesterday HH:MM`, else `D MMM YYYY`. `title` shows the full localized date/time. Update `tests/js/format.test.js`.
    - Sorting is unchanged.
@@ -231,14 +235,14 @@ Frontend gates, Rust gates (new command + test), e2e compile. No visual test har
 
 ### Requirements
 
-1. `UploadPlanItem` gains `progressId: Option<String>` and `skipped: bool`. `UploadInput` gains `#[serde(default)] skip_existing: bool`.
+1. `UploadPlanItem.id` is the progress id (wired in Task 3); the struct gains `skipped: bool`. `UploadInput` gains `#[serde(default)] skip_existing: bool`. Do not add a second progress-id field.
 2. `plan_uploads(paths, prefix) -> AppResult<Vec<PlannedUpload>>`:
    - File → key `prefix + file_name`.
    - Directory → walk recursively without following symlinks; for every file key `prefix + dir_name + "/" + relative_path`; create a zero-byte marker for an empty directory.
    - Preserve the structure; reject unreadable paths with the path in the message; refuse more than 10 000 files with a clear error.
    - Keep this function testable with `tempfile` (already a dev-dependency? check; if not, use `std::env::temp_dir` + unique names and clean up).
 3. `upload_files`:
-   - Build the plan once; start a progress entry synchronously for each non-skipped item and put its id in `progressId`; skipped items get `skipped: true` and no progress entry.
+   - Build the plan once; start a progress entry synchronously for each non-skipped item and use its id as `UploadPlanItem.id`; skipped items get `skipped: true` and no progress entry.
    - If `skip_existing`, stat each key before starting; do not upload existing ones.
    - The spawn loop checks `progress` cancellation before each item; it cannot abort an in-flight PUT (document this in the command comment).
    - Return the plan immediately.
@@ -267,7 +271,7 @@ Frontend gates, Rust gates (new command + test), e2e compile. No visual test har
    - Check read-only and capability first.
    - If `confirmOverwrite` is on, call `api.uploadConflicts`; if conflicts exist, open a new `UploadConflictDialog` with `Replace all`, `Skip existing`, `Cancel` (`data-testid` on each). Resolve `"replace" | "skip" | null`.
    - Pass `overwrite` and `skipExisting` from the choice. If `confirmOverwrite` is off, pass `overwrite: true`.
-   - After the plan returns, toast the start, mention skipped files, and register retries for each `progressId`.
+   - After the plan returns, toast the start, mention skipped files, and register retries for each plan item `id`.
    - Add `Upload folder…` to the background menu and the empty-state actions using `pickFiles({ directory: true })`. The toolbar `Upload` stays files-only.
 2. Bulk download:
    - When `askDownloadLocation` is on, ask for a directory once (`pickFiles({ directory: true, multiple: false })`) and pass `destDir` for each file; no per-file save dialogs.
