@@ -125,15 +125,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist
+          mkdir -p release-assets
           base="src-tauri/target"
           if [ -n "${{ matrix.target }}" ]; then base="$base/${{ matrix.target }}"; fi
           base="$base/release/bundle"
-          find "$base" -type f -name '*.dmg' -exec cp {} dist/S3-Viewer.dmg \;
-          find "$base" -type f -name '*.AppImage' -exec cp {} dist/S3-Viewer.AppImage \;
-          find "$base" -type f -name '*.deb' -exec cp {} dist/S3-Viewer-amd64.deb \;
-          ls -lh dist
-          if [ -z "$(ls -A dist)" ]; then
+          find "$base" -type f -name '*.dmg' -exec cp {} release-assets/S3-Viewer.dmg \;
+          find "$base" -type f -name '*.AppImage' -exec cp {} release-assets/S3-Viewer.AppImage \;
+          find "$base" -type f -name '*.deb' -exec cp {} release-assets/S3-Viewer-amd64.deb \;
+          ls -lh release-assets
+          if [ -z "$(ls -A release-assets)" ]; then
             echo "no installer was produced" >&2
             exit 1
           fi
@@ -141,7 +141,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.artifact }}
-          path: dist/*
+          path: release-assets/*
           if-no-files-found: error
 
   publish:
@@ -153,11 +153,11 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          path: dist
+          path: release-assets
           merge-multiple: true
 
       - name: Checksums
-        working-directory: dist
+        working-directory: release-assets
         run: |
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
@@ -168,7 +168,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" dist/* \
+          gh release create "$TAG" release-assets/* \
             --title "S3 Viewer ${TAG#v}" \
             --generate-notes \
             --verify-tag

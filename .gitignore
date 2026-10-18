@@ -49,3 +49,6 @@ Thumbs.db
 # --- binaries (never committed) ---
 *.dmg
 *.app/
+
+# --- installer staging for the release workflow ---
+release-assets/
