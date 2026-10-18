@@ -110,3 +110,17 @@ export function pluralize(count: number, one: string, many: string): string {
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
+
+/**
+ * Parent directory of a filesystem path.
+ *
+ * Used when a cancelled single download is retried: the original absolute
+ * destination must not be reused (the cancelled task can still be streaming and
+ * may delete it), so the retry targets the parent and lets the backend reserve a
+ * fresh unique name. Returns "" when the path has no directory part.
+ */
+export function parentDirOf(path: string): string {
+  const slash = path.lastIndexOf("/");
+  if (slash === -1) return "";
+  return slash === 0 ? "/" : path.slice(0, slash);
+}

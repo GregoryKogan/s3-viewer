@@ -1,6 +1,6 @@
 import { computed } from "vue";
 import { api, copyText, pickFiles, pickSavePath } from "@/lib/ipc";
-import { s3Uri, humanSize, leafName } from "@/lib/format";
+import { s3Uri, humanSize, leafName, parentDirOf } from "@/lib/format";
 import { uploadScopeFor } from "@/lib/keys";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
@@ -146,8 +146,17 @@ export function useObjectActions(options: Options = {}) {
   ): Promise<TransferResult> {
     const result = await api.downloadObject({ connectionId, key, destPath, destDir });
     transfers.start();
+
+    // Cancellation is cooperative: a cancelled task can still be streaming and
+    // later remove its file. Reusing an explicit `destPath` on retry would let
+    // the old task delete the retry's bytes, so retry into the parent directory
+    // and let the backend reserve a fresh unique name. A batch already passes a
+    // directory and is safe for the same reason.
+    const retryTarget = destPath
+      ? { destPath: null, destDir: parentDirOf(destPath) || null }
+      : { destPath: null, destDir };
     transfers.registerRetry(result.id, async () => {
-      await startDownload(connectionId, key, { destPath, destDir });
+      await startDownload(connectionId, key, retryTarget);
     });
     return result;
   }

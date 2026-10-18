@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { loadTs } from "./loadTs.mjs";
 
-const { humanSize, humanDate, prefixSegments, extensionOf, leafName, pluralize, s3Uri } =
+const { humanSize, humanDate, prefixSegments, extensionOf, leafName, pluralize, s3Uri, parentDirOf } =
   await loadTs("src/lib/format.ts");
 const { kindLabel, detectKind, kindFromPath } = await loadTs("src/lib/fileKind.ts");
 
@@ -111,4 +111,10 @@ test("s3Uri and pluralize", () => {
   assert.equal(s3Uri("bucket", "path/to/key"), "s3://bucket/path/to/key");
   assert.equal(pluralize(1, "file", "files"), "file");
   assert.equal(pluralize(0, "file", "files"), "files");
+});
+
+test("parentDirOf strips the file name without losing the root", () => {
+  assert.equal(parentDirOf("/Users/me/Downloads/report.pdf"), "/Users/me/Downloads");
+  assert.equal(parentDirOf("/report.pdf"), "/");
+  assert.equal(parentDirOf("report.pdf"), "");
 });

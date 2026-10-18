@@ -137,3 +137,29 @@ test("clear does not lose a settled row a waiter already observed", async () => 
   const [outcome] = await withTimeout(waiting, 2000);
   assert.equal(outcome.state, "done");
 });
+
+test("a double click starts only one retry", async () => {
+  setActivePinia(createPinia());
+  fakeBackend([]);
+  const progress = useProgressStore();
+
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let started = 0;
+  progress.registerRetry("x", async () => {
+    started += 1;
+    await gate;
+  });
+
+  const first = progress.retry("x");
+  const second = progress.retry("x");
+  assert.equal(started, 1);
+  assert.equal(progress.isRetrying("x"), true);
+
+  release();
+  await Promise.all([first, second]);
+  assert.equal(progress.isRetrying("x"), false);
+  assert.equal(progress.hasRetry("x"), false);
+});

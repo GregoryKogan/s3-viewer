@@ -1480,6 +1480,8 @@ pub struct CopyInput {
 pub struct CopyOutcome {
     pub copied: usize,
     pub summary: String,
+    /// Id of the queued progress entry, so the UI can wait for completion.
+    pub id: String,
 }
 
 #[tauri::command]
@@ -1543,12 +1545,13 @@ pub async fn copy_objects(
     let dst_task = dst.clone();
     let pairs_task = pairs.clone();
     let copied = pairs.len();
+    let progress_id_task = progress_id.clone();
     tauri::async_runtime::spawn(async move {
         let mut done = 0u64;
         for (from, to) in &pairs_task {
             if let Err(e) = dst_task.copy_object(from, to).await {
                 tracker.fail_if_running(
-                    &progress_id,
+                    &progress_id_task,
                     format!("copy {from}: {}", crate::model::describe_error(&e)),
                 );
                 return;
@@ -1556,17 +1559,17 @@ pub async fn copy_objects(
             if move_objects {
                 if let Err(e) = src_task.delete_object(from).await {
                     tracker.fail_if_running(
-                        &progress_id,
+                        &progress_id_task,
                         format!("delete {from}: {}", crate::model::describe_error(&e)),
                     );
                     return;
                 }
             }
             done += 1;
-            tracker.advance(&progress_id, 1);
+            tracker.advance(&progress_id_task, 1);
         }
         let _ = done;
-        tracker.finish_if_running(&progress_id, None);
+        tracker.finish_if_running(&progress_id_task, None);
     });
 
     Ok(CopyOutcome {
@@ -1580,6 +1583,7 @@ pub async fn copy_objects(
             },
             copied
         ),
+        id: progress_id,
     })
 }
 
@@ -1971,5 +1975,17 @@ mod tests {
             tracker.get(&running).unwrap().state,
             ProgressState::Cancelled
         );
+    }
+
+    #[test]
+    fn copy_outcome_carries_the_progress_id() {
+        let outcome = CopyOutcome {
+            copied: 2,
+            summary: "copying 2 object(s)".into(),
+            id: "progress-1".into(),
+        };
+        let json = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(json["copied"], 2);
+        assert_eq!(json["id"], "progress-1");
     }
 }

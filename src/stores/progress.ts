@@ -47,6 +47,14 @@ export const useProgressStore = defineStore("transfers", () => {
    */
   const suppressed = new Set<string>();
 
+  /**
+   * Ids whose retry command is currently starting a replacement.
+   *
+   * Starting a retry can take a round-trip; without this a double click would
+   * start two replacement transfers for the same row.
+   */
+  const retrying = ref(new Set<string>());
+
   const running = computed(() => items.value.filter((item) => item.state === "running"));
 
   /** Resolve an id that vanished from both the list and the cache. */
@@ -235,17 +243,25 @@ export const useProgressStore = defineStore("transfers", () => {
    */
   async function retry(id: string) {
     const run = retries.value.get(id);
-    if (!run) return;
-    await run();
+    if (!run || retrying.value.has(id)) return;
+    retrying.value.add(id);
+    try {
+      await run();
+    } finally {
+      retrying.value.delete(id);
+    }
     retries.value.delete(id);
     suppressed.add(id);
     items.value = items.value.filter((item) => item.id !== id);
   }
 
+  const isRetrying = (id: string) => retrying.value.has(id);
+
   return {
     items,
     running,
     retries,
+    retrying,
     poll,
     start,
     stop,
@@ -254,6 +270,7 @@ export const useProgressStore = defineStore("transfers", () => {
     waitForAll,
     registerRetry,
     hasRetry,
+    isRetrying,
     retry,
   };
 });

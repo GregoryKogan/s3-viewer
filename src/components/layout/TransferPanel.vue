@@ -129,6 +129,8 @@ async function dismiss() {
           v-if="(item.state === 'failed' || item.state === 'cancelled') && progress.hasRetry(item.id)"
           size="sm"
           variant="ghost"
+          :busy="progress.isRetrying(item.id)"
+          :disabled="progress.isRetrying(item.id)"
           data-testid="transfer-retry"
           @click="retry(item)"
         >
