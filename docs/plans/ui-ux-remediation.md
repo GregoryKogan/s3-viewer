@@ -235,7 +235,7 @@ Frontend gates, Rust gates (new command + test), e2e compile. No visual test har
 
 ### Requirements
 
-1. `UploadPlanItem.id` is the progress id (wired in Task 3); the struct gains `skipped: bool`. `UploadInput` gains `#[serde(default)] skip_existing: bool`. Do not add a second progress-id field.
+1. `UploadPlanItem.id` is the progress id (wired in Task 3); the struct gains `skipped: bool`. `UploadInput` gains `#[serde(default)] skip_existing: bool` and `#[serde(default)] skip_keys: Vec<String>`. Do not add a second progress-id field. The caller passes the conflict list it already has; the backend must not re-scan when `skip_keys` is non-empty.
 2. `plan_uploads(paths, prefix) -> AppResult<Vec<PlannedUpload>>`:
    - File → key `prefix + file_name`.
    - Directory → walk recursively without following symlinks; for every file key `prefix + dir_name + "/" + relative_path`; create a zero-byte marker for an empty directory.
@@ -243,12 +243,13 @@ Frontend gates, Rust gates (new command + test), e2e compile. No visual test har
    - Keep this function testable with `tempfile` (already a dev-dependency? check; if not, use `std::env::temp_dir` + unique names and clean up).
 3. `upload_files`:
    - Build the plan once; start a progress entry synchronously for every item and use its id as `UploadPlanItem.id`. A skipped item gets `skipped: true` and its progress entry is finished immediately (label `Skipped <key>`), so the UI's wait always settles; never return an id without an entry.
-   - If `skip_existing`, stat each key before starting; do not upload existing ones.
+   - If `skip_existing`, mark every planned item whose key is in `skip_keys` as skipped without a second HEAD scan. Only fall back to scanning when `skip_keys` is empty (legacy callers). Return the plan as soon as the entries exist.
+   - Deduplicate planned keys (an overlapping selection must not PUT the same key twice); reject non-UTF-8 local names instead of lossy-converting them; a top-level symlink may be followed deliberately, but the walk below it must not follow symlinks.
    - The spawn loop checks `progress` cancellation before each item; it cannot abort an in-flight PUT (document this in the command comment).
    - Return the plan immediately.
 4. `upload_conflicts(input) -> Vec<String>`: plan with the same rules and return existing keys, with bounded concurrency (≤ 16). Cap the scan at 2 000 keys and return an error above that ("too many files to check").
 5. `cancel_transfer(id)`: new command; only cancels a running entry; returns an error for unknown/finished ids. Use `ProgressTracker::cancel`.
-6. `download_object`: add `dest_dir: Option<String>`. When set, `dest = fsutil::unique_path(dir, default_file_name(key))` and create the directory; `dest_path` still wins if both are set. Update the TS `DownloadInput`.
+6. `download_object`: add `dest_dir: Option<String>`. When set, reserve the destination atomically with `OpenOptions::create_new` in a `unique_path`-style retry loop before returning, create the directory, and hand the reserved path/file to the spawn; `dest_path` still wins if both are set. Update the TS `DownloadInput`.
 7. Update `src/lib/ipc.ts` and `src/types/index.ts` with `uploadConflicts`, `cancelTransfer`, the new fields and the `ProgressState` union (unchanged unless needed).
 8. Register the new commands in `lib.rs`.
 9. Rust tests: plan preserves a nested tree; empty dir gets a marker; cap error; URL/scheme tests are Task 4.
@@ -270,7 +271,7 @@ Frontend gates, Rust gates (new command + test), e2e compile. No visual test har
    - `startUpload(paths)` shared by the picker, drop and folder picker.
    - Check read-only and capability first.
    - If `confirmOverwrite` is on, call `api.uploadConflicts`; if conflicts exist, open a new `UploadConflictDialog` with `Replace all`, `Skip existing`, `Cancel` (`data-testid` on each). Resolve `"replace" | "skip" | null`.
-   - Pass `overwrite` and `skipExisting` from the choice. If `confirmOverwrite` is off, pass `overwrite: true`.
+   - Pass `overwrite`/`skipExisting` from the choice, and pass `skipKeys` (the conflict list) with Skip. If `confirmOverwrite` is off, pass `overwrite: true`.
    - After the plan returns, toast the start, mention skipped files, and register retries for each plan item `id`.
    - Add `Upload folder…` to the background menu and the empty-state actions using `pickFiles({ directory: true })`. The toolbar `Upload` stays files-only.
 2. Bulk download:
