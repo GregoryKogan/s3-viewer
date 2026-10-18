@@ -5,7 +5,6 @@ import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import AppButton from "@/components/ui/AppButton.vue";
 import Spinner from "@/components/ui/Spinner.vue";
-import { humanSize } from "@/lib/format";
 import type { PreviewData } from "@/types";
 
 const props = defineProps<{ data: PreviewData }>();
@@ -112,6 +111,11 @@ async function goTo(page: number) {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  // A hidden panel keeps its DOM. Without this guard the PDF would still page
+  // through ArrowLeft/ArrowRight while the list is out of sight (PRV-4).
+  const host = event.currentTarget;
+  if (host instanceof HTMLElement && host.offsetParent === null) return;
+
   if (event.metaKey || event.ctrlKey) {
     if (event.key === "+" || event.key === "=") {
       event.preventDefault();
@@ -188,8 +192,6 @@ watch(() => props.data.streamUrl, () => void load());
         :disabled="pageNumber >= pageCount"
         @click="goTo(pageNumber + 1)"
       />
-
-      <span class="tabular ml-auto text-[0.6875rem] text-subtle">{{ humanSize(props.data.size) }}</span>
     </div>
 
     <div

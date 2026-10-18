@@ -47,10 +47,16 @@ const NAMED_KEYS: Record<string, { mac: string; other: string }> = {
   end: { mac: "↘", other: "End" },
 };
 
-function keyLabel(key: string, mac: boolean): string {
-  const named = NAMED_KEYS[key.toLowerCase()];
+/**
+ * A key's platform glyph without a modifier: `keyLabel("Enter")` is `↩` on
+ * macOS and `Enter` elsewhere. Hint rows that describe unmodified keys (arrows,
+ * Enter) use this so they do not claim a modifier the handler does not need.
+ */
+export function keyLabel(key: string, mac = IS_MAC): string {
+  const named = NAMED_KEYS[key.trim().toLowerCase()];
   if (named) return mac ? named.mac : named.other;
-  return key.length === 1 ? key.toUpperCase() : key;
+  const trimmed = key.trim();
+  return trimmed.length === 1 ? trimmed.toUpperCase() : trimmed;
 }
 
 /**

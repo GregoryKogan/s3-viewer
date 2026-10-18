@@ -1,6 +1,6 @@
 import { computed } from "vue";
 import { api, copyText, pickFiles, pickSavePath } from "@/lib/ipc";
-import { s3Uri, humanSize } from "@/lib/format";
+import { s3Uri, humanSize, leafName } from "@/lib/format";
 import { validateKey } from "@/lib/keys";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
@@ -69,7 +69,14 @@ export function useObjectActions(options: Options = {}) {
 
   // ---------------------------------------------------------------- downloads
 
-  async function downloadEntry(entry: ObjectEntry) {
+  /**
+   * Download one key, honouring the "ask where to save" setting.
+   *
+   * By key rather than by entry because the preview panel has a key and no row
+   * (PRV-1). Every download path funnels through here so the policy cannot be
+   * bypassed by one of them.
+   */
+  async function downloadKey(key: string, name?: string) {
     const connection = connections.active;
     if (!connection || !sessionMatchesActive()) return;
 
@@ -77,16 +84,20 @@ export function useObjectActions(options: Options = {}) {
     // cancelling the dialog as cancelling the download.
     let destPath: string | null = null;
     if (ui.settings?.askDownloadLocation) {
-      destPath = await pickSavePath(entry.name);
+      destPath = await pickSavePath(name ?? leafName(key));
       if (!destPath) return;
     }
 
     try {
-      await api.downloadObject({ connectionId: connection.id, key: entry.key, destPath });
+      await api.downloadObject({ connectionId: connection.id, key, destPath });
       transfers.start();
     } catch (error) {
       toasts.error((error as Error).message, "Download failed");
     }
+  }
+
+  function downloadEntry(entry: ObjectEntry) {
+    return downloadKey(entry.key, entry.name);
   }
 
   async function downloadSelection() {
@@ -315,6 +326,7 @@ export function useObjectActions(options: Options = {}) {
   return {
     targets,
     writeTargets,
+    downloadKey,
     downloadEntry,
     downloadSelection,
     copyUri,

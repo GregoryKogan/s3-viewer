@@ -1,13 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Download } from "@lucide/vue";
-import AppButton from "@/components/ui/AppButton.vue";
 import { detectDelimiter, parseDelimited } from "@/lib/previewText";
-import { humanSize } from "@/lib/format";
 import type { PreviewData } from "@/types";
 
 const props = defineProps<{ data: PreviewData }>();
-const emit = defineEmits<{ download: [] }>();
 
 const MAX_ROWS = 500;
 
@@ -44,13 +40,6 @@ const note = computed(() => {
 
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
-    <div class="flex shrink-0 items-center gap-1.5 border-b border-line px-3 py-1.5">
-      <span class="tabular text-[0.6875rem] text-subtle">{{ humanSize(props.data.size) }}</span>
-      <AppButton size="sm" variant="ghost" :icon="Download" class="ml-auto" @click="emit('download')">
-        Download
-      </AppButton>
-    </div>
-
     <div class="scrollbar min-h-0 flex-1 overflow-auto p-3" data-testid="preview-table">
       <table v-if="table.rows.length" class="tabular w-full border-collapse text-[0.6875rem]">
         <thead>

@@ -45,6 +45,15 @@ watch(
 );
 
 const previewOpen = computed(() => !ui.previewHidden);
+
+/**
+ * Showing the panel is what triggers the deferred preview fetch: the store
+ * remembers the key while the panel is hidden (PRV-4).
+ */
+function togglePreviewPanel() {
+  ui.togglePreview();
+  if (!ui.previewHidden) void objects.refreshPreview();
+}
 </script>
 
 <template>
@@ -80,8 +89,10 @@ const previewOpen = computed(() => !ui.previewHidden);
           variant="ghost"
           :icon="PanelRight"
           :title="previewOpen ? 'Hide the preview panel' : 'Show the preview panel'"
+          :aria-pressed="previewOpen"
+          :class="previewOpen ? 'bg-hover text-content' : ''"
           data-testid="toggle-preview"
-          @click="ui.togglePreview()"
+          @click="togglePreviewPanel()"
         />
       </div>
     </div>

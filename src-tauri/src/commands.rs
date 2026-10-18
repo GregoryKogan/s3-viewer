@@ -1141,6 +1141,15 @@ pub async fn open_path(path: String) -> CmdResult<()> {
     crate::fsutil::open(Path::new(&path)).map_err(err)
 }
 
+/// Open a link from rendered Markdown in the system browser.
+///
+/// The URL comes from untrusted document content, so validation lives in
+/// `fsutil::is_allowed_url` (http/https only) rather than in this thin wrapper.
+#[tauri::command]
+pub async fn open_url(url: String) -> CmdResult<()> {
+    crate::fsutil::open_url(&url).map_err(err)
+}
+
 /// Home directory of the user, used as the default upload start folder.
 #[tauri::command]
 pub async fn default_upload_dir() -> CmdResult<String> {

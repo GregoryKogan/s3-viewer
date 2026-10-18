@@ -69,6 +69,7 @@ pub fn run() {
             commands::copy_objects,
             commands::reveal_in_file_manager,
             commands::open_path,
+            commands::open_url,
             commands::default_upload_dir,
             commands::read_text_file,
             e2e::desktop::e2e_setup,

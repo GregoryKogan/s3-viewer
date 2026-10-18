@@ -447,7 +447,18 @@ async function onKeydown(event: KeyboardEvent) {
     objects.selectAll(objects.visibleEntries.map((entry) => entry.key));
     return;
   }
-  if (dialogs.isOpen() || editing || isInteractiveTarget(event.target)) return;
+  if (dialogs.isOpen() || editing) return;
+
+  // Collapsing an expanded preview is global: the user just clicked its Expand
+  // button, and Escape must not depend on where focus landed. It is also the
+  // smaller, more reversible step, so only the next Escape clears the selection.
+  if (key === "Escape" && ui.previewExpanded) {
+    event.preventDefault();
+    ui.togglePreviewExpanded();
+    return;
+  }
+
+  if (isInteractiveTarget(event.target)) return;
 
   // Escape stays global, so it can clear the selection from a focused preview.
   if (key === "Escape") {
@@ -667,7 +678,11 @@ function onDrop(paths: string[]) {
         <AppHeader />
 
         <div class="flex min-h-0 flex-1">
-          <div v-if="hasConnection" class="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div
+            v-if="hasConnection"
+            class="flex min-h-0 min-w-0 flex-1 flex-col"
+            :class="ui.previewExpanded ? 'hidden' : ''"
+          >
             <ObjectList
               ref="objectList"
               @contextmenu="rowMenu"
@@ -687,9 +702,17 @@ function onDrop(paths: string[]) {
             </EmptyState>
           </div>
 
-          <div v-if="hasConnection" class="relative flex min-h-0 shrink-0" :class="ui.previewHidden ? 'hidden' : ''">
+          <div
+            v-if="hasConnection"
+            class="relative flex min-h-0"
+            :class="[
+              ui.previewHidden ? 'hidden' : '',
+              ui.previewExpanded && !ui.previewHidden ? 'min-w-0 flex-1' : 'shrink-0',
+            ]"
+          >
             <PreviewPanel />
             <Resizer
+              v-if="!ui.previewExpanded"
               v-model="previewWidth"
               side="left"
               grow="left"

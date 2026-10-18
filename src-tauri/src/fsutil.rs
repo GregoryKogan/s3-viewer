@@ -55,6 +55,47 @@ pub fn open(path: &Path) -> AppResult<()> {
     Ok(())
 }
 
+/// Is this a URL the system opener may be handed?
+///
+/// Only absolute `http`/`https` URLs are allowed: the preview renders untrusted
+/// Markdown, and an opener invoked with `file:`, `javascript:` or a bare path
+/// would be a way to launch something that is not a web page. Control
+/// characters and whitespace are rejected rather than normalized — a URL that
+/// needs trimming is not one this UI produced.
+pub fn is_allowed_url(url: &str) -> bool {
+    if url.is_empty() || url.trim() != url {
+        return false;
+    }
+    if url.chars().any(char::is_control) || url.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return false;
+    }
+    // `http:///path` has no host and is not something a browser can open.
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    !host.is_empty()
+}
+
+/// Open an http(s) URL in the user's browser.
+pub fn open_url(url: &str) -> AppResult<()> {
+    if !is_allowed_url(url) {
+        return Err(AppError::invalid(
+            "Only http and https links can be opened.",
+        ));
+    }
+    let opener = opener_command();
+    std::process::Command::new(opener.0)
+        .args(opener.1)
+        .arg(url)
+        .spawn()
+        .map_err(|e| AppError::msg(format!("cannot open {url}: {e}")))?;
+    Ok(())
+}
+
 /// Reveal a file in Finder / the Linux file manager.
 #[cfg(target_os = "macos")]
 pub fn reveal(path: &Path) -> AppResult<()> {
@@ -127,5 +168,27 @@ mod tests {
     #[test]
     fn download_dir_exists() {
         assert!(download_dir().is_dir() || download_dir() == home_dir());
+    }
+
+    #[test]
+    fn only_absolute_http_urls_are_allowed() {
+        assert!(is_allowed_url("https://example.com/a?b=c#d"));
+        assert!(is_allowed_url("http://localhost:8080/path"));
+        assert!(is_allowed_url("HTTP://EXAMPLE.COM"));
+        assert!(is_allowed_url("https://user@example.com/x"));
+
+        assert!(!is_allowed_url(""));
+        assert!(!is_allowed_url("   "));
+        assert!(!is_allowed_url(" example.com"));
+        assert!(!is_allowed_url("example.com"));
+        assert!(!is_allowed_url("ftp://example.com"));
+        assert!(!is_allowed_url("file:///etc/passwd"));
+        assert!(!is_allowed_url("javascript:alert(1)"));
+        assert!(!is_allowed_url("mailto:someone@example.com"));
+        assert!(!is_allowed_url("https://"));
+        assert!(!is_allowed_url("http:///path"));
+        assert!(!is_allowed_url("https://exa mple.com"));
+        assert!(!is_allowed_url("https://example.com\n"));
+        assert!(!is_allowed_url("https://example.com/\u{0}"));
     }
 }

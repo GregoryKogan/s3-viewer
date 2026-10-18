@@ -4,6 +4,7 @@ import { api, ApiError } from "@/lib/ipc";
 import { asFolderPrefix } from "@/lib/keys";
 import { useConnectionsStore } from "@/stores/connections";
 import { useToastsStore } from "@/stores/toasts";
+import { useUiStore } from "@/stores/ui";
 import type {
   ListErrorDetail,
   ListingDoneEvent,
@@ -52,6 +53,8 @@ export const useObjectsStore = defineStore("objects", () => {
   const previewKey = ref<string | null>(null);
   const previewLoading = ref(false);
   const previewError = ref<string | null>(null);
+  /** Hints, code and request id for a preview failure; the message stays `previewError`. */
+  const previewErrorDetail = ref<ListErrorDetail | null>(null);
   const previewUnavailable = ref<string | null>(null);
   const previewView = ref<"rendered" | "raw">("rendered");
 
@@ -186,6 +189,14 @@ export const useObjectsStore = defineStore("objects", () => {
     selected.value = new Set([...selected.value].filter((key) => keys.has(key)));
     if (focusedKey.value && !keys.has(focusedKey.value)) focusedKey.value = null;
     if (selectionAnchor.value && !keys.has(selectionAnchor.value)) selectionAnchor.value = null;
+
+    // The preview is a snapshot too (PRV-3). A deleted object must not linger,
+    // and a surviving one is re-fetched so ⌘R cannot leave an old version on
+    // screen. A hidden panel is left alone; it refreshes when it is shown.
+    if (previewKey.value) {
+      if (keys.has(previewKey.value)) void refreshPreview();
+      else clearPreview();
+    }
   }
 
   function onListingError(event: ListingErrorEvent) {
@@ -358,60 +369,113 @@ export const useObjectsStore = defineStore("objects", () => {
     previewKey.value = null;
     previewLoading.value = false;
     previewError.value = null;
+    previewErrorDetail.value = null;
     previewUnavailable.value = null;
     previewView.value = "rendered";
   }
 
-  async function previewEntry(entry: ObjectEntry, { force = false } = {}) {
-    if (entry.isFolder) {
-      clearPreview();
-      previewKey.value = entry.key;
-      previewUnavailable.value = "This is a folder, not a file.";
-      return;
-    }
-
-    const sameObject = previewKey.value === entry.key;
-    if (!force && sameObject && !previewLoading.value) return;
+  /**
+   * Fetch one key and settle the preview state.
+   *
+   * `previewEntry` and `refreshPreview` share this so the two paths cannot drift
+   * on loading, errors or the stale-response guard.
+   */
+  async function fetchPreview(key: string) {
+    const connection = useConnectionsStore().active;
+    if (!connection) return;
 
     const request = ++previewRequest;
-    note(previewLog, `start#${request} ${entry.key}`);
-    previewKey.value = entry.key;
+    note(previewLog, `start#${request} ${key}`);
     previewLoading.value = true;
     // Drop the previous object's payload before the request even starts.
     preview.value = null;
     previewError.value = null;
+    previewErrorDetail.value = null;
     previewUnavailable.value = null;
-    if (!sameObject) previewView.value = "rendered";
-
-    const connection = useConnectionsStore().active;
-    if (!connection) return;
 
     let data: PreviewData | null = null;
-    let failure: string | null = null;
+    let failure: unknown = null;
     try {
-      data = await api.getPreview({ connectionId: connection.id, key: entry.key });
+      data = await api.getPreview({ connectionId: connection.id, key });
     } catch (caught) {
-      failure = (caught as Error).message;
+      failure = caught;
     }
 
-    note(
-      previewLog,
-      `got#${request} ${failure ? `fail:${failure.slice(0, 40)}` : `${data?.kind}:${data?.key}`}`,
-    );
+    const message = failure instanceof Error ? failure.message : String(failure);
+    note(previewLog, `got#${request} ${failure ? `fail:${message.slice(0, 40)}` : `${data?.kind}:${data?.key}`}`);
 
     // A newer click wins; this response is stale.
-    if (request !== previewRequest || previewKey.value !== entry.key) {
+    if (request !== previewRequest || previewKey.value !== key) {
       note(previewLog, `drop#${request}`);
       return;
     }
 
     previewLoading.value = false;
     if (failure) {
-      previewError.value = failure;
+      previewError.value = message;
+      if (failure instanceof ApiError) {
+        previewErrorDetail.value = {
+          hints: failure.hints,
+          code: failure.code,
+          requestId: failure.requestId,
+        };
+      }
       return;
     }
     preview.value = data;
     previewUnavailable.value = data?.unavailableReason ?? null;
+    previewErrorDetail.value = null;
+  }
+
+  /**
+   * Show a selected object.
+   *
+   * A folder has no payload: its key is remembered so the panel can render a
+   * folder card (PRV-2), and no request is made. While the panel is hidden the
+   * key is remembered without fetching; showing the panel calls
+   * `refreshPreview` (PRV-4).
+   */
+  async function previewEntry(entry: ObjectEntry, { force = false } = {}) {
+    if (entry.isFolder) {
+      clearPreview();
+      previewKey.value = entry.key;
+      note(previewLog, `folder ${entry.key}`);
+      return;
+    }
+
+    const sameObject = previewKey.value === entry.key;
+    if (!force && sameObject && !previewLoading.value) return;
+
+    previewKey.value = entry.key;
+    if (!sameObject) previewView.value = "rendered";
+
+    if (useUiStore().previewHidden) {
+      // Nothing to show, so nothing to download. The key survives so the panel
+      // opens on what the user last pointed at.
+      preview.value = null;
+      previewLoading.value = false;
+      previewError.value = null;
+      previewErrorDetail.value = null;
+      previewUnavailable.value = null;
+      note(previewLog, `deferred ${entry.key}`);
+      return;
+    }
+
+    await fetchPreview(entry.key);
+  }
+
+  /**
+   * Re-fetch the object the panel is showing, by key.
+   *
+   * Used after a listing finishes (the object may have changed or been deleted
+   * since the click) and by the header's refresh button. Folders, an empty
+   * preview and a hidden panel are no-ops.
+   */
+  async function refreshPreview() {
+    const key = previewKey.value;
+    if (!key || key.endsWith("/")) return;
+    if (useUiStore().previewHidden) return;
+    await fetchPreview(key);
   }
 
   /** Re-render the current preview with a different view (Markdown raw/rendered). */
@@ -440,6 +504,7 @@ export const useObjectsStore = defineStore("objects", () => {
     previewKey,
     previewLoading,
     previewError,
+    previewErrorDetail,
     previewUnavailable,
     previewView,
     open,
@@ -464,6 +529,7 @@ export const useObjectsStore = defineStore("objects", () => {
     clearSelection,
     clearPreview,
     previewEntry,
+    refreshPreview,
     setPreviewView,
   };
 });

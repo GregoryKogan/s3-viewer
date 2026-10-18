@@ -19,6 +19,11 @@ export const useUiStore = defineStore("ui", () => {
   const security = ref<SecurityStatus | null>(null);
   const layout = ref<LayoutSettings>({ ...LAYOUT_DEFAULTS });
   const previewHidden = ref(false);
+  /**
+   * The preview has the main area to itself. Deliberately not persisted: a
+   * maximised preview is a momentary inspection, not a workspace layout.
+   */
+  const previewExpanded = ref(false);
   const transfersVisible = ref(false);
   const ready = ref(false);
 
@@ -138,7 +143,14 @@ export const useUiStore = defineStore("ui", () => {
 
   function togglePreview() {
     previewHidden.value = !previewHidden.value;
+    // A hidden panel has no expanded state to come back to.
+    if (previewHidden.value) previewExpanded.value = false;
     applyLayoutDom();
+  }
+
+  function togglePreviewExpanded() {
+    if (previewHidden.value) return;
+    previewExpanded.value = !previewExpanded.value;
   }
 
   function clampLayoutToWindow() {
@@ -153,6 +165,7 @@ export const useUiStore = defineStore("ui", () => {
     security,
     layout,
     previewHidden,
+    previewExpanded,
     transfersVisible,
     ready,
     theme,
@@ -168,6 +181,7 @@ export const useUiStore = defineStore("ui", () => {
     resetPreviewWidth,
     toggleSidebar,
     togglePreview,
+    togglePreviewExpanded,
     clampLayoutToWindow,
   };
 });
