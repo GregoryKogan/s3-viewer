@@ -135,19 +135,6 @@ export function useObjectActions(options: Options = {}) {
     }
   }
 
-  /** Pick a directory; the uploader walks it recursively. */
-  async function uploadFolder() {
-    const connection = connections.active;
-    if (!connection || !sessionMatchesActive() || !canWrite()) return;
-    try {
-      const paths = await pickFiles({ directory: true });
-      if (!paths.length) return;
-      await uploadPaths(paths);
-    } catch (error) {
-      toasts.error((error as Error).message, "Cannot upload");
-    }
-  }
-
   async function uploadPaths(paths: string[]) {
     const connection = connections.active;
     if (!connection || !paths.length || !sessionMatchesActive() || !canWrite()) return;
@@ -309,7 +296,6 @@ export function useObjectActions(options: Options = {}) {
     copyUri,
     copySelectionUris,
     upload,
-    uploadFolder,
     uploadPaths,
     createFolder,
     createFile,

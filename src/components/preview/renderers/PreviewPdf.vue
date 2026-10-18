@@ -197,6 +197,7 @@ watch(() => props.data.streamUrl, () => void load());
       class="scrollbar min-h-0 flex-1 overflow-auto bg-inset p-3 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
       tabindex="0"
       aria-label="PDF pages"
+      data-keyscope
       @keydown="onKeydown"
     >
       <Spinner v-if="loading" label="Loading the document…" />

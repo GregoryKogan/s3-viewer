@@ -14,7 +14,7 @@ const props = defineProps<{
   showType: boolean;
   selected: boolean;
   focused: boolean;
-  /** Checkboxes appear on hover, and stay visible while a selection exists. */
+  /** Checkboxes appear on hover or focus, and stay visible while a selection exists. */
   selectionActive: boolean;
 }>();
 
@@ -28,7 +28,9 @@ const emit = defineEmits<{
 const style = computed(() => kindStyle(props.entry.kind));
 const hovered = ref(false);
 
-const checkboxVisible = computed(() => props.selectionActive || hovered.value);
+const checkboxVisible = computed(
+  () => props.selectionActive || hovered.value || props.focused,
+);
 </script>
 
 <template>

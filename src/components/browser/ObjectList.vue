@@ -144,9 +144,11 @@ function onToggleCheck(entry: (typeof rows.value)[number], event: MouseEvent) {
 }
 
 function onContextMenu(entry: (typeof rows.value)[number], event: MouseEvent) {
-  // A right-click on an unselected row makes it the target of focused actions
-  // (Delete, Copy to…) without disturbing an existing multi-selection.
-  if (!objects.selected.has(entry.key)) objects.focus(entry.key, { keepAnchor: true });
+  // A context menu acts on one set. Right-clicking a row that is not selected
+  // selects it alone first, so no item can apply to a different set than the
+  // row the user pointed at (SEL-4).
+  if (!objects.selected.has(entry.key)) objects.selectOnly(entry.key);
+  objects.focus(entry.key, { keepAnchor: true });
   emit("contextmenu", entry, event);
 }
 

@@ -79,17 +79,14 @@ function rowMenu(entry: (typeof objects.entries)[number], event: MouseEvent) {
   const connection = connections.active;
   if (!connection) return;
   const writable = connections.canWriteActive;
-  // Single-row actions apply to the clicked row unless it is part of the
-  // selection; bulk actions apply to the selection, falling back to the row.
-  const rowTargets = objects.selected.has(entry.key) ? objects.selectedEntries : [entry];
-  const rowCount = rowTargets.length;
-  const rowLabel = (base: string, noun: string) =>
-    rowCount > 1 ? `${base} ${rowCount} ${noun}` : base;
-  const writeTargets = objects.selected.size ? objects.selectedEntries : [entry];
-  const writeCount = writeTargets.length;
-  const writeItem = (base: string) =>
-    writeCount > 1 ? `${base} ${writeCount} items to…` : `${base} to…`;
-  const names = rowTargets.map((item) => item.name);
+  // ObjectList selects a right-clicked row that was outside the selection, so
+  // one set backs every item (SEL-4).
+  const targets = objects.deleteTargets.length ? objects.deleteTargets : [entry];
+  const count = targets.length;
+  const fileCount = targets.filter((item) => !item.isFolder).length;
+  const names = targets.map((item) => item.name);
+  const transferLabel = (base: string) =>
+    count > 1 ? `${base} ${count} items to…` : `${base} to…`;
 
   menu.value = {
     x: event.clientX,
@@ -105,42 +102,37 @@ function rowMenu(entry: (typeof objects.entries)[number], event: MouseEvent) {
               void objects.previewEntry(entry, { force: true });
             },
           },
-      ...(entry.isFolder
-        ? []
-        : [
-            {
-              label: rowLabel("Download", "files"),
-              icon: Download,
-              run: () =>
-                rowCount > 1 ? void actions.downloadSelection() : void actions.downloadEntry(entry),
-            },
-            {
-              label: rowCount > 1 ? `Copy ${rowCount} S3 URIs` : "Copy S3 URI",
-              icon: Link2,
-              run: () =>
-                rowCount > 1 ? void actions.copySelectionUris() : void actions.copyUri(entry),
-            },
-            {
-              label: rowCount > 1 ? `Copy ${rowCount} names` : "Copy name",
-              icon: Copy,
-              run: () => void copyNames(names),
-            },
-          ]),
       {
-        label: writeItem("Copy"),
+        label: fileCount > 1 ? `Download ${fileCount} files` : "Download",
+        icon: Download,
+        disabled: fileCount === 0,
+        run: () => void actions.downloadSelection(),
+      },
+      {
+        label: count > 1 ? `Copy ${count} S3 URIs` : "Copy S3 URI",
+        icon: Link2,
+        run: () => void actions.copySelectionUris(),
+      },
+      {
+        label: count > 1 ? `Copy ${count} names` : "Copy name",
+        icon: Copy,
+        run: () => void copyNames(names),
+      },
+      {
+        label: transferLabel("Copy"),
         icon: MoveRight,
         separatorBefore: true,
         disabled: !writable,
         run: () => void actions.transferSelection(false),
       },
       {
-        label: writeItem("Move"),
+        label: transferLabel("Move"),
         icon: MoveRight,
         disabled: !writable,
         run: () => void actions.transferSelection(true),
       },
       {
-        label: writeCount > 1 ? `Delete ${writeCount} items` : "Delete",
+        label: count > 1 ? `Delete ${count} items` : "Delete",
         icon: Trash2,
         danger: true,
         shortcut: deleteShortcut,
@@ -161,7 +153,6 @@ function backgroundMenu(event: MouseEvent) {
       ...(writable
         ? [
             { label: "Upload files…", icon: Upload, run: () => void actions.upload() },
-            { label: "Upload folder…", icon: FolderOpen, run: () => void actions.uploadFolder() },
             { label: "New folder…", icon: FolderPlus, run: () => void actions.createFolder() },
             { label: "New file…", icon: FilePlus, run: () => void actions.createFile() },
           ]
@@ -287,6 +278,11 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
   return Boolean(target.closest('button, a, [role="menu"], [role="menuitem"], [role="separator"]'));
 }
 
+/** A nested view (the PDF) owns the list-only keys while it has focus. */
+function inKeyScope(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest("[data-keyscope]"));
+}
+
 function focusedRowIndex(): number {
   return objects.visibleEntries.findIndex((entry) => entry.key === objects.focusedKey);
 }
@@ -362,7 +358,7 @@ async function onKeydown(event: KeyboardEvent) {
     document.querySelector<HTMLButtonElement>('[data-testid=address-edit]')?.click();
     return;
   }
-  if (meta && lower === "f") {
+  if (meta && lower === "f" && !dialogs.isOpen()) {
     event.preventDefault();
     document.querySelector<HTMLInputElement>('[data-testid=filter-input]')?.focus();
     return;
@@ -374,8 +370,11 @@ async function onKeydown(event: KeyboardEvent) {
   }
   if (dialogs.isOpen() || editing || isInteractiveTarget(event.target)) return;
 
-  const rows = objects.visibleEntries;
-  const current = focusedRowIndex();
+  // Escape stays global, so it can clear the selection from a focused preview.
+  if (key === "Escape") {
+    objects.clearSelection();
+    return;
+  }
 
   // Up-navigation owns modified ArrowUp, so it must win over list movement.
   // macOS goes up with ⌘↑; bare Backspace must not navigate there at all.
@@ -384,11 +383,20 @@ async function onKeydown(event: KeyboardEvent) {
     await objects.navigateUp();
     return;
   }
+
+  // The PDF viewer handles its own keys; moving the list underneath it would
+  // be a second, invisible response to one key (KEY-1). Escape and the
+  // Cmd/Ctrl shortcuts above stay global; bare Backspace is list-only.
+  if (inKeyScope(event.target)) return;
+
   if (!IS_MAC && key === "Backspace" && !meta && objects.prefix) {
     event.preventDefault();
     await objects.navigateUp();
     return;
   }
+
+  const rows = objects.visibleEntries;
+  const current = focusedRowIndex();
 
   if (key === "ArrowDown" || key === "ArrowUp") {
     event.preventDefault();
@@ -433,11 +441,6 @@ async function onKeydown(event: KeyboardEvent) {
   if (key === " " && objects.focusedKey) {
     event.preventDefault();
     objects.toggleSelected(objects.focusedKey);
-    return;
-  }
-
-  if (key === "Escape") {
-    objects.clearSelection();
     return;
   }
 

@@ -804,11 +804,35 @@ const SCENARIO: &str = r#"(async () => {
       if (row.getAttribute('aria-selected') !== 'true') {
         throw new Error('the selected row is not marked aria-selected');
       }
-      return 'selected exactly one row and previewed it';
+
+      // A second plain click must replace the selection, not add to it.
+      const secondIndex = window.__s3viewer.state.visible.findIndex((e) => e.name === 'notes.txt');
+      if (secondIndex < 0) throw new Error('the second row for the click probe is missing');
+      window.__s3viewer.scrollToRow(secondIndex);
+      await frame();
+      const second = $$('.object-row')
+        .find((r) => r.querySelector('.row-label').textContent === 'notes.txt');
+      if (!second) throw new Error('the second row is not rendered');
+      second.dispatchEvent(new MouseEvent('click', { bubbles: true, view: window }));
+      await frame();
+      const replaced = Array.from(window.__s3viewer.state.objects.selected);
+      if (replaced.length !== 1 || !replaced[0].endsWith('notes.txt')) {
+        throw new Error('a second plain click did not replace the selection: '
+          + replaced.length + ' row(s): ' + replaced.join(', '));
+      }
+      const ariaSelected = $$('.object-row')
+        .filter((r) => r.getAttribute('aria-selected') === 'true');
+      if (ariaSelected.length !== 1 || ariaSelected[0] !== second) {
+        throw new Error('expected only the second row to be aria-selected, got ' + ariaSelected.length);
+      }
+      return 'one row, then the selection followed a second plain click';
     });
 
     await check('ui: checkboxes are hidden until something is selected', async () => {
       window.__s3viewer.state.objects.clearSelection();
+      // The focused row shows its checkbox too (SEL-2), so clear the focus
+      // before asserting the at-rest state.
+      window.__s3viewer.state.objects.focus(null);
       // Hover is real state, so reset it: a row the pointer passed over earlier
       // legitimately still shows its checkbox.
       for (const row of $$('.object-row')) {
