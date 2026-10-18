@@ -55,7 +55,8 @@ const style = computed(() => ({ left: `${position.value.left}px`, top: `${positi
 function run(item: MenuItem) {
   emit("close");
   // Let the menu disappear before the action can open a dialog or navigate.
-  requestAnimationFrame(() => item.run());
+  // A timeout, not an animation frame: background windows do not get frames.
+  setTimeout(() => item.run(), 0);
 }
 </script>
 

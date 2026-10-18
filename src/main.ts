@@ -4,6 +4,7 @@ import App from "@/App.vue";
 import "@/assets/main.css";
 import { marked } from "marked";
 import { sanitize } from "@/lib/previewText";
+import { parseImport } from "@/lib/importParse";
 
 /**
  * Collected page errors.
@@ -46,6 +47,10 @@ app.mount("#app");
  * so a hostile document can be checked without uploading one. Everything else it
  * uses lives on `window.__s3viewer`, published by `App.vue` once boot finishes.
  */
+// The harness checks the import parser against a real credentials file.
+(window as unknown as { __s3viewerParseImport: (text: string) => unknown }).__s3viewerParseImport =
+  (text: string) => parseImport(text);
+
 (window as unknown as { __s3viewerSanitizeProbe: () => unknown }).__s3viewerSanitizeProbe = () => {
   const executed = { script: false, handler: false };
   (window as unknown as { __markdownProbeExecuted: () => void }).__markdownProbeExecuted = () => {

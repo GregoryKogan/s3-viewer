@@ -226,6 +226,8 @@ export const api = {
   revealInFileManager: (path: string) => invoke<void>("reveal_in_file_manager", { path }),
   openPath: (path: string) => invoke<void>("open_path", { path }),
   defaultUploadDir: () => invoke<string>("default_upload_dir"),
+  /** Read a text file the user picked in the native dialog. */
+  readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
   ping: () => invoke<string>("ping"),
 };
 

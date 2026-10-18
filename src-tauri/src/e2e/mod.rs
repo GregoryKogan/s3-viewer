@@ -28,6 +28,7 @@ pub const ENV_REGION: &str = "S3VIEWER_E2E_REGION";
 pub const ENV_ACCESS: &str = "S3VIEWER_E2E_ACCESS_KEY";
 pub const ENV_SECRET: &str = "S3VIEWER_E2E_SECRET_KEY";
 pub const ENV_DOWNLOAD_DIR: &str = "S3VIEWER_E2E_DOWNLOAD_DIR";
+const ENV_IMPORT_FILE: &str = "S3VIEWER_E2E_IMPORT_FILE";
 
 /// Name of the connection the harness creates for the run.
 pub const CONNECTION_NAME: &str = "E2E dev bucket";
@@ -47,6 +48,8 @@ pub struct TestPlan {
     pub secret_key: String,
     pub output: String,
     pub download_dir: Option<String>,
+    /// A credentials file the scenario reads through the backend.
+    pub import_file: Option<String>,
 }
 
 impl TestPlan {
@@ -64,6 +67,7 @@ impl TestPlan {
             secret_key: need(ENV_SECRET)?,
             output: need(ENV_OUT).unwrap_or_else(|| "e2e-report.json".to_string()),
             download_dir: need(ENV_DOWNLOAD_DIR),
+            import_file: need(ENV_IMPORT_FILE),
         })
     }
 }
@@ -118,6 +122,10 @@ pub fn scenario_script(plan: &TestPlan) -> String {
         .replace("__SECRET__", &json(&plan.secret_key))
         .replace("__BUCKET__", &json(&plan.bucket))
         .replace("__PREFIX__", &json(&plan.prefix))
+        .replace(
+            "__IMPORT_FILE__",
+            &json(plan.import_file.as_deref().unwrap_or("")),
+        )
 }
 
 const SCENARIO: &str = r#"(async () => {
@@ -142,8 +150,14 @@ const SCENARIO: &str = r#"(async () => {
   const $$ = (selector) => Array.from(document.querySelectorAll(selector));
   const invoke = window.__TAURI__.core.invoke;
 
-  /** One animation frame: enough for a framework to apply pending updates. */
-  const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  /**
+   * Yield to the event loop so a framework can apply pending updates.
+   *
+   * Deliberately a timer rather than `requestAnimationFrame`: macOS throttles
+   * animation frames when the window is occluded, and a harness that waits on
+   * them hangs for as long as the window is behind another one.
+   */
+  const frame = () => new Promise((resolve) => setTimeout(resolve, 0));
 
   const wait = async (what, fn, timeout = 15000) => {
     const deadline = Date.now() + timeout;
@@ -371,6 +385,38 @@ const SCENARIO: &str = r#"(async () => {
       if (snippet.includes(__SECRET__)) throw new Error('the secret key was rendered into the snippet');
       await closeModal();
       return 'snippet mirrors the form';
+    });
+
+    await check('import: a credentials file is read from disk', async () => {
+      if (!__IMPORT_FILE__) throw new Error('no import fixture was provided');
+      const contents = await invoke('read_text_file', { path: __IMPORT_FILE__ });
+      if (!contents.includes('import-fixture-bucket')) {
+        throw new Error('the file contents came back wrong: ' + contents.slice(0, 80));
+      }
+      // The same parser the dialog uses must find a connection in it.
+      const found = window.__s3viewerParseImport(contents);
+      if (!found.length) throw new Error('the file parsed to nothing');
+      const first = found[0];
+      if (first.bucket !== 'import-fixture-bucket') {
+        throw new Error('unexpected bucket: ' + first.bucket);
+      }
+      if (first.endpointUrl !== 'https://s3.import-fixture.test') {
+        throw new Error('unexpected endpoint: ' + first.endpointUrl);
+      }
+      return found.length + ' connection(s) parsed from ' + contents.length + ' bytes';
+    });
+
+    await check('import: a missing file reports something readable', async () => {
+      let message = '';
+      try {
+        await invoke('read_text_file', { path: __IMPORT_FILE__ + '.gone' });
+      } catch (error) {
+        message = error.message || String(error);
+      }
+      if (!message) throw new Error('reading a missing file did not fail');
+      if (/^\[object Object\]$/.test(message)) throw new Error('unreadable error: ' + message);
+      if (!/cannot open/i.test(message)) throw new Error('unhelpful message: ' + message);
+      return message.slice(0, 70);
     });
 
     await check('ui: importing is available from the start', async () => {
@@ -1169,12 +1215,13 @@ mod tests {
         TestPlan {
             bucket: "dev-bucket".into(),
             prefix: "_s3viewer-e2e/".into(),
-            endpoint: "https://obs.example.ru".into(),
+            endpoint: "https://s3.example.com".into(),
             region: "us-east-1".into(),
             access_key: "AKIATEST".into(),
             secret_key: "SECRETTEST".into(),
             output: "/tmp/report.json".into(),
             download_dir: None,
+            import_file: None,
         }
     }
 
@@ -1189,13 +1236,14 @@ mod tests {
             "__SECRET__",
             "__BUCKET__",
             "__PREFIX__",
+            "__IMPORT_FILE__",
         ] {
             assert!(
                 !script.contains(placeholder),
                 "{placeholder} was not substituted"
             );
         }
-        assert!(script.contains("https://obs.example.ru"));
+        assert!(script.contains("https://s3.example.com"));
         // The prefix reaches the page as a JSON literal.
         assert!(script.contains("_s3viewer-e2e/"));
         assert!(script.contains("\"E2E dev bucket\""));

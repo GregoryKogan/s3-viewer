@@ -146,6 +146,24 @@ async function main() {
   const reportPath = path.join(workDir, "report.json");
   fs.mkdirSync(configDir, { recursive: true });
   fs.mkdirSync(downloadDir, { recursive: true });
+  // A credentials file in the shape people actually keep: bucket -> keys. The
+  // import dialog has to be able to read one from disk, not just from a paste.
+  const importFile = path.join(workDir, "s3-creds.json");
+  fs.writeFileSync(
+    importFile,
+    JSON.stringify(
+      {
+        "import-fixture-bucket": {
+          access_key: "IMPORTFIXTUREACCESSKEY",
+          secret_key: "import-fixture-secret",
+          endpoint: "https://s3.import-fixture.test",
+          region: "eu-west-1",
+        },
+      },
+      null,
+      2,
+    ),
+  );
   log(`▶ work dir: ${workDir}`);
 
   log("\n▶ run the in-app scenario");
@@ -161,6 +179,7 @@ async function main() {
       S3VIEWER_E2E_ACCESS_KEY: creds.accessKey,
       S3VIEWER_E2E_SECRET_KEY: creds.secretKey,
       S3VIEWER_E2E_DOWNLOAD_DIR: downloadDir,
+      S3VIEWER_E2E_IMPORT_FILE: importFile,
       S3VIEWER_E2E_TRACE: path.join(workDir, "heartbeat.log"),
       // Isolated config: the run must not touch the user's real connections.
       S3VIEWER_CONFIG_DIR: configDir,

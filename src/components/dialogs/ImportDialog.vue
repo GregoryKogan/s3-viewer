@@ -5,7 +5,7 @@ import ModalFrame from "@/components/ui/ModalFrame.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import { textareaClass } from "@/components/ui/controls";
 import { parseImport } from "@/lib/importParse";
-import { pickFiles } from "@/lib/ipc";
+import { api, pickFiles } from "@/lib/ipc";
 import { useConnectionsStore } from "@/stores/connections";
 import { useToastsStore } from "@/stores/toasts";
 import type { ConnectionDraft } from "@/types";
@@ -19,6 +19,7 @@ const connections = useConnectionsStore();
 const toasts = useToastsStore();
 
 const text = ref("");
+const fileName = ref<string | null>(null);
 const drafts = ref<ConnectionDraft[]>([]);
 const problem = ref<string | null>(null);
 const importing = ref(false);
@@ -45,11 +46,18 @@ async function readFile() {
   try {
     const [path] = await pickFiles({ multiple: false });
     if (!path) return;
-    const contents = await fetch(`file://${path}`).then((response) => response.text());
+    // The webview cannot open file:// URLs, so the backend reads it. The path
+    // came from the native dialog, and the command caps the size and insists on
+    // UTF-8.
+    const contents = await api.readTextFile(path);
     text.value = contents;
+    fileName.value = path.split("/").pop() ?? path;
     parse();
-  } catch {
-    toasts.error("Reading a file needs to be done through the dialog; paste the JSON instead.", "Cannot read file");
+    if (!drafts.value.length && !problem.value) {
+      toasts.warn("That file parsed, but no connection was found in it.", "Nothing to import");
+    }
+  } catch (error) {
+    toasts.error((error as Error).message, "Cannot read the file");
   }
 }
 
@@ -89,6 +97,11 @@ async function run() {
     <p class="text-[0.6875rem] leading-relaxed text-muted">
       Paste the JSON credentials file you already use, or a boto3 client snippet. Secrets are
       encrypted locally and never leave this machine.
+    </p>
+
+    <p v-if="fileName" class="flex items-center gap-1.5 text-[0.6875rem] text-muted">
+      <FileUp class="size-3.5 shrink-0" />
+      <span class="font-mono break-all">{{ fileName }}</span>
     </p>
 
     <textarea

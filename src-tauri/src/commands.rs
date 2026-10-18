@@ -1138,6 +1138,55 @@ pub async fn default_upload_dir() -> CmdResult<String> {
     Ok(crate::fsutil::home_dir().display().to_string())
 }
 
+/// Largest file the import dialog will read.
+///
+/// A credentials file is a few kilobytes; the cap exists so that picking the
+/// wrong file cannot pull a gigabyte into the webview.
+const IMPORT_FILE_LIMIT: u64 = 2 * 1024 * 1024;
+
+/// Read a text file the user chose in the native file dialog.
+///
+/// The webview cannot read `file://` URLs, so this has to go through the
+/// backend. The path always comes from a dialog the user completed, and the
+/// result is size-capped and must be valid UTF-8: this reads configuration, not
+/// arbitrary binary content.
+#[tauri::command]
+pub async fn read_text_file(path: String) -> CmdResult<String> {
+    let file = std::path::PathBuf::from(&path);
+    let meta = std::fs::metadata(&file).map_err(|e| {
+        err(AppError::msg(format!(
+            "Cannot open {}: {e}",
+            file.display()
+        )))
+    })?;
+    if !meta.is_file() {
+        return Err(err(AppError::msg(format!(
+            "{} is not a file.",
+            file.display()
+        ))));
+    }
+    if meta.len() > IMPORT_FILE_LIMIT {
+        return Err(err(AppError::msg(format!(
+            "{} is {}, which is too large to import (limit {}).",
+            file.display(),
+            crate::objects::human_size(meta.len() as i64),
+            crate::objects::human_size(IMPORT_FILE_LIMIT as i64)
+        ))));
+    }
+    let bytes = std::fs::read(&file).map_err(|e| {
+        err(AppError::msg(format!(
+            "Cannot read {}: {e}",
+            file.display()
+        )))
+    })?;
+    String::from_utf8(bytes).map_err(|_| {
+        err(AppError::msg(format!(
+            "{} is not UTF-8 text, so it cannot be read as JSON.",
+            file.display()
+        )))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

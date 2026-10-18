@@ -65,6 +65,7 @@ pub fn run() {
             commands::reveal_in_file_manager,
             commands::open_path,
             commands::default_upload_dir,
+            commands::read_text_file,
             e2e::desktop::e2e_setup,
             e2e::desktop::e2e_transfer_check,
             e2e::desktop::e2e_roundtrip_check,
