@@ -25,11 +25,19 @@ const AUTO_DISMISS: Record<ToastLevel, number> = {
   error: 14_000,
 };
 
+export type ToastPauseReason = "hover" | "focus";
+
 interface TimerState {
   handle: ReturnType<typeof setTimeout> | null;
   /** Milliseconds left when the timer is (re)started. */
   remaining: number;
   startedAt: number;
+  /**
+   * Why the countdown is currently held. Hover and keyboard focus are tracked
+   * separately: leaving with the mouse must not restart a toast the reader is
+   * still focused on, and blurring must not override a hover.
+   */
+  pausedBy: Set<ToastPauseReason>;
 }
 
 /**
@@ -62,24 +70,35 @@ export const useToastsStore = defineStore("toasts", () => {
     const timeout = toast.timeout ?? AUTO_DISMISS[toast.level];
     toasts.value = [...toasts.value, { ...toast, id, actions: toast.actions ?? [] }];
     if (timeout > 0) {
-      timers.set(id, { handle: null, remaining: timeout, startedAt: Date.now() });
+      timers.set(id, {
+        handle: null,
+        remaining: timeout,
+        startedAt: Date.now(),
+        pausedBy: new Set(),
+      });
       schedule(id);
     }
     return id;
   }
 
-  function pause(id: number) {
+  function pause(id: number, reason: ToastPauseReason) {
     const state = timers.get(id);
-    if (!state?.handle) return;
-    clearTimeout(state.handle);
-    state.handle = null;
-    state.remaining = Math.max(0, state.remaining - (Date.now() - state.startedAt));
+    if (!state || state.pausedBy.has(reason)) return;
+    // Only bank the elapsed time on the first hold; a second reason must not
+    // subtract the paused interval twice.
+    if (state.pausedBy.size === 0 && state.handle) {
+      clearTimeout(state.handle);
+      state.handle = null;
+      state.remaining = Math.max(0, state.remaining - (Date.now() - state.startedAt));
+    }
+    state.pausedBy.add(reason);
   }
 
-  function resume(id: number) {
+  function resume(id: number, reason: ToastPauseReason) {
     const state = timers.get(id);
-    if (!state || state.handle) return;
-    schedule(id);
+    if (!state) return;
+    state.pausedBy.delete(reason);
+    if (state.pausedBy.size === 0 && !state.handle) schedule(id);
   }
 
   function dismiss(id: number) {

@@ -30,9 +30,18 @@ function confirm() {
 /**
  * Enter confirms, except for a dangerous action: there the default must be the
  * safe choice, so Cancel takes focus and Enter falls through to it (DLG-5).
+ * Cancel and the header X keep their native Enter behaviour (cancel/close);
+ * only Enter elsewhere in the dialog confirms.
  */
 function onEnter(event: KeyboardEvent) {
   if (props.danger) return;
+  const target = event.target;
+  if (
+    target instanceof HTMLElement &&
+    target.closest('[data-testid="confirm-cancel"], [data-testid="modal-close"]')
+  ) {
+    return;
+  }
   event.preventDefault();
   confirm();
 }

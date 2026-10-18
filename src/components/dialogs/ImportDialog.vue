@@ -6,7 +6,7 @@ import AppButton from "@/components/ui/AppButton.vue";
 import { textareaClass } from "@/components/ui/controls";
 import type { ModalSize } from "@/components/ui/types";
 import { parseImport } from "@/lib/importParse";
-import { api, pickFiles } from "@/lib/ipc";
+import { api, ApiError, pickFiles } from "@/lib/ipc";
 import { useConnectionsStore } from "@/stores/connections";
 import { useToastsStore } from "@/stores/toasts";
 import type { ConnectionDraft } from "@/types";
@@ -84,7 +84,14 @@ async function run() {
       const saved = await connections.save({ ...draft, prefix: draft.prefix ?? "" });
       created.push(saved.id);
     } catch (error) {
-      failures.push(`${draft.name}: ${(error as Error).message}`);
+      // Keep the backend's fix-it text in the aggregate toast: one bad
+      // connection often fails for the same reason the hints explain.
+      const lines = [`${draft.name}: ${(error as Error).message}`];
+      if (error instanceof ApiError) {
+        if (error.code) lines.push(`Code ${error.code}`);
+        lines.push(...error.hints);
+      }
+      failures.push(lines.join("\n"));
     }
   }
   importing.value = false;

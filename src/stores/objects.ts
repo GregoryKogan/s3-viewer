@@ -152,7 +152,7 @@ export const useObjectsStore = defineStore("objects", () => {
             requestId: failure.requestId ?? recordedRequestId(),
           };
         }
-        useToastsStore().error((failure as Error).message, "Cannot list this folder");
+        useToastsStore().apiError(failure, "Cannot list this folder");
       }
     } finally {
       clearTimeout(guard!);
@@ -229,7 +229,12 @@ export const useObjectsStore = defineStore("objects", () => {
       // inside the payload.
       requestId: event.error?.requestId ?? null,
     };
-    useToastsStore().error(event.error?.message ?? "listing failed", "Cannot list this folder");
+    // Raise the event as an ApiError so the toast keeps the same hints and code
+    // the inline error state shows; a staged listing has no inline notice.
+    useToastsStore().apiError(
+      new ApiError(event.error ?? { message: "listing failed" }),
+      "Cannot list this folder",
+    );
   }
 
   async function navigate(targetPrefix: string) {

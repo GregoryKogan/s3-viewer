@@ -585,13 +585,33 @@ async function onKeydown(event: KeyboardEvent) {
 // ------------------------------------------------------------------ start-up
 
 /**
- * One-time wiring. `Try again` re-runs `boot`, but listeners and the progress
- * poller must exist exactly once.
+ * One-time wiring. `Try again` re-runs `boot`, but the keyboard/poller wiring
+ * must exist exactly once and successful event subscriptions must not double.
  */
 let globalsAttached = false;
-let ipcListeners: Promise<() => void>[] | null = null;
-let ipcListenersAttached = false;
 let updateCheckScheduled = false;
+
+interface IpcSubscription {
+  register: () => Promise<() => void>;
+  pending: Promise<void> | null;
+  live: boolean;
+}
+
+function ipcSubscription(register: () => Promise<() => void>): IpcSubscription {
+  return { register, pending: null, live: false };
+}
+
+const ipcSubscriptions: IpcSubscription[] = [
+  ipcSubscription(() =>
+    listen<ListingPageEvent>("listing://page", (payload) => objects.onListingPage(payload)),
+  ),
+  ipcSubscription(() =>
+    listen<ListingDoneEvent>("listing://done", (payload) => objects.onListingDone(payload)),
+  ),
+  ipcSubscription(() =>
+    listen<ListingErrorEvent>("listing://error", (payload) => objects.onListingError(payload)),
+  ),
+];
 
 function onWindowResize() {
   ui.clampLayoutToWindow();
@@ -610,15 +630,31 @@ function attachGlobals() {
  *
  * They are created before the first `await` in `boot`, so a slow or failing
  * settings read cannot leave the app running without its listing events
- * (DLG-8). The promises are shared, so a retry cannot subscribe twice.
+ * (DLG-8). A failed registration is not cached as a permanent no-op: `live`
+ * stays false, so the next `boot()` retries just that event. Successful events
+ * stay subscribed, so a retry cannot double-register them.
  */
-function ensureIpcListeners(): Promise<() => void>[] {
-  ipcListeners ??= [
-    listen<ListingPageEvent>("listing://page", (payload) => objects.onListingPage(payload)),
-    listen<ListingDoneEvent>("listing://done", (payload) => objects.onListingDone(payload)),
-    listen<ListingErrorEvent>("listing://error", (payload) => objects.onListingError(payload)),
-  ].map((registration) => registration.catch(() => () => {}));
-  return ipcListeners;
+function ensureIpcListeners(): Promise<void> {
+  const attempts = ipcSubscriptions
+    .filter((subscription) => !subscription.live)
+    .map((subscription) => {
+      subscription.pending ??= subscription
+        .register()
+        .then(
+          (unsubscribe) => {
+            subscription.live = true;
+            unsubscribers.push(unsubscribe);
+          },
+          () => {
+            // Leave `live` false: the next boot retries this event.
+          },
+        )
+        .finally(() => {
+          subscription.pending = null;
+        });
+      return subscription.pending;
+    });
+  return Promise.all(attempts).then(() => undefined);
 }
 
 /** The e2e scenario drives the UI through this surface. */
@@ -713,10 +749,7 @@ async function boot() {
   try {
     await ui.load();
     await connections.load();
-    if (!ipcListenersAttached) {
-      unsubscribers.push(...(await Promise.all(listeners)));
-      ipcListenersAttached = true;
-    }
+    await listeners;
 
     // The first connection opens automatically, which is what a returning user
     // expects: one click less before they can see their files.
@@ -728,6 +761,9 @@ async function boot() {
   } catch (error) {
     bootError.value = error instanceof Error ? error.message : String(error);
     bootState.value = "error";
+    // The config path is the one piece of context DLG-8 asks for and it lives
+    // in a different command than the settings read that just failed.
+    if (!ui.security) void ui.loadSecurity();
   }
 }
 
@@ -781,11 +817,18 @@ function onDrop(paths: string[]) {
         title="Could not start"
         :description="bootError ?? 'The app could not finish starting.'"
       >
+        <p
+          v-if="ui.security?.configPath"
+          class="max-w-full text-[0.6875rem] leading-relaxed break-words text-muted"
+          data-testid="boot-config-path"
+        >
+          Config file: <span class="font-mono break-all">{{ ui.security.configPath }}</span>
+        </p>
         <AppButton variant="primary" data-testid="boot-retry" @click="boot">Try again</AppButton>
       </EmptyState>
     </div>
 
-    <div v-else class="flex min-h-0 flex-1">
+    <div v-else class="flex min-h-0 flex-1" data-app-shell>
       <div class="relative flex min-h-0 shrink-0" :style="{ width: ui.layout.collapsed ? undefined : `${sidebarWidth}px` }">
         <AppSidebar
           @create="createConnection"

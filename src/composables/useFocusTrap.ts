@@ -31,12 +31,30 @@ function candidates(root: HTMLElement): HTMLElement[] {
 }
 
 /**
+ * The control focus should land on when a dialog opens.
+ *
+ * `[autofocus]` is the explicit choice. Otherwise prefer the body content over
+ * the header close button: the first Tab stop should be the form the user came
+ * to fill in, not the X they are most likely to hit by accident.
+ */
+function initialTarget(root: HTMLElement): HTMLElement {
+  const preferred = root.querySelector<HTMLElement>("[autofocus]");
+  if (preferred && !preferred.hasAttribute("disabled") && isVisible(preferred)) {
+    return preferred;
+  }
+  const body = root.querySelector<HTMLElement>("[data-modal-body]");
+  const inBody = body ? candidates(body)[0] : undefined;
+  return inBody ?? candidates(root)[0] ?? root;
+}
+
+/**
  * Keep keyboard focus inside one modal frame.
  *
  * On mount it focuses the element marked `[autofocus]`, otherwise the first
- * focusable control, otherwise the frame (which carries `tabindex="-1"`). Tab
- * and Shift+Tab cycle within that list; on unmount the element that had focus
- * before the dialog opened gets it back.
+ * focusable control in the body (falling back to the whole frame), otherwise the
+ * frame (which carries `tabindex="-1"`). Tab and Shift+Tab cycle within that
+ * list; on unmount the element that had focus before the dialog opened gets it
+ * back.
  *
  * The trap listens on the document because focus starts inside the dialog but
  * may escape if a control unmounts mid-interaction. A stacked dialog is kept in
@@ -85,14 +103,7 @@ export function useFocusTrap(frame: Ref<HTMLElement | null>): void {
   onMounted(() => {
     previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const root = frame.value;
-    if (root && root.offsetParent !== null) {
-      const preferred = root.querySelector<HTMLElement>("[autofocus]");
-      if (preferred && !preferred.hasAttribute("disabled") && isVisible(preferred)) {
-        preferred.focus();
-      } else {
-        (candidates(root)[0] ?? root).focus();
-      }
-    }
+    if (root && root.offsetParent !== null) initialTarget(root).focus();
     document.addEventListener("keydown", onKeydown, true);
   });
 

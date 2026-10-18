@@ -1,8 +1,38 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, watch } from "vue";
 import { useDialogsStore } from "@/stores/dialogs";
 
 const dialogs = useDialogsStore();
+
+/**
+ * The shell behind the modal is made inert so no background control and no
+ * screen-reader virtual cursor can reach it. The dialogue itself is teleported
+ * to `<body>`, outside that subtree.
+ */
+const SHELL_SELECTOR = "[data-app-shell]";
+
+function setShellInert(inert: boolean) {
+  document.querySelector<HTMLElement>(SHELL_SELECTOR)?.toggleAttribute("inert", inert);
+}
+
+// Pre-flush: on close, make the shell interactive again *before* the last frame
+// unmounts and restores focus to its trigger (inert nodes cannot take focus).
+// On open, wait for the frame to mount and take focus before marking the
+// trigger's subtree inert, otherwise the trigger is blurred before it can be
+// remembered as the return target.
+watch(
+  () => dialogs.stack.length,
+  (length) => {
+    if (!length) {
+      setShellInert(false);
+      return;
+    }
+    void nextTick(() => {
+      if (dialogs.stack.length) setShellInert(true);
+    });
+  },
+  { flush: "pre" },
+);
 
 function topDialog() {
   return dialogs.stack[dialogs.stack.length - 1];
@@ -25,7 +55,10 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 onMounted(() => window.addEventListener("keydown", onKeydown, true));
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true));
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKeydown, true);
+  setShellInert(false);
+});
 </script>
 
 <template>

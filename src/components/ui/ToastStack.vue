@@ -16,7 +16,7 @@ function onFocusOut(event: FocusEvent, id: number) {
   const next = event.relatedTarget;
   const current = event.currentTarget as HTMLElement | null;
   if (next instanceof Node && current?.contains(next)) return;
-  toasts.resume(id);
+  toasts.resume(id, "focus");
 }
 </script>
 
@@ -35,9 +35,9 @@ function onFocusOut(event: FocusEvent, id: number) {
         :class="TONES[toast.level]"
         :role="toast.level === 'error' ? 'alert' : 'status'"
         :data-testid="`toast-${toast.level}`"
-        @mouseenter="toasts.pause(toast.id)"
-        @mouseleave="toasts.resume(toast.id)"
-        @focusin="toasts.pause(toast.id)"
+        @mouseenter="toasts.pause(toast.id, 'hover')"
+        @mouseleave="toasts.resume(toast.id, 'hover')"
+        @focusin="toasts.pause(toast.id, 'focus')"
         @focusout="onFocusOut($event, toast.id)"
       >
         <div class="flex min-w-0 flex-col gap-0.5">
