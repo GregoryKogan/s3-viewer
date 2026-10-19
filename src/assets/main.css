@@ -348,6 +348,20 @@
     background-clip: content-box;
   }
 
+  /* The collapsed sidebar is a 64px rail. A visible scrollbar sits on top of the
+     avatars in a column that narrow, so the rail hides it; the list still
+     scrolls with the wheel, the trackpad and `scrollIntoView`. Hiding it also
+     keeps the avatars centred, which a reserved scrollbar gutter would break. */
+  .rail-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .rail-scrollbar::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
   /* The window is decorated, so the OS title bar owns dragging; no part of the
      webview needs an app-region rule. */
 

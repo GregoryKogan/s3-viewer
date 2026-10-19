@@ -182,7 +182,10 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
          action that belongs at this level. The collapse control lives in the
          footer, so this row never has to squeeze three things into a narrow
          column. -->
-    <div v-if="collapsed" class="flex shrink-0 items-center justify-center px-2 pt-1 pb-1.5">
+    <!-- The 8px top padding matches the address row in the header, so the
+         collapsed New target sits level with the bucket name instead of being
+         pinned to the window edge. -->
+    <div v-if="collapsed" class="flex shrink-0 items-center justify-center px-2 pt-2 pb-1.5">
       <button
         type="button"
         class="grid size-9 place-items-center rounded-control bg-accent text-white transition-colors hover:bg-accent-hover"
@@ -219,7 +222,8 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
     <div
       id="connection-list"
       ref="list"
-      class="scrollbar flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-2"
+      class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-2"
+      :class="collapsed ? 'rail-scrollbar' : 'scrollbar'"
       data-testid="connection-list"
       @keydown="onCardsKeydown"
     >

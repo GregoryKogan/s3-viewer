@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { ArrowUp, ChevronRight, Database, Pencil } from "@lucide/vue";
+import { ChevronRight, Database, Pencil } from "@lucide/vue";
 import { api, isNotFound } from "@/lib/ipc";
 import { prefixSegments, s3Uri } from "@/lib/format";
 import { shortcutLabel } from "@/lib/keyboard";
@@ -38,8 +38,6 @@ const atScopeRoot = computed(() => objects.prefix === (connection.value?.prefix 
 const absolute = computed(() =>
   connection.value ? s3Uri(connection.value.bucket, objects.prefix) : "",
 );
-
-const upTitle = computed(() => `Up one level (${shortcutLabel("ArrowUp")})`);
 
 const addressPlaceholder = computed(
   () => `s3://bucket/path/to/object  (${shortcutLabel("L")})`,
@@ -253,17 +251,9 @@ watch(
       @click="onCrumbRowClick"
     >
       <template v-if="connection">
-        <button
-          type="button"
-          class="grid size-6 shrink-0 place-items-center rounded-control text-subtle transition-colors hover:bg-hover hover:text-content disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle"
-          :disabled="atScopeRoot"
-          :title="upTitle"
-          data-testid="navigate-up"
-          @click="objects.navigateUp()"
-        >
-          <ArrowUp class="size-3.5" />
-        </button>
-
+        <!-- No dedicated up arrow: the crumbs already walk up the path, and ⌘↑
+             (Backspace on Linux) still does. A disabled arrow at the scope root
+             read as a broken control. -->
         <button
           type="button"
           class="flex max-w-64 items-center gap-1 rounded-control px-1.5 py-0.5 transition-colors hover:bg-hover"
