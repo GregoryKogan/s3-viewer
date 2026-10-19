@@ -10,6 +10,7 @@ const {
   useConnectionsStore,
   useObjectsStore,
   useToastsStore,
+  useUiStore,
 } = await loadTs("tests/js/objectsHarness.ts");
 
 /**
@@ -174,4 +175,22 @@ test("a listing failure toasts once when the rejection arrives before the event"
   });
   assert.equal(errorToasts().length, 1);
   toasts.clear();
+});
+
+test("revealing a hidden preview opens the panel", async () => {
+  const { objects } = seed("a");
+  const ui = useUiStore();
+  ui.layout.previewHidden = true;
+  const entry = {
+    key: "docs/notes.txt",
+    name: "notes.txt",
+    isFolder: false,
+    size: 5,
+    kind: "text",
+  };
+
+  await objects.previewEntry(entry, { force: true, reveal: true });
+
+  assert.equal(ui.previewHidden, false);
+  assert.equal(objects.previewKey, entry.key);
 });

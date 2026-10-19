@@ -118,7 +118,7 @@ function rowMenu(entry: (typeof objects.entries)[number], point: { clientX: numb
             icon: Eye,
             run: () => {
               objects.focus(entry.key);
-              void objects.previewEntry(entry, { force: true });
+              void objects.previewEntry(entry, { force: true, reveal: true });
             },
           },
       {
@@ -532,7 +532,7 @@ async function onFind(open: boolean) {
   objectList.value?.scrollToRow(index);
   objectList.value?.focusList();
   if (open && entry.isFolder) await objects.navigate(entry.key);
-  else await objects.previewEntry(entry, { force: open });
+  else await objects.previewEntry(entry, { force: open, reveal: open });
   // Opening a folder collapses an expanded preview and brings the list back;
   // the first focus call happened while that list could still be hidden.
   objectList.value?.focusList();
@@ -892,7 +892,7 @@ async function onKeydown(event: KeyboardEvent) {
     const entry = rows.find((item) => item.key === focused);
     if (!entry) return;
     if (entry.isFolder) await objects.navigate(entry.key);
-    else await objects.previewEntry(entry, { force: true });
+    else await objects.previewEntry(entry, { force: true, reveal: true });
     return;
   }
 

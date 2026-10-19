@@ -142,9 +142,10 @@ file name and a size. This one shows you the file.
 ## Browsing and operations
 
 - **Finder-style list.** Breadcrumbs, sorting, filtering, multi-select, shift-click
-  ranges, type-ahead and full keyboard control. A plain click selects one row and
-  previews it; a double click opens a folder. Checkboxes stay out of the way until
-  you select something.
+  ranges, type-ahead and full keyboard control. A plain click moves the cursor and
+  previews the row without selecting it; <kbd>⌘</kbd>/<kbd>Ctrl</kbd>-click selects,
+  and a double click opens a folder or brings a hidden preview back. Checkboxes
+  stay out of the way until you select something.
 - **The breadcrumb is the connection root.** A connection pins one endpoint, one
   bucket and one prefix, so you cannot wander out of the prefix it was set up
   for. The address bar (<kbd>⌘L</kbd> or the pencil) accepts `s3://bucket/key`,

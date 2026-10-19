@@ -41,9 +41,9 @@ const showType = computed(() => viewportWidth.value >= 820);
 const canWrite = computed(() => connections.canWriteActive);
 
 /**
- * Anyone can see what a click did: the first selected row brings the checkbox
- * column and the header box with it. Nothing is selected, nothing is reserved:
- * the list carries no empty gutter and no box over every row.
+ * An explicit selection brings the checkbox column and the header box with it.
+ * Nothing is selected, nothing is reserved: the list carries no empty gutter and
+ * no box over every row.
  */
 const checkboxColumn = computed(() => objects.selected.size > 0);
 
@@ -184,8 +184,9 @@ onMounted(() => {
 onBeforeUnmount(() => observer?.disconnect());
 
 /**
- * A plain click selects exactly one row and shows its preview; Cmd/Ctrl toggles
- * one row, Shift replaces the selection with the range from the anchor.
+ * A plain click is the pointer's arrow key: it moves the cursor and shows the
+ * preview without touching the selection. Cmd/Ctrl toggles one row, Shift
+ * replaces the selection with the range from the cursor's anchor.
  */
 function onClick(entry: (typeof rows.value)[number], event: MouseEvent) {
   const modifier = event.metaKey || event.ctrlKey;
@@ -198,7 +199,6 @@ function onClick(entry: (typeof rows.value)[number], event: MouseEvent) {
     objects.toggleSelected(entry.key);
     objects.focus(entry.key);
   } else {
-    objects.selectOnly(entry.key);
     objects.focus(entry.key);
   }
   void objects.previewEntry(entry);
@@ -249,7 +249,7 @@ function onContextMenu(entry: (typeof rows.value)[number], event: MouseEvent) {
 
 async function onActivate(entry: (typeof rows.value)[number]) {
   if (entry.isFolder) await objects.navigate(entry.key);
-  else await objects.previewEntry(entry, { force: true });
+  else await objects.previewEntry(entry, { force: true, reveal: true });
 }
 
 defineExpose({ scrollToRow, focusList, pageRows });

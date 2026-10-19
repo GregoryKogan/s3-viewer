@@ -177,7 +177,7 @@ async function submit() {
       finishEditing("list");
       objects.focus(entry.key);
       objects.selectAll([entry.key]);
-      await objects.previewEntry(entry, { force: true });
+      await objects.previewEntry(entry, { force: true, reveal: true });
       return;
     } catch (metaError) {
       // Only a real 404 means "not an object, maybe a folder". A denied or

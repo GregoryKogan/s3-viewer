@@ -308,9 +308,8 @@ const SCENARIO: &str = r#"(async () => {
     item.click();
   };
   const clickRow = (label) => {
-    // Preview-only checks do not care about the selection, and a leftover
-    // multi-selection from an earlier check must not leak into them. A plain
-    // click then selects exactly the row it hits, as a file manager does.
+    // A plain click only moves the cursor and opens the preview; it never
+    // selects. Clear a leftover set so a preview-only check cannot inherit it.
     window.__s3viewer.state.objects.clearSelection();
     // The list is virtualised: only the rows near the viewport exist in the DOM,
     // so scroll the target into the painted window before looking for it.
@@ -644,7 +643,7 @@ const SCENARIO: &str = r#"(async () => {
       if (rows.length < 3) throw new Error('not enough rows');
       const click = (row, init = {}) =>
         row.dispatchEvent(new MouseEvent('click', { bubbles: true, view: window, ...init }));
-      click(rows[0]);
+      click(rows[0], { metaKey: true });
       click(rows[2], { metaKey: true });
       await frame();
       if (window.__s3viewer.state.objects.selected.size !== 2) {
@@ -654,6 +653,12 @@ const SCENARIO: &str = r#"(async () => {
       await frame();
       const left = window.__s3viewer.state.objects.selected.size;
       if (left !== 1) throw new Error('a second ⌘-click did not remove: ' + left);
+      // A plain click moves the cursor without touching the explicit set.
+      click(rows[1]);
+      await frame();
+      if (window.__s3viewer.state.objects.selected.size !== 1) {
+        throw new Error('a plain click changed the selection');
+      }
       window.__s3viewer.state.objects.clearSelection();
       await frame();
       return 'added then removed one row';
@@ -706,7 +711,8 @@ const SCENARIO: &str = r#"(async () => {
     await check('ui: the toolbar reports one selection and acts on a set', async () => {
       window.__s3viewer.state.objects.clearSelection();
       await frame();
-      await clickRowWhenReady('sample.json');
+      const row = await clickRowWhenReady('sample.json');
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true, view: window }));
       await frame();
       if (!$('[data-testid=selection-count]')) throw new Error('the selection count is missing');
       for (const id of ['download', 'copy', 'move', 'delete', 'copy-uri']) {
@@ -1286,27 +1292,35 @@ const SCENARIO: &str = r#"(async () => {
       return toast.textContent.replace(/\s+/g, ' ').slice(0, 80);
     });
 
-    await check('ui: a single click selects exactly one row and opens its preview', async () => {
+    await check('ui: a plain click moves the cursor and previews without selecting', async () => {
       window.__s3viewer.state.objects.clearSelection();
+      window.__s3viewer.state.objects.focus(null);
       await frame();
       const row = clickRow('sample.json');
       await frame();
-      const selected = Array.from(window.__s3viewer.state.objects.selected);
-      if (selected.length !== 1) {
-        throw new Error('a plain click selected ' + selected.length + ' row(s)');
+      const objects = window.__s3viewer.state.objects;
+      if (objects.selected.size !== 0) {
+        throw new Error('a plain click selected ' + objects.selected.size + ' row(s)');
       }
-      if (!selected[0].endsWith('sample.json')) {
-        throw new Error('the click selected the wrong row: ' + selected.join(', '));
+      if (objects.focusedKey !== row.dataset.key) {
+        throw new Error('the click did not move the cursor: ' + objects.focusedKey);
       }
-      const previewKey = window.__s3viewer.state.objects.previewKey;
+      const previewKey = objects.previewKey;
       if (!previewKey || !previewKey.includes('sample.json')) {
         throw new Error('the click did not open the preview: ' + previewKey);
       }
-      if (row.getAttribute('aria-selected') !== 'true') {
-        throw new Error('the selected row is not marked aria-selected');
+      if (row.getAttribute('aria-selected') !== 'false') {
+        throw new Error('the row is marked selected after a plain click');
+      }
+      if ($('[data-testid=selection-count]')) {
+        throw new Error('a plain click showed a selection count');
+      }
+      if ($$('[data-testid^=row-check-]').length) {
+        throw new Error('a plain click brought the checkbox column with it');
       }
 
-      // A second plain click must replace the selection, not add to it.
+      // A second plain click moves the cursor and the preview again, never a
+      // selection.
       const secondIndex = window.__s3viewer.state.visible.findIndex((e) => e.name === 'notes.txt');
       if (secondIndex < 0) throw new Error('the second row for the click probe is missing');
       window.__s3viewer.scrollToRow(secondIndex);
@@ -1316,17 +1330,17 @@ const SCENARIO: &str = r#"(async () => {
       if (!second) throw new Error('the second row is not rendered');
       second.dispatchEvent(new MouseEvent('click', { bubbles: true, view: window }));
       await frame();
-      const replaced = Array.from(window.__s3viewer.state.objects.selected);
-      if (replaced.length !== 1 || !replaced[0].endsWith('notes.txt')) {
-        throw new Error('a second plain click did not replace the selection: '
-          + replaced.length + ' row(s): ' + replaced.join(', '));
+      if (objects.selected.size !== 0) {
+        throw new Error('a second plain click selected ' + objects.selected.size + ' row(s)');
       }
-      const ariaSelected = $$('.object-row')
-        .filter((r) => r.getAttribute('aria-selected') === 'true');
-      if (ariaSelected.length !== 1 || ariaSelected[0] !== second) {
-        throw new Error('expected only the second row to be aria-selected, got ' + ariaSelected.length);
+      if (objects.focusedKey !== second.dataset.key) {
+        throw new Error('the cursor did not follow the second click: ' + objects.focusedKey);
       }
-      return 'one row, then the selection followed a second plain click';
+      const movedPreview = objects.previewKey;
+      if (!movedPreview || !movedPreview.includes('notes.txt')) {
+        throw new Error('the preview did not follow the second click: ' + movedPreview);
+      }
+      return 'cursor and preview followed two plain clicks, nothing selected';
     });
 
     await check('ui: checkboxes appear with the first selected row, never at rest', async () => {
@@ -1340,15 +1354,14 @@ const SCENARIO: &str = r#"(async () => {
       if ($('[data-testid=select-all]')) throw new Error('the select-all box is rendered at rest');
 
       const rows = $$('.object-row');
-      rows[0].dispatchEvent(new MouseEvent('click', { bubbles: true, view: window }));
+      rows[0].dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true, view: window }));
       await frame();
       const selected = window.__s3viewer.state.objects.selected.size;
       if (selected !== 1) {
-        throw new Error('clicking a row selected ' + selected + ' row(s) instead of one');
+        throw new Error('⌘-clicking a row selected ' + selected + ' row(s) instead of one');
       }
-      // One selected row is already a selection: it shows a checked box, the
-      // select-all box and the cursor. That is what tells the user a click
-      // registered instead of leaving the list looking unchanged.
+      // One explicitly selected row is already a selection: it shows a checked
+      // box, the select-all box and the cursor.
       const boxes = $$('[data-testid^=row-check-]');
       if (boxes.length !== rows.length) {
         throw new Error('one selected row rendered ' + boxes.length + ' checkbox(es) for '
@@ -1584,6 +1597,24 @@ const SCENARIO: &str = r#"(async () => {
       $('[data-testid=toggle-preview]').click();
       if ($('#preview').hidden) throw new Error('the panel did not come back');
       return 'toggled';
+    });
+
+    await check('preview: double-clicking a file opens a hidden panel', async () => {
+      const ui = window.__s3viewer.state.ui;
+      const objects = window.__s3viewer.state.objects;
+      if (!ui.previewHidden) $('[data-testid=toggle-preview]').click();
+      await wait('the panel to hide', async () => (ui.previewHidden ? true : null), 5000);
+
+      const row = clickRow('sample.json');
+      row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      await wait('the panel to open', async () => (ui.previewHidden ? null : true), 5000);
+      await wait('the preview to load', () => $('[data-testid=preview-code]'), 20000);
+      const name = $('[data-testid=preview-name]').textContent.trim();
+      if (name !== 'sample.json') throw new Error('the wrong preview opened: ' + name);
+      if (objects.selected.size !== 0) {
+        throw new Error('the double click selected ' + objects.selected.size + ' row(s)');
+      }
+      return 'hidden panel reopened on the double-clicked file';
     });
 
     await check('preview: an auto-hidden panel fetches on reveal', async () => {
@@ -1862,7 +1893,9 @@ const SCENARIO: &str = r#"(async () => {
 
       // A checkbox is a control, not a text field: Space on select-all must not
       // reach the list and toggle the cursor row behind it.
-      clickRow('notes.txt');
+      const notes = clickRow('notes.txt');
+      await frame();
+      notes.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true, view: window }));
       await frame();
       const selectAll = $('[data-testid=select-all]');
       if (!selectAll) throw new Error('select-all is missing after selecting a row');

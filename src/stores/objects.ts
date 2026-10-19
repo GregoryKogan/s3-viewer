@@ -350,7 +350,7 @@ export const useObjectsStore = defineStore("objects", () => {
     selectionAnchor.value = key;
   }
 
-  /** Select exactly one row, like a plain click in a file manager. */
+  /** Select exactly one row, replacing any previous set. */
   function selectOnly(key: string) {
     selected.value = new Set([key]);
     selectionAnchor.value = key;
@@ -500,9 +500,13 @@ export const useObjectsStore = defineStore("objects", () => {
    * A folder has no payload: its key is remembered so the panel can render a
    * folder card (PRV-2), and no request is made. While the panel is hidden the
    * key is remembered without fetching; showing the panel calls
-   * `refreshPreview` (PRV-4).
+   * `refreshPreview` (PRV-4). `reveal` is the explicit open gesture: it asks a
+   * hidden panel to come back instead of only remembering the key.
    */
-  async function previewEntry(entry: ObjectEntry, { force = false } = {}) {
+  async function previewEntry(
+    entry: ObjectEntry,
+    { force = false, reveal = false } = {},
+  ) {
     if (entry.isFolder) {
       clearPreview();
       previewKey.value = entry.key;
@@ -527,6 +531,9 @@ export const useObjectsStore = defineStore("objects", () => {
       previewErrorDetail.value = null;
       previewUnavailable.value = null;
       note(previewLog, `deferred ${entry.key}`);
+      // An explicit open (double-click, Enter) brings the panel back. Its
+      // visibility watcher does the fetch, so the key is requested exactly once.
+      if (reveal) useUiStore().togglePreview();
       return;
     }
 

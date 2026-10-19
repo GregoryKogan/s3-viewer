@@ -81,7 +81,7 @@ the resizer, in the PDF viewer, on a native media element, or with `⌘`, `⌥` 
 
 | Action | Keys |
 | --- | --- |
-| Move the cursor | `↑` / `↓` |
+| Move the cursor | `↑` / `↓`, or a plain click |
 | Extend the selection | `⇧↑` / `⇧↓`, `⇧PageUp` / `⇧PageDown`, `⇧Home` / `⇧End` |
 | Move by a page | `PageUp` / `PageDown` (the visible row count) |
 | First / last row | `Home` / `End`, `⌘↓` for the end |
@@ -90,12 +90,15 @@ the resizer, in the PDF viewer, on a native media element, or with `⌘`, `⌥` 
 | Open the folder or preview the file | `Enter`, double-click |
 | Type-ahead | printable characters |
 
-A plain click selects one row and previews it; the selection and the cursor are
-separate states. The cursor always has its own marker (bright left bar, hairline
-ring and a stronger tint) so it stays visible inside a selected set. With no
-cursor the list draws a quiet inset ring instead, so Tab never lands on an
-invisible pane. A cursor the filter hides is inert: `Space`, `Delete` and the
-menu ignore it.
+A plain click is the pointer's arrow key: it moves the cursor and previews the
+row without changing the selection. Select one row with `⌘`/`Ctrl`-click or
+`Space`, and extend it with `⇧`-click or `⇧`+arrows; the checkboxes only appear
+once something is selected. `Enter` or a double click on a file also brings a
+hidden preview panel back. The selection and the cursor are separate states.
+The cursor always has its own marker (bright left bar, hairline ring and a
+stronger tint) so it stays visible inside a selected set. With no cursor the
+list draws a quiet inset ring instead, so Tab never lands on an invisible pane.
+A cursor the filter hides is inert: `Space`, `Delete` and the menu ignore it.
 
 ### Filter
 
