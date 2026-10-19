@@ -87,6 +87,19 @@ function toError(raw: unknown): ApiError {
   return new ApiError(typeof raw === "string" ? raw : JSON.stringify(raw));
 }
 
+/**
+ * Whether a failure means "this key does not exist".
+ *
+ * Probes that ask "is this address an object or a folder?" may legitimately fall
+ * back on a 404. Any other failure (denied, network, bad credentials) must be
+ * reported as itself instead of being mislabelled "Nothing found".
+ */
+export function isNotFound(error: unknown): boolean {
+  return (
+    error instanceof ApiError && (error.kind === "notFound" || error.status === 404)
+  );
+}
+
 let cachedInvoke: InvokeFn | null = null;
 
 async function resolveInvoke(): Promise<InvokeFn> {

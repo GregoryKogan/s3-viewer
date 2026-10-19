@@ -243,9 +243,12 @@ watch(windowTitle, (title) => void applyWindowTitle(title), { immediate: true })
 // ---------------------------------------------------------------- connections
 
 async function openConnection(connection: Connection) {
+  // Drop the previous session's preview before the active connection moves:
+  // `loadFolder` streams, and a panel still showing A's object against B would
+  // offer Download/Copy URI for a key B never listed (final review C1).
+  objects.clearPreview();
   connections.setActive(connection.id);
   await objects.loadFolder(connection.prefix ?? "");
-  objects.clearPreview();
   void connections.probeOnConnect(connection.id);
 }
 
@@ -270,13 +273,18 @@ async function editConnection(connection: Connection | undefined = connections.a
     { dismissible: false },
   );
   if (!saved) return;
+  // `connections.save` has already replaced the active connection's bucket and
+  // endpoint. A preview fetched from the old target cannot answer for the new
+  // one, so it goes before the probe and the reload (final review C1).
+  const editedActive = saved.id === connections.activeId;
+  if (editedActive) objects.clearPreview();
   // `connections.save` already reloaded the list; probe again because the saved
   // credentials may differ from the ones the badge was probed with.
   await connections.refreshCapabilities(saved.id);
   // Only the active session holds a snapshot of the edited connection. Editing
   // another connection must leave the open folder, its filter and its selection
   // exactly as they were (CON-1).
-  if (saved.id === connections.activeId) await objects.reloadSession();
+  if (editedActive) await objects.reloadSession();
 }
 
 /** Right-click or the `⋯` button on a connection card: actions, not activation. */
@@ -526,6 +534,11 @@ async function onKeydown(event: KeyboardEvent) {
   }
   if (dialogs.isOpen() || editing) return;
 
+  // An open context menu owns the keyboard until it closes (it handles Escape
+  // itself in a capture listener). Its item buttons are interactive targets, so
+  // the global Delete/⌘↑ bindings must not fire behind it.
+  if (menu.value) return;
+
   // Collapsing an expanded preview is global: the user just clicked its Expand
   // button, and Escape must not depend on where focus landed. It is also the
   // smaller, more reversible step, so only the next Escape clears the selection.
@@ -535,9 +548,10 @@ async function onKeydown(event: KeyboardEvent) {
     return;
   }
 
-  if (isInteractiveTarget(event.target)) return;
-
-  // Escape stays global, so it can clear the selection from a focused preview.
+  // Escape, ⌘↑ and Delete are global gestures, not list-navigation keys. They
+  // must keep working when focus sits on a toolbar or dialog button, which is
+  // where a closing dialog restores it; the interactive-target guard below is
+  // only for keys that would otherwise scroll or activate that control.
   if (key === "Escape") {
     objects.clearSelection();
     return;
@@ -551,10 +565,25 @@ async function onKeydown(event: KeyboardEvent) {
     return;
   }
 
+  // ⌘⌫ (the Mac Delete key) and the forward-delete key both delete on macOS.
+  const deletePressed = IS_MAC
+    ? (meta && key === "Backspace") || key === "Delete"
+    : key === "Delete";
+  if (deletePressed && objects.deleteTargets.length) {
+    event.preventDefault();
+    await actions.deleteSelection();
+    return;
+  }
+
   // The PDF viewer handles its own keys; moving the list underneath it would
   // be a second, invisible response to one key (KEY-1). Escape and the
   // Cmd/Ctrl shortcuts above stay global; bare Backspace is list-only.
   if (inKeyScope(event.target)) return;
+
+  // A key on a button, link or menu belongs to that control. Space and Enter
+  // must keep their native activation there; only the list's own keys are
+  // handled above and below this guard.
+  if (isInteractiveTarget(event.target)) return;
 
   if (!IS_MAC && key === "Backspace" && !meta && objects.prefix) {
     event.preventDefault();
@@ -592,16 +621,6 @@ async function onKeydown(event: KeyboardEvent) {
     if (!entry) return;
     if (entry.isFolder) await objects.navigate(entry.key);
     else await objects.previewEntry(entry, { force: true });
-    return;
-  }
-
-  // ⌘⌫ (the Mac Delete key) and the forward-delete key both delete on macOS.
-  const deletePressed = IS_MAC
-    ? (meta && key === "Backspace") || key === "Delete"
-    : key === "Delete";
-  if (deletePressed && objects.deleteTargets.length) {
-    event.preventDefault();
-    await actions.deleteSelection();
     return;
   }
 
@@ -907,7 +926,7 @@ function onDrop(paths: string[]) {
             <EmptyState
               :icon="PanelLeft"
               title="No connection selected"
-              description="Pick a connection on the left, or create a new one. Each connection pins one bucket and one prefix."
+              description="Pick a connection on the left, or create a new one. Each connection opens one folder in one bucket; browsing stays inside that folder."
               data-testid="no-connection-state"
             >
               <AppButton variant="primary" @click="createConnection">New connection</AppButton>

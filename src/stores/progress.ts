@@ -157,31 +157,6 @@ export const useProgressStore = defineStore("transfers", () => {
     // prune failed. The next poll drops ids the backend no longer reports.
   }
 
-  /** Wait for one queued transfer to settle. */
-  async function waitFor(id: string, timeoutMs = 120_000): Promise<ProgressView> {
-    const deadline = Date.now() + timeoutMs;
-    watched.add(id);
-    try {
-      for (;;) {
-        const fresh = await poll();
-        const item = items.value.find((entry) => entry.id === id);
-        if (item && item.state !== "running") return item;
-        const cached = settled.get(id);
-        if (cached) return cached;
-        // A successful poll that no longer reports the id means it was pruned
-        // after Clear. Resolve instead of waiting for a row that cannot return.
-        if (fresh && !item) return clearedOutcome(id);
-        if (Date.now() > deadline) {
-          return { id, label: "", done: 0, state: "failed", error: "timed out waiting for the transfer" };
-        }
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-    } finally {
-      watched.delete(id);
-      settled.delete(id);
-    }
-  }
-
   /**
    * Wait for a batch of transfers to settle with one shared poll loop.
    *
@@ -266,7 +241,6 @@ export const useProgressStore = defineStore("transfers", () => {
     start,
     stop,
     clear,
-    waitFor,
     waitForAll,
     registerRetry,
     hasRetry,

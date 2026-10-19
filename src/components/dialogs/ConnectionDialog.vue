@@ -135,6 +135,13 @@ const capabilities = ref<Capabilities | null>(null);
 const probeError = ref<string | null>(null);
 /** Hints/code/request id for a failed probe: the fix-it text matters most here. */
 const probeDetail = ref<ListErrorDetail | null>(null);
+/**
+ * The Test button lives in the footer but its answer renders mid-form. These
+ * refs bring the answer into view, so a result below the fold cannot be missed
+ * (final review minor 11).
+ */
+const probeErrorBlock = ref<HTMLElement | null>(null);
+const probeOutputBlock = ref<HTMLElement | null>(null);
 const errors = ref<Record<string, string>>({});
 
 const snippet = computed(() =>
@@ -253,6 +260,11 @@ async function testConnection() {
   } finally {
     probing.value = false;
   }
+  // `block: "nearest"` scrolls only when the answer is actually off-screen, so
+  // a short dialog does not jump for no reason.
+  await nextTick();
+  const answer = probeError.value ? probeErrorBlock.value : probeOutputBlock.value;
+  answer?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 async function save() {
@@ -492,6 +504,7 @@ async function copySnippet() {
 
     <div
       v-if="probeError"
+      ref="probeErrorBlock"
       class="rounded-control border border-danger/40 bg-danger-soft px-2.5 py-1.5"
       data-testid="probe-error"
     >
@@ -503,7 +516,12 @@ async function copySnippet() {
       />
     </div>
 
-    <div v-if="capabilities" class="flex flex-col gap-1.5" data-testid="probe-output">
+    <div
+      v-if="capabilities"
+      ref="probeOutputBlock"
+      class="flex flex-col gap-1.5"
+      data-testid="probe-output"
+    >
       <div class="flex flex-wrap gap-1.5">
         <span
           v-for="item in [

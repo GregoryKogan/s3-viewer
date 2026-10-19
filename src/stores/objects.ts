@@ -103,6 +103,11 @@ export const useObjectsStore = defineStore("objects", () => {
     // folder (or a different connection on the same prefix) starts fresh.
     const continuing =
       sessionConnectionId.value === connection.id && nextPrefix === prefix.value;
+    // A preview belongs to the session that fetched it. Drop it before the
+    // session id moves to another connection: the listing streams, so the panel
+    // would otherwise show the old connection's object under the new one's
+    // Download/Copy URI for the whole load.
+    if (sessionConnectionId.value !== connection.id) clearPreview();
     sessionConnectionId.value = connection.id;
     prefix.value = nextPrefix;
     entries.value = [];
@@ -152,7 +157,8 @@ export const useObjectsStore = defineStore("objects", () => {
             requestId: failure.requestId ?? recordedRequestId(),
           };
         }
-        useToastsStore().apiError(failure, "Cannot list this folder");
+        // The `listing://error` event owns the failure toast; toasting here too
+        // showed every failed listing twice (final review minor 9).
       }
     } finally {
       clearTimeout(guard!);

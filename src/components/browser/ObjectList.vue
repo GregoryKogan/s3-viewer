@@ -312,7 +312,7 @@ defineExpose({ scrollToRow });
             :code="objects.errorDetail?.code"
             :request-id="objects.errorDetail?.requestId"
             :retry="objects.reload"
-            retry-testid="retry-listing"
+            retry-test-id="retry-listing"
             class="w-full text-left"
           />
         </EmptyState>

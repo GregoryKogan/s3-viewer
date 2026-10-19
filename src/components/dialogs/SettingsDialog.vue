@@ -92,6 +92,9 @@ const checking = ref(false);
 
 /** Manual check: unlike the launch check, every outcome here is worth a message. */
 async function checkForUpdates() {
+  // The button stays clickable while checking (`busy`, not `loading`); a
+  // second click must not stack a second UpdateDialog.
+  if (checking.value) return;
   checking.value = true;
   try {
     if (await updates.check()) {
@@ -278,7 +281,7 @@ async function save() {
         </div>
         <AppButton
           :icon="RefreshCw"
-          :loading="checking"
+          :busy="checking"
           data-testid="settings-check-updates"
           @click="checkForUpdates"
         >

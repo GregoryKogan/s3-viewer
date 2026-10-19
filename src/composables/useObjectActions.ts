@@ -15,11 +15,6 @@ import UploadConflictDialog, {
 } from "@/components/dialogs/UploadConflictDialog.vue";
 import type { ObjectEntry, ProgressView, TransferResult, UploadPlanItem } from "@/types";
 
-interface Options {
-  /** Called after a mutation so the caller can refresh whatever it owns. */
-  onChanged?: () => void;
-}
-
 /** How an upload treats keys that already exist. */
 export interface UploadPolicy {
   overwrite: boolean;
@@ -68,15 +63,13 @@ interface CopyRequest {
  * the context menu and the keyboard shortcuts all share one implementation — and
  * so the confirmation policy is applied in exactly one place.
  */
-export function useObjectActions(options: Options = {}) {
+export function useObjectActions() {
   const objects = useObjectsStore();
   const connections = useConnectionsStore();
   const transfers = useProgressStore();
   const ui = useUiStore();
   const toasts = useToastsStore();
   const dialogs = useDialogs();
-
-  const changed = () => options.onChanged?.() ?? objects.reload();
 
   const targets = computed<ObjectEntry[]>(() =>
     objects.selected.size ? objects.selectedEntries : [],
@@ -756,6 +749,5 @@ export function useObjectActions(options: Options = {}) {
     createFile,
     deleteSelection,
     transferSelection,
-    changed,
   };
 }

@@ -75,6 +75,7 @@ const checkboxVisible = computed(
         type="checkbox"
         class="size-3.5 cursor-pointer accent-accent"
         :checked="props.selected"
+        :aria-label="`Select ${props.entry.name}`"
         :data-testid="`row-check-${props.entry.name}`"
         @click="emit('toggleCheck', props.entry, $event)"
       />

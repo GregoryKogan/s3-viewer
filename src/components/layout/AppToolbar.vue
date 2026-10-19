@@ -8,11 +8,9 @@ import { humanSize } from "@/lib/format";
 import { IS_MAC, shortcutLabel } from "@/lib/keyboard";
 import { useObjectActions } from "@/composables/useObjectActions";
 
-const emit = defineEmits<{ moved: [] }>();
-
 const objects = useObjectsStore();
 const connections = useConnectionsStore();
-const actions = useObjectActions({ onChanged: () => emit("moved") });
+const actions = useObjectActions();
 
 const selectionCount = computed(() => objects.selected.size);
 /** Folders cannot be downloaded, so a folder-only selection has nothing to do. */

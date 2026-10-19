@@ -13,6 +13,14 @@ const LAYOUT_DEFAULTS: LayoutSettings = {
 const SIDEBAR_MIN = 190;
 const SIDEBAR_MAX = 520;
 const PREVIEW_MIN = 260;
+/**
+ * The narrowest the object list may get before the preview yields.
+ *
+ * Matches the `Modified` threshold in `ObjectList.vue`: below this the list
+ * drops dates again, and at the 900 px window minimum the default panels leave
+ * it about 216 px (LST-1).
+ */
+const LIST_MIN_WIDTH = 480;
 
 /** Must match `public/theme-init.js`, which resolves it before the app loads. */
 const THEME_STORAGE_KEY = "s3viewer.theme";
@@ -35,11 +43,20 @@ export const useUiStore = defineStore("ui", () => {
   const security = ref<SecurityStatus | null>(null);
   const layout = ref<LayoutSettings>({ ...LAYOUT_DEFAULTS });
   /**
+   * An automatic hide caused by a narrow window. Deliberately not persisted:
+   * resizing the window must not rewrite the layout the user saved (LST-1).
+   */
+  const previewAutoHidden = ref(false);
+  /** A deliberate "show preview" at a narrow width survives the next resize check. */
+  let previewAutoHidePaused = false;
+  /**
    * Whether the preview column is hidden, stored with the rest of the layout so
    * it survives a restart like the panel widths do. Read-only by design: the
    * store owns every mutation.
    */
-  const previewHidden = computed(() => layout.value.previewHidden);
+  const previewHidden = computed(
+    () => layout.value.previewHidden || previewAutoHidden.value,
+  );
   /**
    * The preview has the main area to itself. Deliberately not persisted: a
    * maximised preview is a momentary inspection, not a workspace layout.
@@ -60,6 +77,7 @@ export const useUiStore = defineStore("ui", () => {
     rememberTheme(theme.value);
     applyTheme();
     applyLayoutDom();
+    updatePreviewAutoHide();
     ready.value = true;
   }
 
@@ -183,11 +201,50 @@ export const useUiStore = defineStore("ui", () => {
   }
 
   function togglePreview() {
-    layout.value.previewHidden = !layout.value.previewHidden;
+    if (previewHidden.value) {
+      // An auto-hidden panel was hidden by the window, not by the user: showing
+      // it must not flip the persisted preference, and the next narrow resize
+      // must not take it away again.
+      if (previewAutoHidden.value) {
+        previewAutoHidden.value = false;
+        previewAutoHidePaused = true;
+        applyLayoutDom();
+        return;
+      }
+      layout.value.previewHidden = false;
+      // The user asked for the panel at this width; keep it until the window is
+      // wide enough for the automatic rule to apply again.
+      previewAutoHidePaused = true;
+      applyLayoutDom();
+      persistLayout();
+      return;
+    }
+    layout.value.previewHidden = true;
+    previewAutoHidden.value = false;
     // A hidden panel has no expanded state to come back to.
-    if (layout.value.previewHidden) collapsePreview();
+    collapsePreview();
     applyLayoutDom();
     persistLayout();
+  }
+
+  /**
+   * Give the list its minimum width back by hiding the preview on a narrow
+   * window (LST-1). Runs on boot and on every resize through
+   * `clampLayoutToWindow`; the layout write and its persistence are untouched,
+   * so a transient window size cannot overwrite the saved preference.
+   */
+  function updatePreviewAutoHide() {
+    const windowWidth = globalThis.innerWidth;
+    if (!windowWidth) return;
+    const sidebar = layout.value.collapsed ? 0 : layout.value.sidebar;
+    const listWidth = windowWidth - sidebar - layout.value.preview;
+    if (listWidth >= LIST_MIN_WIDTH) {
+      previewAutoHidePaused = false;
+      previewAutoHidden.value = false;
+    } else if (!layout.value.previewHidden && !previewAutoHidePaused) {
+      previewAutoHidden.value = true;
+    }
+    applyLayoutDom();
   }
 
   /**
@@ -211,6 +268,7 @@ export const useUiStore = defineStore("ui", () => {
     layout.value.sidebar = clamp(layout.value.sidebar, SIDEBAR_MIN, maxSidebar);
     const maxPreview = Math.max(PREVIEW_MIN + 20, Math.round(globalThis.innerWidth * 0.7));
     layout.value.preview = clamp(layout.value.preview, PREVIEW_MIN, maxPreview);
+    updatePreviewAutoHide();
   }
 
   return {

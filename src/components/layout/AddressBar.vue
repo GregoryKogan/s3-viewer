@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { ArrowUp, ChevronRight, Database, Pencil } from "@lucide/vue";
-import { api } from "@/lib/ipc";
+import { api, isNotFound } from "@/lib/ipc";
 import { prefixSegments, s3Uri } from "@/lib/format";
 import { shortcutLabel } from "@/lib/keyboard";
 import { asFolderPrefix } from "@/lib/keys";
@@ -146,7 +146,10 @@ async function submit() {
         invalid.value = `Opened ${parent || "/"}, but ${fullKey} is not in the listing.`;
       }
       return;
-    } catch {
+    } catch (metaError) {
+      // Only a real 404 means "not an object, maybe a folder". A denied or
+      // failed probe is the answer, not a reason to show "Nothing found".
+      if (!isNotFound(metaError)) throw metaError;
       // Not an object: it may still be a folder prefix.
       const folder = `${root}${asFolderPrefix(key)}`;
       try {
@@ -162,13 +165,17 @@ async function submit() {
         await api.objectMeta(connection.value.id, folder);
         editing.value = false;
         await objects.navigate(folder);
-      } catch {
+      } catch (folderError) {
+        // The marker probe 403s as readily as it 404s; only the latter is
+        // genuinely "no such address".
+        if (!isNotFound(folderError)) throw folderError;
         invalid.value = `Nothing found at ${s3Uri(connection.value.bucket, fullKey)}.`;
         toasts.warn(invalid.value, "Not found");
       }
     }
   } catch (error) {
     invalid.value = (error as Error).message;
+    toasts.apiError(error, "Cannot open this address");
   } finally {
     busy.value = false;
   }
