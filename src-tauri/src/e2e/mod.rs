@@ -338,6 +338,30 @@ const SCENARIO: &str = r#"(async () => {
     row.click();
     return row;
   };
+  /**
+   * Click a row only once the listing is settled and actually contains it.
+   *
+   * A background reload (from a just-finished delete or copy) clears `visible`
+   * and sets `loading` without any user action, so a bare clickRow can race it
+   * even when the caller checked a moment earlier.
+   */
+  const clickRowWhenReady = async (label, timeout = 20000) => {
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      const objects = window.__s3viewer.state.objects;
+      if (!objects.loading && !objects.awaitingFirstPage && rowNames().includes(label)) {
+        return clickRow(label);
+      }
+      if (Date.now() > deadline) {
+        throw new Error('the listing never settled on ' + label
+          + ' :: loading=' + objects.loading
+          + ' awaiting=' + objects.awaitingFirstPage
+          + ' rows=' + rowNames().join(',')
+          + ' prefix=' + JSON.stringify(objects.prefix));
+      }
+      await sleep(200);
+    }
+  };
   const closeModal = async () => {
     const button = $('[data-testid=modal-close]');
     if (button) button.click();
@@ -567,12 +591,22 @@ const SCENARIO: &str = r#"(async () => {
       if (!/sample\.(json|py)$/.test(together)) {
         throw new Error('the second letter restarted the search: ' + together);
       }
-      await sleep(800);
+      await sleep(1200);
       press(list, 'n');
-      const notes = await wait('notes.txt after the timeout', async () => {
+      const isNotes = async () => {
         const key = window.__s3viewer.state.objects.focusedKey;
         return key && key.endsWith('/notes.txt') ? key : null;
-      });
+      };
+      let notes;
+      try {
+        notes = await wait('notes.txt after the timeout', isNotes, 4000);
+      } catch {
+        // The reset timer can fire late under load; a second "n" after another
+        // timeout starts a fresh search instead of extending "sa".
+        await sleep(900);
+        press(list, 'n');
+        notes = await wait('notes.txt on the second try', isNotes, 4000);
+      }
       return notes.split('/').pop() + ' after "sa" → "n"';
     });
 
@@ -1622,7 +1656,7 @@ const SCENARIO: &str = r#"(async () => {
         return rowNames().length >= 12 ? true : null;
       }, 20000);
       if ($('[data-testid=modal]')) await closeModal();
-      clickRow('sample.py');
+      await clickRowWhenReady('sample.py');
       $('[data-testid=copy]').click();
       const input = await wait('the copy dialog', () => $('[data-testid=transfer-prefix]'), 10000);
       if ($('[data-testid=transfer-confirm]').disabled) throw new Error('Copy starts disabled');
@@ -1635,7 +1669,7 @@ const SCENARIO: &str = r#"(async () => {
       }
       await closeModal();
 
-      clickRow('sample.py');
+      await clickRowWhenReady('sample.py');
       $('[data-testid=move]').click();
       const dest = await wait('the move dialog', () => $('[data-testid=transfer-prefix]'), 10000);
       dest.value = __PREFIX__ + 'moved/';
