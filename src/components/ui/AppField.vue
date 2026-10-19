@@ -26,6 +26,28 @@ const baseId = useId();
 const descriptionId = `${baseId}-description`;
 const fallbackControlId = `${baseId}-control`;
 let control: HTMLElement | null = null;
+/**
+ * Whether AppField put `aria-invalid` on the control itself. A call site may
+ * bind the attribute independently (ConnectionDialog does); that value is left
+ * alone and only the attribute this component owns is removed again.
+ */
+let ownsAriaInvalid = false;
+
+function syncInvalid(element: HTMLElement) {
+  if (props.error) {
+    // The field's error wins while it exists, but an attribute the call site
+    // manages is never taken over.
+    if (ownsAriaInvalid) {
+      element.setAttribute("aria-invalid", "true");
+    } else if (!element.hasAttribute("aria-invalid")) {
+      element.setAttribute("aria-invalid", "true");
+      ownsAriaInvalid = true;
+    }
+  } else if (ownsAriaInvalid) {
+    element.removeAttribute("aria-invalid");
+    ownsAriaInvalid = false;
+  }
+}
 
 /**
  * Point the label and the description at the slot's control.
@@ -48,6 +70,8 @@ function syncControl() {
   else ids.delete(descriptionId);
   if (ids.size) element.setAttribute("aria-describedby", [...ids].join(" "));
   else element.removeAttribute("aria-describedby");
+
+  syncInvalid(element);
 }
 
 onMounted(() => {
@@ -72,7 +96,12 @@ watch(
       </span>
       <slot />
     </label>
-    <span v-if="props.error" :id="descriptionId" class="text-meta leading-snug text-danger">
+    <span
+      v-if="props.error"
+      :id="descriptionId"
+      class="text-meta leading-snug text-danger"
+      role="alert"
+    >
       {{ props.error }}
     </span>
     <span

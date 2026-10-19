@@ -135,16 +135,20 @@ async function submit() {
     try {
       await api.objectMeta(connection.value.id, fullKey);
       const parent = fullKey.slice(0, fullKey.lastIndexOf("/") + 1);
-      editing.value = false;
+      // Navigate first so the listing settles before the entry is looked up.
+      // Closing the editor before that would swallow the error below: the form
+      // (and its `address-error`) unmounts while `invalid` is still null.
       if (parent !== objects.prefix) await objects.navigate(parent);
       const entry = objects.entries.find((item) => item.key === fullKey);
-      if (entry) {
-        objects.focus(entry.key);
-        objects.selectAll([entry.key]);
-        await objects.previewEntry(entry, { force: true });
-      } else {
+      if (!entry) {
+        // Stay in edit mode so the message is actually rendered and focusable.
         invalid.value = `Opened ${parent || "/"}, but ${fullKey} is not in the listing.`;
+        return;
       }
+      editing.value = false;
+      objects.focus(entry.key);
+      objects.selectAll([entry.key]);
+      await objects.previewEntry(entry, { force: true });
       return;
     } catch (metaError) {
       // Only a real 404 means "not an object, maybe a folder". A denied or

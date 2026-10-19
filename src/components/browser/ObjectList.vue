@@ -200,6 +200,10 @@ function onContextMenu(entry: (typeof rows.value)[number], event: MouseEvent) {
   // row the user pointed at (SEL-4).
   if (!objects.selected.has(entry.key)) objects.selectOnly(entry.key);
   objects.focus(entry.key, { keepAnchor: true });
+  // The menu restores focus to whatever was active when it opened. A
+  // right-click does not move DOM focus, so capture the list itself and let
+  // the menu return focus here rather than to a stale control.
+  scroller.value?.focus({ preventScroll: true });
   emit("contextmenu", entry, event);
 }
 

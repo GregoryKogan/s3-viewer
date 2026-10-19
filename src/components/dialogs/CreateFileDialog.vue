@@ -43,15 +43,18 @@ function submit() {
   const value = name.value.trim();
   if (!value) {
     error.value = "A file name is required.";
+    nameInput.value?.focus();
     return;
   }
   if (value.endsWith("/")) {
     error.value = "The name must not end with “/”.";
+    nameInput.value?.focus();
     return;
   }
   const problem = validateKey(value);
   if (problem) {
     error.value = problem;
+    nameInput.value?.focus();
     return;
   }
   props.resolve({ name: value, content: content.value });

@@ -92,7 +92,7 @@ const status = computed(() => {
         data-testid="copy-uri"
         @click="actions.copySelectionUris()"
       >
-        Copy URI
+        Copy S3 URI
       </AppButton>
       <AppButton
         :icon="MoveRight"

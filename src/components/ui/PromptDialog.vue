@@ -39,11 +39,13 @@ function submit() {
   const candidate = value.value.trim();
   if (!candidate) {
     error.value = "A value is required.";
+    input.value?.focus();
     return;
   }
   const problem = props.validate?.(candidate) ?? null;
   if (problem) {
     error.value = problem;
+    input.value?.focus();
     return;
   }
   props.resolve(candidate);

@@ -49,11 +49,11 @@ const previewOpen = computed(() => !ui.previewHidden);
 
 /**
  * Showing the panel is what triggers the deferred preview fetch: the store
- * remembers the key while the panel is hidden (PRV-4).
+ * remembers the key while the panel is hidden (PRV-4). The panel itself watches
+ * visibility, so an automatic reveal (widening the window) fetches too.
  */
 function togglePreviewPanel() {
   ui.togglePreview();
-  if (!ui.previewHidden) void objects.refreshPreview();
 }
 </script>
 

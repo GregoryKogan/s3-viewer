@@ -71,7 +71,10 @@ async function retry(item: ProgressView) {
 
 async function dismiss() {
   await progress.clear();
-  toasts.dismiss(0);
+  // This panel owns the progress list, not a toast: batch summaries are pushed
+  // by the action that started the batch (useObjectActions) and carry their own
+  // timeout. `dismiss(0)` never matched anything because toast ids start at 1,
+  // so there is no id to dismiss here.
 }
 </script>
 
@@ -86,7 +89,7 @@ async function dismiss() {
         Transfers
         <template v-if="progress.running.length">({{ progress.running.length }})</template>
       </span>
-      <AppButton variant="ghost" size="sm" @click="dismiss">Clear</AppButton>
+      <AppButton variant="ghost" size="sm" data-testid="transfer-clear" @click="dismiss">Clear</AppButton>
     </div>
 
     <div

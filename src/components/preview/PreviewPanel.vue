@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref, watchEffect } from "vue";
+import { computed, defineAsyncComponent, onMounted, ref, watch, watchEffect } from "vue";
 import {
   Copy,
   Download,
@@ -61,6 +61,18 @@ watchEffect(() => {
 onMounted(() => {
   if (aside.value) aside.value.hidden = ui.previewHidden;
 });
+
+/**
+ * A hidden panel defers the fetch and keeps the key. Any route back to
+ * visibility must fetch it: the header button, but also the automatic reveal
+ * when a narrow window widens again, which nobody clicked (PRV-4).
+ */
+watch(
+  () => ui.previewHidden,
+  (hidden) => {
+    if (!hidden) void objects.refreshPreview();
+  },
+);
 
 const data = computed(() => objects.preview);
 const isFolder = computed(() => Boolean(objects.previewKey?.endsWith("/")));

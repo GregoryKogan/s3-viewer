@@ -114,8 +114,8 @@ const bucketInput = ref<HTMLInputElement | null>(null);
 const accessKeyInput = ref<HTMLInputElement | null>(null);
 const secretInput = ref<HTMLInputElement | null>(null);
 
-/** The order the user reads the required fields in, for the first error. */
-const FIELD_ORDER = ["name", "endpoint", "region", "bucket", "accessKey", "secret"] as const;
+/** The order the fields are drawn in, so the first error is the first one seen. */
+const FIELD_ORDER = ["name", "bucket", "endpoint", "region", "accessKey", "secret"] as const;
 
 function inputFor(key: (typeof FIELD_ORDER)[number]): HTMLInputElement | null {
   return {
@@ -226,8 +226,23 @@ async function validate(): Promise<boolean> {
 }
 
 async function testConnection() {
-  if (!form.value.endpointUrl || !form.value.accessKeyId || !form.value.bucket) {
-    errors.value = { endpoint: "Endpoint, access key and bucket are needed to test." };
+  // Name the field that is actually missing: one message under Endpoint made
+  // users hunt for the bucket they had not filled in.
+  const missing: Record<string, string> = {};
+  if (!form.value.bucket.trim()) {
+    missing.bucket = "The bucket name is required to test the connection.";
+  }
+  if (!form.value.endpointUrl.trim()) {
+    missing.endpoint = "The endpoint URL is required to test the connection.";
+  }
+  if (!form.value.accessKeyId.trim()) {
+    missing.accessKey = "The access key ID is required to test the connection.";
+  }
+  if (Object.keys(missing).length) {
+    errors.value = missing;
+    await nextTick();
+    const first = FIELD_ORDER.find((key) => missing[key]);
+    if (first) inputFor(first)?.focus({ preventScroll: true });
     return;
   }
   probing.value = true;

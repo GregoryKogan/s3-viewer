@@ -278,9 +278,10 @@ async function editConnection(connection: Connection | undefined = connections.a
   // one, so it goes before the probe and the reload (final review C1).
   const editedActive = saved.id === connections.activeId;
   if (editedActive) objects.clearPreview();
-  // `connections.save` already reloaded the list; probe again because the saved
-  // credentials may differ from the ones the badge was probed with.
-  await connections.refreshCapabilities(saved.id);
+  // `connections.save` already reloaded the list and dropped the stored
+  // capabilities. Probe again only when this connection asks for probing at all:
+  // "Detect permissions" off must mean no hidden write probe after Save.
+  if (saved.security.detectPermissions) await connections.refreshCapabilities(saved.id);
   // Only the active session holds a snapshot of the edited connection. Editing
   // another connection must leave the open folder, its filter and its selection
   // exactly as they were (CON-1).
@@ -492,6 +493,12 @@ async function onKeydown(event: KeyboardEvent) {
   const lower = key.toLowerCase();
   const editing = isEditableTarget(event.target) || isEditableTarget(document.activeElement);
 
+  // A modal owns every key: a global shortcut must not act on the inert shell
+  // behind it (⌘N stacking a form on Settings, ⌘R reloading a hidden list, ⌘L
+  // focusing the address bar behind the dialog). Escape stays with the dialog
+  // host, which handles it in a capture listener.
+  if (dialogs.isOpen()) return;
+
   if (meta && lower === "r") {
     event.preventDefault();
     await objects.reload();
@@ -532,7 +539,11 @@ async function onKeydown(event: KeyboardEvent) {
     objects.selectAll(objects.visibleEntries.map((entry) => entry.key));
     return;
   }
-  if (dialogs.isOpen() || editing) return;
+
+  // The shell shortcuts above still work while a text field has focus (⌘R
+  // refreshes a filtered list), but the list keys below would steal typed
+  // characters, Space, Enter and Escape from the field.
+  if (editing) return;
 
   // An open context menu owns the keyboard until it closes (it handles Escape
   // itself in a capture listener). Its item buttons are interactive targets, so
@@ -765,6 +776,9 @@ function publishHarness() {
       const entry = objects.entries.find((item) => item.key === key);
       if (entry) void objects.previewEntry(entry, { force: true });
     },
+    // The native picker cannot be driven; the suite hands the chosen paths
+    // straight to the same queue the picker feeds (docs/e2e-gui-testing.md §11).
+    queueUploads: (paths: string[]) => actions.queueUploads(paths),
     objects,
     connections,
     toasts,
