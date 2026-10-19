@@ -235,6 +235,9 @@ Outputs land in `src-tauri/target/release/bundle/`:
 - macOS: `dmg/S3 Viewer_<version>_<arch>.dmg` and `macos/S3 Viewer.app`
 - Linux: `deb/` and `appimage/`
 
+End-to-end testing against a real bucket is documented separately:
+[`docs/e2e-gui-testing.md`](docs/e2e-gui-testing.md).
+
 `CI=true` matters for the `.dmg`: without it the bundler asks Finder to lay out the
 disk-image window, which fails when the terminal lacks Automation permission
 (`AppleEvent timed out`). The `.app` is produced either way.

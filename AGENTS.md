@@ -28,6 +28,12 @@ CI=true pnpm tauri build               # package for the current platform
 before tagging. CI runs the frontend build, the Rust tests and the JS tests, then
 bundles.
 
+`pnpm test:e2e` drives the real window against a real bucket. It needs S3
+credentials and it creates and deletes objects, so read
+[`docs/e2e-gui-testing.md`](docs/e2e-gui-testing.md) first — it covers the
+credentials, the guardrails, how to read a failure, and what the suite cannot
+test.
+
 **Local builds must keep working without a signing key.** That is why
 `bundle.createUpdaterArtifacts` is *not* in `tauri.conf.json`: the bundler refuses
 to build when it is on and no key is present. Only CI passes it:

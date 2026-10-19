@@ -123,7 +123,8 @@ pub fn maybe_run(app: &AppHandle, core: &Arc<AppCore>, plan: &TestPlan, slot: Ar
 /// the run. If the time limit expires, the last partial report is returned
 /// instead of a bare timeout, so the evidence survives.
 async fn await_report(app: &AppHandle, slot: &Arc<ReportSlot>) -> AppResult<serde_json::Value> {
-    let deadline = std::time::Instant::now() + SCENARIO_TIMEOUT;
+    let started = std::time::Instant::now();
+    let deadline = started + SCENARIO_TIMEOUT;
     loop {
         let latest = slot.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if let Some(report) = &latest {
@@ -143,14 +144,10 @@ async fn await_report(app: &AppHandle, slot: &Arc<ReportSlot>) -> AppResult<serd
                             .append(true)
                             .open(path)
                         {
-                            let _ = writeln!(
-                                file,
-                                "{:.0}s {active}",
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_secs_f32())
-                                    .unwrap_or_default()
-                            );
+                            // Elapsed time, not a wall-clock stamp: the point of
+                            // the line is how far into the run a check got.
+                            let _ =
+                                writeln!(file, "{:.0}s {active}", started.elapsed().as_secs_f64());
                         }
                     }
                 }
