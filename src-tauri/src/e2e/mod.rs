@@ -488,7 +488,15 @@ const SCENARIO: &str = r#"(async () => {
       const text = card.textContent;
       if (/not probed/.test(text)) throw new Error('capabilities were not probed: ' + text);
       if (!/read-write/.test(text)) throw new Error('expected a read-write badge, got: ' + text);
-      return text.replace(/\s+/g, ' ').trim();
+      // The dot is health, not permissions: a probed connection that answers is
+      // green, and its tooltip talks about reachability rather than rights.
+      const dot = $('[data-testid=connection-health-' + connectionId + ']');
+      if (!dot) throw new Error('the health dot is missing');
+      if (!/(^|\s)bg-ok(\s|$)/.test(dot.className)) {
+        throw new Error('the working connection has a health dot with class "' + dot.className + '"');
+      }
+      if (!/reachable/i.test(dot.title)) throw new Error('unhelpful health tooltip: ' + dot.title);
+      return text.replace(/\s+/g, ' ').trim() + ' · health green';
     });
 
     await check('ui: opening the connection lists every fixture', async () => {
@@ -673,6 +681,34 @@ const SCENARIO: &str = r#"(async () => {
       press(second, 'Escape');
       await wait('the second menu to close', async () => ($('[data-testid=context-menu]') ? null : true));
       return '3 selected inside, 1 when pointed outside, focus restored';
+    });
+
+    await check('ui: the toolbar reports one selection and acts on a set', async () => {
+      window.__s3viewer.state.objects.clearSelection();
+      await frame();
+      await clickRowWhenReady('sample.json');
+      await frame();
+      if (!$('[data-testid=selection-count]')) throw new Error('the selection count is missing');
+      for (const id of ['download', 'copy', 'move', 'delete', 'copy-uri']) {
+        if ($('[data-testid=' + id + ']')) {
+          throw new Error('the toolbar repeats the single-row action "' + id + '"');
+        }
+      }
+
+      const rows = $$('.object-row');
+      const other = rows.find((row) => row.querySelector('.row-label').textContent !== 'sample.json');
+      if (!other) throw new Error('no second row to extend the selection');
+      other.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true, view: window }));
+      await frame();
+      for (const id of ['download', 'copy', 'move', 'delete']) {
+        if (!$('[data-testid=' + id + ']')) {
+          throw new Error('the bulk toolbar is missing "' + id + '"');
+        }
+      }
+      press($('[data-testid=object-list]'), 'Escape');
+      await frame();
+      if ($('[data-testid=selection-count]')) throw new Error('Escape did not clear the selection');
+      return 'one row: count only; two rows: bulk actions; Escape clears';
     });
 
     await check('ui: the address bar edits in place and explains bad addresses', async () => {
@@ -1433,14 +1469,12 @@ const SCENARIO: &str = r#"(async () => {
       return 'expanded, Escape collapsed, Close hid the panel';
     });
 
-    await check('preview: the header downloads and copies the shown object', async () => {
+    await check('preview: the header downloads without repeating the URI action', async () => {
       clickRow('sample.json');
       await wait('the JSON preview', () => $('[data-testid=preview-code]'));
-      $('[data-testid=preview-copy-uri]').click();
-      const toast = await wait('the copied URI', () => {
-        const found = $$('[data-testid^=toast-]').filter((node) => /s3:\/\/.*sample\.json/.test(node.textContent));
-        return found.length ? found[found.length - 1] : null;
-      }, 10000);
+      if ($('[data-testid=preview-copy-uri]')) {
+        throw new Error('the Copy S3 URI button is back in the preview header');
+      }
       $('[data-testid=preview-download]').click();
       const done = await wait('the panel download', async () => {
         const items = await invoke('transfer_progress');
@@ -1449,7 +1483,7 @@ const SCENARIO: &str = r#"(async () => {
         return finished.length ? finished[finished.length - 1] : null;
       }, 60000);
       if (!done.resultPath) throw new Error('the panel download reported no destination');
-      return 'URI toast + ' + String(done.resultPath).split('/').pop();
+      return String(done.resultPath).split('/').pop();
     });
 
     await check('preview: the panel can be hidden and shown again', async () => {
@@ -1657,7 +1691,9 @@ const SCENARIO: &str = r#"(async () => {
       }, 20000);
       if ($('[data-testid=modal]')) await closeModal();
       await clickRowWhenReady('sample.py');
-      $('[data-testid=copy]').click();
+      // A single row's actions live in its context menu, not in the toolbar.
+      const copyMenu = await rowMenu('sample.py');
+      menuClick(copyMenu, 'Copy to');
       const input = await wait('the copy dialog', () => $('[data-testid=transfer-prefix]'), 10000);
       if ($('[data-testid=transfer-confirm]').disabled) throw new Error('Copy starts disabled');
       input.value = __PREFIX__;
@@ -1670,7 +1706,8 @@ const SCENARIO: &str = r#"(async () => {
       await closeModal();
 
       await clickRowWhenReady('sample.py');
-      $('[data-testid=move]').click();
+      const moveMenu = await rowMenu('sample.py');
+      menuClick(moveMenu, 'Move to');
       const dest = await wait('the move dialog', () => $('[data-testid=transfer-prefix]'), 10000);
       dest.value = __PREFIX__ + 'moved/';
       fire(dest, 'input');

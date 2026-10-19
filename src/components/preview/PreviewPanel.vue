@@ -213,15 +213,6 @@ function onToggleView(view: "rendered" | "raw") {
           @click="download()"
         />
         <AppButton
-          size="sm"
-          variant="ghost"
-          :icon="Copy"
-          aria-label="Copy s3:// URI"
-          title="Copy s3:// URI"
-          data-testid="preview-copy-uri"
-          @click="copyUri()"
-        />
-        <AppButton
           v-if="isFolder"
           size="sm"
           variant="ghost"

@@ -68,60 +68,64 @@ const status = computed(() => {
       New file
     </AppButton>
 
-    <!-- The create actions stay put; the bulk actions append to them exactly
-         while a selection exists. -->
+    <!-- One selected row is the common case: its actions live in the row menu
+         and in the preview header, so the bar only reports the selection. The
+         bulk actions appear for a real set, where neither of those can act on
+         every row at once (SEL-5). -->
     <template v-if="selectionCount">
       <span class="mx-1 h-4 w-px bg-line" />
       <span class="text-xs font-medium text-content" data-testid="selection-count">
         {{ selectionCount }} selected
       </span>
-      <AppButton
-        :icon="Download"
-        :disabled="fileSelectionCount === 0"
-        :title="fileSelectionCount
-          ? `Download ${fileSelectionCount} file(s) to one folder`
-          : 'Folders cannot be downloaded; select at least one file'"
-        data-testid="download"
-        @click="actions.downloadSelection()"
-      >
-        Download
-      </AppButton>
-      <AppButton
-        :icon="Copy"
-        title="Copy the S3 URIs of the selected objects"
-        data-testid="copy-uri"
-        @click="actions.copySelectionUris()"
-      >
-        Copy S3 URI
-      </AppButton>
-      <AppButton
-        :icon="MoveRight"
-        :disabled="!canWrite"
-        title="Copy the selected objects to another folder"
-        data-testid="copy"
-        @click="actions.transferSelection(false)"
-      >
-        Copy to…
-      </AppButton>
-      <AppButton
-        :icon="MoveRight"
-        :disabled="!canWrite"
-        title="Move the selected objects to another folder"
-        data-testid="move"
-        @click="actions.transferSelection(true)"
-      >
-        Move to…
-      </AppButton>
-      <AppButton
-        variant="danger"
-        :icon="Trash2"
-        :disabled="!canWrite"
-        :title="`Delete the selected objects (${deleteShortcut})`"
-        data-testid="delete"
-        @click="actions.deleteSelection()"
-      >
-        Delete
-      </AppButton>
+      <template v-if="selectionCount > 1">
+        <AppButton
+          :icon="Download"
+          :disabled="fileSelectionCount === 0"
+          :title="fileSelectionCount
+            ? `Download ${fileSelectionCount} file(s) to one folder`
+            : 'Folders cannot be downloaded; select at least one file'"
+          data-testid="download"
+          @click="actions.downloadSelection()"
+        >
+          Download
+        </AppButton>
+        <AppButton
+          :icon="Copy"
+          title="Copy the S3 URIs of the selected objects"
+          data-testid="copy-uri"
+          @click="actions.copySelectionUris()"
+        >
+          Copy S3 URIs
+        </AppButton>
+        <AppButton
+          :icon="MoveRight"
+          :disabled="!canWrite"
+          title="Copy the selected objects to another folder"
+          data-testid="copy"
+          @click="actions.transferSelection(false)"
+        >
+          Copy to…
+        </AppButton>
+        <AppButton
+          :icon="MoveRight"
+          :disabled="!canWrite"
+          title="Move the selected objects to another folder"
+          data-testid="move"
+          @click="actions.transferSelection(true)"
+        >
+          Move to…
+        </AppButton>
+        <AppButton
+          variant="danger"
+          :icon="Trash2"
+          :disabled="!canWrite"
+          :title="`Delete the selected objects (${deleteShortcut})`"
+          data-testid="delete"
+          @click="actions.deleteSelection()"
+        >
+          Delete
+        </AppButton>
+      </template>
       <AppButton
         variant="ghost"
         :icon="X"
