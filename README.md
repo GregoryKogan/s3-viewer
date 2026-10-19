@@ -79,60 +79,60 @@ file name and a size. This one shows you the file.
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/icons/eye.svg" width="38" alt="" />
+      <img src="site/assets/icons/eye.svg" width="38" alt="" />
       <h3>Preview first</h3>
       <p>Images, audio, video, PDFs, Markdown, JSON, CSV and Parquet render in a side panel. A file it cannot show is refused with the reason, not a blank pane.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/icons/zap.svg" width="38" alt="" />
+      <img src="site/assets/icons/zap.svg" width="38" alt="" />
       <h3>Streamed, not downloaded</h3>
       <p>Media plays through ranged <code>s3stream://</code> reads: playback starts on the first bytes, and seeking fetches only what you seek to.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/icons/database.svg" width="38" alt="" />
+      <img src="site/assets/icons/database.svg" width="38" alt="" />
       <h3>S3 only</h3>
       <p>Any S3-compatible endpoint, not just AWS. Signature V4 or legacy V2, path-style or virtual-host addressing, and both request-checksum behaviours.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/icons/terminal.svg" width="38" alt="" />
+      <img src="site/assets/icons/terminal.svg" width="38" alt="" />
       <h3>boto3-shaped</h3>
       <p>Every connection field maps one-to-one onto the equivalent <code>boto3.client("s3", ...)</code> or <code>Config(...)</code> argument, and the form shows the snippet as you type. Paste a credentials JSON or a boto3 snippet to import.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/icons/shield-check.svg" width="38" alt="" />
+      <img src="site/assets/icons/shield-check.svg" width="38" alt="" />
       <h3>Credentials stay local</h3>
       <p>Secrets are sealed with XChaCha20-Poly1305 under a master key held in the OS keychain. No telemetry; the only background request is the update check against GitHub Releases.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/icons/badge-check.svg" width="38" alt="" />
+      <img src="site/assets/icons/badge-check.svg" width="38" alt="" />
       <h3>Honest about permissions</h3>
       <p>A probe reports whether these credentials can list, read, write and delete before you rely on them. Per-connection read-only mode and confirmations for delete and overwrite.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/icons/layers.svg" width="38" alt="" />
+      <img src="site/assets/icons/layers.svg" width="38" alt="" />
       <h3>Large folders stay fast</h3>
       <p>Listings stream in pages and only the rows on screen are rendered, so a prefix with a hundred thousand objects scrolls like any other.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/icons/keyboard.svg" width="38" alt="" />
+      <img src="site/assets/icons/keyboard.svg" width="38" alt="" />
       <h3>Keyboard first</h3>
       <p>Every action has a keyboard path: arrows move between panes, <kbd>⌘L</kbd> accepts an <code>s3://</code> address, <kbd>⌘D</kbd> downloads, <kbd>⌘⇧C</kbd> copies URIs, <kbd>⇧F10</kbd> opens the row menu.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/icons/table.svg" width="38" alt="" />
+      <img src="site/assets/icons/table.svg" width="38" alt="" />
       <h3>Text, code, tables</h3>
       <p>Markdown renders with a sanitised preview and a raw toggle. Code is highlighted for about 30 languages, JSON is pretty-printed, CSV becomes a table and Parquet shows its schema and first rows.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/icons/arrow-right-left.svg" width="38" alt="" />
+      <img src="site/assets/icons/arrow-right-left.svg" width="38" alt="" />
       <h3>Copy and move</h3>
       <p>Send a selection to another folder or another saved connection with a server-side copy. A file can travel between buckets without passing through your disk.</p>
     </td>
