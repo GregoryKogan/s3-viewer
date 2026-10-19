@@ -29,6 +29,7 @@ watch(
       controls
       preload="metadata"
       class="w-full"
+      data-keyscope
       data-testid="preview-audio"
     />
     <video
@@ -39,6 +40,7 @@ watch(
       preload="metadata"
       playsinline
       class="max-h-full w-full rounded-control bg-black"
+      data-keyscope
       data-testid="preview-video"
     />
   </div>

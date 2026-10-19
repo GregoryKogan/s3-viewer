@@ -52,10 +52,18 @@ onBeforeUnmount(() => {
     <div
       v-if="updates.notes"
       class="scrollbar max-h-40 overflow-y-auto rounded-control border border-line bg-inset p-3 text-meta leading-relaxed whitespace-pre-wrap text-muted"
+      tabindex="0"
+      role="group"
+      aria-label="Release notes"
       data-testid="update-notes"
     >{{ updates.notes }}</div>
 
-    <div v-if="installing" class="flex flex-col gap-2" data-testid="update-progress">
+    <div
+      v-if="installing"
+      class="flex flex-col gap-2"
+      role="status"
+      data-testid="update-progress"
+    >
       <div class="h-1.5 w-full overflow-hidden rounded-full bg-inset">
         <div
           v-if="updates.percent !== null"

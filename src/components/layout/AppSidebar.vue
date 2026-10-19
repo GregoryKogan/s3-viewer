@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { ChevronsLeft, ChevronsRight, Ellipsis, HardDrive, Plus, Settings, Upload } from "@lucide/vue";
 import AppBadge from "@/components/ui/AppBadge.vue";
 import AppButton from "@/components/ui/AppButton.vue";
@@ -18,6 +18,62 @@ const emit = defineEmits<{
 
 const connections = useConnectionsStore();
 const ui = useUiStore();
+
+const list = ref<HTMLElement | null>(null);
+
+/** The connection card buttons, in visual order, in either sidebar state. */
+function cards(): HTMLElement[] {
+  return Array.from(list.value?.querySelectorAll<HTMLElement>("[data-connection-card]") ?? []);
+}
+
+/**
+ * Up/Down walk the connections like a listbox; Enter and Space still activate
+ * the focused card natively. Only the cards take part, so the ⋯ menu and the
+ * footer stay reachable with Tab.
+ */
+function onCardsKeydown(event: KeyboardEvent) {
+  const target =
+    event.target instanceof HTMLElement
+      ? event.target.closest<HTMLElement>("[data-connection-card]")
+      : null;
+  if (!target) return;
+  const all = cards();
+  const index = all.indexOf(target);
+  if (index === -1) return;
+  let next: number;
+  if (event.key === "ArrowDown") next = Math.min(index + 1, all.length - 1);
+  else if (event.key === "ArrowUp") next = Math.max(index - 1, 0);
+  else if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = all.length - 1;
+  else return;
+  event.preventDefault();
+  all[next]?.focus();
+  all[next]?.scrollIntoView({ block: "nearest" });
+}
+
+/** Hand the keyboard to the connection list, starting at the open connection. */
+function focusActive() {
+  const all = cards();
+  const active = all.find((card) => card.dataset.connectionActive === "true") ?? all[0];
+  if (!active) {
+    document.getElementById("new-connection")?.focus();
+    return;
+  }
+  active.focus();
+  active.scrollIntoView({ block: "nearest" });
+}
+
+/**
+ * Collapsing swaps the footer's markup, so the button that was pressed
+ * disappears. Focus the replacement instead of dropping the user on <body>.
+ */
+async function toggleCollapsed() {
+  ui.toggleSidebar();
+  await nextTick();
+  document.querySelector<HTMLElement>("[data-testid=collapse-sidebar]")?.focus();
+}
+
+defineExpose({ focusActive });
 
 const collapsed = computed(() => ui.layout.collapsed);
 
@@ -118,6 +174,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
     class="flex h-full min-w-0 shrink-0 flex-col overflow-hidden border-r border-line bg-surface"
     :style="{ width: collapsed ? '4rem' : 'var(--sidebar-width)' }"
     data-testid="sidebar"
+    data-focus-zone="sidebar"
   >
     <!-- The window is decorated, so there is no title-bar strip to drag: the
          header starts at the top and lines up with the address row. -->
@@ -161,8 +218,10 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
 
     <div
       id="connection-list"
+      ref="list"
       class="scrollbar flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-2"
       data-testid="connection-list"
+      @keydown="onCardsKeydown"
     >
       <div
         v-if="!connections.views.length && !collapsed"
@@ -198,6 +257,9 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
           :aria-label="view.connection.name"
           :aria-current="view.connection.id === connections.activeId ? 'true' : undefined"
           :data-testid="`connection-${view.connection.id}`"
+          :data-connection-active="view.connection.id === connections.activeId ? 'true' : undefined"
+          :data-connection-id="view.connection.id"
+          data-connection-card
           @click="emit('open', view.connection)"
           @contextmenu.prevent="menuAtPointer(view.connection, $event)"
         >
@@ -237,6 +299,9 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
             "
             :aria-selected="view.connection.id === connections.activeId"
             :data-testid="`connection-${view.connection.id}`"
+            :data-connection-active="view.connection.id === connections.activeId ? 'true' : undefined"
+            :data-connection-id="view.connection.id"
+            data-connection-card
             :title="`${view.connection.bucket}/${view.connection.prefix}`"
             @click="emit('open', view.connection)"
             @contextmenu.prevent="menuAtPointer(view.connection, $event)"
@@ -284,6 +349,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
             type="button"
             class="absolute top-1 right-1 grid size-6 place-items-center rounded-control text-subtle opacity-0 transition-opacity hover:bg-hover hover:text-content focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
             aria-label="Connection menu"
+            aria-haspopup="menu"
             title="Connection menu"
             :data-testid="`connection-menu-${view.connection.id}`"
             @click.stop="menuAtButton(view.connection, $event)"
@@ -331,7 +397,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
           class="grid size-9 place-items-center rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
           :title="`Expand the sidebar (${shortcutLabel('B')})`"
           data-testid="collapse-sidebar"
-          @click="ui.toggleSidebar()"
+          @click="toggleCollapsed"
         >
           <ChevronsRight class="size-4" />
         </button>
@@ -353,7 +419,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
           class="grid size-7 shrink-0 place-items-center rounded-control text-muted transition-colors hover:bg-hover hover:text-content"
           :title="`Collapse the sidebar (${shortcutLabel('B')})`"
           data-testid="collapse-sidebar"
-          @click="ui.toggleSidebar()"
+          @click="toggleCollapsed"
         >
           <ChevronsLeft class="size-3.5" />
         </button>

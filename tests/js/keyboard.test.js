@@ -39,6 +39,17 @@ test("isEditableTarget recognises text fields", () => {
   assert.equal(isEditableTarget({ tagName: "DIV" }), false);
 });
 
+test("isEditableTarget leaves non-text inputs to the list", () => {
+  // A checkbox is a control: arrows, Delete and ⌘A must keep working when one
+  // has focus, so it is not a text field.
+  assert.equal(isEditableTarget({ tagName: "INPUT", type: "checkbox" }), false);
+  assert.equal(isEditableTarget({ tagName: "INPUT", type: "radio" }), false);
+  assert.equal(isEditableTarget({ tagName: "INPUT", type: "range" }), false);
+  assert.equal(isEditableTarget({ tagName: "INPUT", type: "button" }), false);
+  assert.equal(isEditableTarget({ tagName: "INPUT", type: "text" }), true);
+  assert.equal(isEditableTarget({ tagName: "INPUT", type: "search" }), true);
+});
+
 test("isEditableTarget recognises contenteditable hosts", () => {
   assert.equal(isEditableTarget({ tagName: "DIV", isContentEditable: true }), true);
   assert.equal(isEditableTarget({ tagName: "DIV", isContentEditable: false }), false);

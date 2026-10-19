@@ -19,6 +19,23 @@ const root = ref<HTMLElement | null>(null);
 const position = ref({ left: props.x, top: props.y });
 /** Where focus goes when the menu closes. */
 let previousFocus: HTMLElement | null = null;
+/** Type-ahead: the first letter of a label jumps to that item. */
+let typed = "";
+let typedTimer: ReturnType<typeof setTimeout> | undefined;
+
+function typeAhead(character: string) {
+  if (typedTimer) clearTimeout(typedTimer);
+  typed += character.toLowerCase();
+  typedTimer = setTimeout(() => {
+    typed = "";
+    typedTimer = undefined;
+  }, 600);
+  const items = enabledItems();
+  const match = items.find((item) =>
+    (item.textContent ?? "").trim().toLowerCase().startsWith(typed),
+  );
+  match?.focus();
+}
 
 /** Menu items that can actually run; disabled entries are skipped by the arrows. */
 function enabledItems(): HTMLElement[] {
@@ -59,6 +76,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (typedTimer) clearTimeout(typedTimer);
+  typedTimer = undefined;
   window.removeEventListener("pointerdown", onPointerDown, true);
   window.removeEventListener("keydown", onKeydown, true);
   // An action may have removed the row that opened the menu; never focus a
@@ -95,7 +114,16 @@ function onKeydown(event: KeyboardEvent) {
     case "End":
       move(items.length - 1);
       return;
+    case "Tab":
+      // Tab leaves a menu by closing it; otherwise the menu stays on screen
+      // with focus somewhere else, and its capture handler keeps pulling the
+      // arrows back into it.
+      emit("close");
+      return;
     default:
+      if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        typeAhead(event.key);
+      }
       return;
   }
 }
@@ -123,7 +151,11 @@ function run(item: MenuItem) {
       data-testid="context-menu"
     >
       <template v-for="(item, index) in props.items" :key="item.label">
-        <div v-if="item.separatorBefore && index > 0" class="my-1 h-px bg-line" />
+        <div
+          v-if="item.separatorBefore && index > 0"
+          class="my-1 h-px bg-line"
+          role="separator"
+        />
         <button
           type="button"
           role="menuitem"

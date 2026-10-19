@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref, watch, watchEffect } from "vue";
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch, watchEffect } from "vue";
 import {
   Copy,
   Download,
@@ -55,6 +55,7 @@ const panelWidth = computed(() => (expanded.value ? null : "var(--preview-width)
  * attribute here means the DOM cannot outlive the store value.
  */
 const aside = ref<HTMLElement | null>(null);
+const body = ref<HTMLElement | null>(null);
 watchEffect(() => {
   if (aside.value) aside.value.hidden = ui.previewHidden;
 });
@@ -107,6 +108,7 @@ const shownName = computed(() => {
 const shortcuts = [
   { keys: `${keyLabel("ArrowUp")} ${keyLabel("ArrowDown")}`, label: "Preview" },
   { keys: keyLabel("Enter"), label: "Open" },
+  { keys: `${keyLabel("ArrowLeft")} ${keyLabel("ArrowRight")}`, label: "Columns" },
   { keys: shortcutLabel("F"), label: "Filter" },
 ];
 
@@ -137,6 +139,25 @@ function openFolder() {
 function onToggleView(view: "rendered" | "raw") {
   objects.setPreviewView(view);
 }
+
+/** Closing the column puts the keyboard back on the list it was hiding. */
+async function closePanel() {
+  ui.togglePreview();
+  await nextTick();
+  document.getElementById("object-list")?.focus({ preventScroll: true });
+}
+
+/**
+ * Hand the keyboard to the preview column: the shell's Left/Right zone
+ * navigation calls this. The renderer's own scroller is what actually scrolls
+ * (code, markdown, tables, a zoomed image, PDF pages); the body is the fallback.
+ */
+function focusPanel() {
+  const target = body.value?.querySelector<HTMLElement>("[data-preview-scroll]") ?? body.value;
+  target?.focus({ preventScroll: true });
+}
+
+defineExpose({ focusPanel });
 </script>
 
 <template>
@@ -146,6 +167,7 @@ function onToggleView(view: "rendered" | "raw") {
     :style="panelWidth ? { width: panelWidth } : undefined"
     id="preview"
     data-testid="preview"
+    data-focus-zone="preview"
   >
     <header class="flex shrink-0 items-start gap-2 border-b border-line px-3 py-2">
       <div class="flex min-w-0 flex-1 flex-col">
@@ -175,6 +197,7 @@ function onToggleView(view: "rendered" | "raw") {
             type="button"
             class="rounded-[4px] px-1.5 py-0.5 text-meta transition-colors"
             :class="objects.previewView === 'rendered' ? 'bg-accent text-white' : 'text-muted hover:bg-hover'"
+            :aria-pressed="objects.previewView === 'rendered'"
             data-testid="md-view-rendered"
             @click="onToggleView('rendered')"
           >
@@ -184,6 +207,7 @@ function onToggleView(view: "rendered" | "raw") {
             type="button"
             class="rounded-[4px] px-1.5 py-0.5 text-meta transition-colors"
             :class="objects.previewView === 'raw' ? 'bg-accent text-white' : 'text-muted hover:bg-hover'"
+            :aria-pressed="objects.previewView === 'raw'"
             data-testid="md-view-raw"
             @click="onToggleView('raw')"
           >
@@ -242,11 +266,18 @@ function onToggleView(view: "rendered" | "raw") {
         aria-label="Close preview"
         title="Close preview"
         data-testid="preview-close"
-        @click="ui.togglePreview()"
+        @click="closePanel"
       />
     </header>
 
-    <div id="preview-body" class="scrollbar flex min-h-0 flex-1 flex-col overflow-auto" data-testid="preview-body">
+    <div
+      id="preview-body"
+      ref="body"
+      tabindex="-1"
+      data-keyscope
+      class="scrollbar flex min-h-0 flex-1 flex-col overflow-auto"
+      data-testid="preview-body"
+    >
       <!-- A refresh of the same key keeps its content on screen; only a new
            object (or the first load) shows the full loading state. -->
       <Spinner

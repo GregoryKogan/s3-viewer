@@ -9,7 +9,7 @@ import { inputClass, selectClass, checkboxClass } from "@/components/ui/controls
 import type { ModalSize } from "@/components/ui/types";
 import { pickFiles } from "@/lib/ipc";
 import { humanSize } from "@/lib/format";
-import { IS_MAC, keyLabel, shortcutLabel } from "@/lib/keyboard";
+import { IS_MAC, keyLabel, modLabel, shortcutLabel } from "@/lib/keyboard";
 import { useUiStore } from "@/stores/ui";
 import { useDialogsStore } from "@/stores/dialogs";
 import { useToastsStore } from "@/stores/toasts";
@@ -72,10 +72,14 @@ const previewOptions = computed(() => {
 const shortcuts = [
   { action: "Refresh", keys: shortcutLabel("R") },
   { action: "Upload", keys: shortcutLabel("U") },
+  { action: "Upload folder", keys: `${modLabel()}⇧U` },
   { action: "New connection", keys: shortcutLabel("N") },
+  { action: "New folder", keys: `${modLabel()}⇧N` },
   { action: "Edit connection", keys: shortcutLabel("I") },
   { action: "Address", keys: shortcutLabel("L") },
   { action: "Filter", keys: shortcutLabel("F") },
+  { action: "Download", keys: shortcutLabel("D") },
+  { action: "Copy S3 URIs", keys: `${modLabel()}⇧C` },
   { action: "Jump to matches", keys: `${keyLabel("ArrowDown")} / ${keyLabel("Enter")}` },
   { action: "Up", keys: shortcutLabel("ArrowUp") },
   { action: "Toggle sidebar", keys: shortcutLabel("B") },
@@ -150,10 +154,25 @@ async function save() {
     saving.value = false;
   }
 }
+
+/** Enter saves, except where the key belongs to a control. */
+function onEnter(event: KeyboardEvent) {
+  if (event.isComposing) return;
+  const target = event.target;
+  if (
+    target instanceof HTMLElement &&
+    target.closest("button, a, select, textarea, input[type=checkbox], input[type=radio], summary")
+  ) {
+    return;
+  }
+  event.preventDefault();
+  void save();
+}
+
 </script>
 
 <template>
-  <ModalFrame title="Settings" :icon="SlidersHorizontal" :size="props.size" @close="cancel">
+  <ModalFrame title="Settings" :icon="SlidersHorizontal" :size="props.size" @close="cancel" @keydown.enter="onEnter">
     <fieldset class="rounded-control border border-line p-3">
       <legend class="px-1 text-meta font-semibold tracking-wider text-subtle uppercase">
         Preview

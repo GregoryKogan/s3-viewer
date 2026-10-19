@@ -80,6 +80,15 @@ function confirm() {
     destinationPrefix: destinationPrefix.value,
   });
 }
+
+/** Enter confirms the destination; the same-folder guard still wins. */
+function onEnter(event: KeyboardEvent) {
+  if (event.isComposing) return;
+  if (event.target instanceof HTMLElement && event.target.closest("button, a, select")) return;
+  event.preventDefault();
+  confirm();
+}
+
 </script>
 
 <template>
@@ -88,6 +97,7 @@ function confirm() {
     :icon="props.moveObjects ? ArrowRightLeft : Copy"
     :size="props.size"
     @close="cancel"
+    @keydown.enter="onEnter"
   >
     <p class="text-xs leading-relaxed text-muted">
       {{ totalLabel }} from

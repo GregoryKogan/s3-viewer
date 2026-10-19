@@ -139,6 +139,18 @@ function onKeydown(event: KeyboardEvent) {
     event.preventDefault();
     event.stopPropagation();
     void goTo(pageNumber.value - 1);
+    return;
+  }
+  if (event.key === "Home") {
+    event.preventDefault();
+    event.stopPropagation();
+    void goTo(1);
+    return;
+  }
+  if (event.key === "End") {
+    event.preventDefault();
+    event.stopPropagation();
+    void goTo(pageCount.value);
   }
 }
 
@@ -182,7 +194,15 @@ watch(() => props.data.streamUrl, () => void load());
 
       <span class="mx-1 h-4 w-px bg-line" />
 
-      <AppButton size="sm" variant="ghost" :icon="ChevronLeft" :disabled="pageNumber <= 1" @click="goTo(pageNumber - 1)" />
+      <AppButton
+        size="sm"
+        variant="ghost"
+        :icon="ChevronLeft"
+        aria-label="Previous page"
+        title="Previous page"
+        :disabled="pageNumber <= 1"
+        @click="goTo(pageNumber - 1)"
+      />
       <span class="tabular text-meta text-muted" data-testid="pdf-page">
         {{ pageNumber }} / {{ pageCount || "…" }}
       </span>
@@ -190,6 +210,8 @@ watch(() => props.data.streamUrl, () => void load());
         size="sm"
         variant="ghost"
         :icon="ChevronRight"
+        aria-label="Next page"
+        title="Next page"
         :disabled="pageNumber >= pageCount"
         @click="goTo(pageNumber + 1)"
       />
@@ -200,6 +222,7 @@ watch(() => props.data.streamUrl, () => void load());
       class="scrollbar min-h-0 flex-1 overflow-auto bg-inset p-3 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
       tabindex="0"
       aria-label="PDF pages"
+      data-preview-scroll
       data-keyscope
       @keydown="onKeydown"
     >

@@ -133,7 +133,7 @@ function toggleFit() {
       Download the file and open it locally.
     </div>
 
-    <div v-else ref="host" class="scrollbar flex min-h-0 flex-1 overflow-auto p-3">
+    <div v-else ref="host" class="scrollbar flex min-h-0 flex-1 overflow-auto p-3" tabindex="-1" data-preview-scroll>
       <img
         :src="props.data.streamUrl"
         :alt="props.data.key"

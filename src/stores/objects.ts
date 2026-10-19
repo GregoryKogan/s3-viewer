@@ -410,7 +410,9 @@ export const useObjectsStore = defineStore("objects", () => {
   const deleteTargets = computed<ObjectEntry[]>(() => {
     if (selected.value.size) return selectedEntries.value;
     if (!focusedKey.value) return [];
-    const focused = entries.value.find((entry) => entry.key === focusedKey.value);
+    // The fallback is the cursor row, and only a row the filter still shows:
+    // a hidden cursor used to let Delete remove an object off screen.
+    const focused = visibleEntries.value.find((entry) => entry.key === focusedKey.value);
     return focused ? [focused] : [];
   });
 

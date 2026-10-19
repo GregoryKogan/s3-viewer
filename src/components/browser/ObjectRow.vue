@@ -12,6 +12,9 @@ const props = defineProps<{
   gridTemplate: string;
   showModified: boolean;
   showType: boolean;
+  /** One-based position and the total, so a virtualized list still reads right. */
+  posInSet: number;
+  setSize: number;
   selected: boolean;
   focused: boolean;
   /** The checkbox column exists as soon as any row is selected. */
@@ -61,6 +64,8 @@ const modifiedTitle = computed(() => {
     role="option"
     :aria-label="props.entry.name"
     :aria-selected="props.selected"
+    :aria-posinset="props.posInSet"
+    :aria-setsize="props.setSize"
     @click="emit('click', props.entry, $event)"
     @dblclick="emit('activate', props.entry)"
     @contextmenu.prevent="emit('contextmenu', props.entry, $event)"
@@ -69,6 +74,7 @@ const modifiedTitle = computed(() => {
       <input
         type="checkbox"
         class="size-3.5 cursor-pointer accent-accent"
+        tabindex="-1"
         :checked="props.selected"
         :aria-label="`Select ${props.entry.name}`"
         :data-testid="`row-check-${props.entry.name}`"

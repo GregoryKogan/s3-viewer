@@ -110,7 +110,12 @@ export function useFocusTrap(frame: Ref<HTMLElement | null>): void {
   onBeforeUnmount(() => {
     document.removeEventListener("keydown", onKeydown, true);
     // The trigger may have been removed with the dialog (a row action, a menu
-    // item), so never focus a detached node.
+    // item), so never focus a detached node. Falling back to the main column
+    // keeps the keyboard model alive instead of dropping focus on <body>.
     if (previousFocus?.isConnected) previousFocus.focus();
+    else {
+      const list = document.getElementById("object-list");
+      list?.focus({ preventScroll: true });
+    }
   });
 }

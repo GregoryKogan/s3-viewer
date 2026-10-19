@@ -7,6 +7,7 @@ import AppField from "@/components/ui/AppField.vue";
 import { inputClass, textareaClass } from "@/components/ui/controls";
 import type { ModalSize } from "@/components/ui/types";
 import { joinKey, validateKey } from "@/lib/keys";
+import { keyLabel, modLabel } from "@/lib/keyboard";
 
 export interface CreateFileResult {
   name: string;
@@ -59,6 +60,21 @@ function submit() {
   }
   props.resolve({ name: value, content: content.value });
 }
+
+/** Enter in the name field creates the file; an IME commit must not submit. */
+function onNameEnter(event: KeyboardEvent) {
+  if (event.isComposing) return;
+  event.preventDefault();
+  submit();
+}
+
+/** The content area keeps Enter for newlines; ⌘/Ctrl+Enter is the commit. */
+function onContentEnter(event: KeyboardEvent) {
+  if (event.isComposing) return;
+  if (!(event.metaKey || event.ctrlKey)) return;
+  event.preventDefault();
+  submit();
+}
 </script>
 
 <template>
@@ -78,17 +94,21 @@ function submit() {
         autofocus
         data-testid="new-file-name"
         @input="error = null"
-        @keydown.enter.prevent="submit"
+        @keydown.enter="onNameEnter"
       />
     </AppField>
 
-    <AppField label="Content" hint="The file is uploaded as text; it can be empty.">
+    <AppField
+      label="Content"
+      :hint="`The file is uploaded as text; it can be empty. ${modLabel()}${keyLabel('Enter')} creates it from here.`"
+    >
       <textarea
         v-model="content"
         :class="textareaClass"
         rows="8"
         placeholder="Paste or type the file contents…"
         data-testid="new-file-content"
+        @keydown.enter="onContentEnter"
       />
     </AppField>
 

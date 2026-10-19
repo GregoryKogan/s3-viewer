@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   AlertTriangle,
   Copy,
@@ -36,7 +36,7 @@ import UpdateDialog from "@/components/dialogs/UpdateDialog.vue";
 import ImportDialog from "@/components/dialogs/ImportDialog.vue";
 import { copyText, listen } from "@/lib/ipc";
 import { clamp, s3Uri } from "@/lib/format";
-import { IS_MAC, isEditableTarget, shortcutLabel } from "@/lib/keyboard";
+import { IS_MAC, isEditableTarget, modLabel, shortcutLabel } from "@/lib/keyboard";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
 import { useProgressStore } from "@/stores/progress";
@@ -65,6 +65,8 @@ const actions = useObjectActions();
 const confirmations = useDialogs();
 
 const objectList = ref<InstanceType<typeof ObjectList> | null>(null);
+const sidebar = ref<InstanceType<typeof AppSidebar> | null>(null);
+const previewPanel = ref<InstanceType<typeof PreviewPanel> | null>(null);
 
 /**
  * Launch state. `loading` paints a neutral shell with a spinner instead of the
@@ -92,7 +94,7 @@ async function copyNames(names: string[]) {
   toasts.ok(names.length === 1 ? `Copied “${names[0]}”` : `Copied ${names.length} names`);
 }
 
-function rowMenu(entry: (typeof objects.entries)[number], event: MouseEvent) {
+function rowMenu(entry: (typeof objects.entries)[number], point: { clientX: number; clientY: number }) {
   const connection = connections.active;
   if (!connection) return;
   const writable = connections.canWriteActive;
@@ -106,8 +108,8 @@ function rowMenu(entry: (typeof objects.entries)[number], event: MouseEvent) {
     count > 1 ? `${base} ${count} items to…` : `${base} to…`;
 
   menu.value = {
-    x: event.clientX,
-    y: event.clientY,
+    x: point.clientX,
+    y: point.clientY,
     items: [
       entry.isFolder
         ? { label: "Open", icon: FolderOpen, run: () => void objects.navigate(entry.key) }
@@ -122,12 +124,14 @@ function rowMenu(entry: (typeof objects.entries)[number], event: MouseEvent) {
       {
         label: fileCount > 1 ? `Download ${fileCount} files` : "Download",
         icon: Download,
+        shortcut: shortcutLabel("D"),
         disabled: fileCount === 0,
         run: () => void actions.downloadSelection(),
       },
       {
         label: count > 1 ? `Copy ${count} S3 URIs` : "Copy S3 URI",
         icon: Link2,
+        shortcut: `${modLabel()}⇧C`,
         run: () => void actions.copySelectionUris(),
       },
       {
@@ -161,11 +165,11 @@ function rowMenu(entry: (typeof objects.entries)[number], event: MouseEvent) {
   };
 }
 
-function backgroundMenu(event: MouseEvent) {
+function backgroundMenu(point: { clientX: number; clientY: number }) {
   const writable = connections.canWriteActive;
   menu.value = {
-    x: event.clientX,
-    y: event.clientY,
+    x: point.clientX,
+    y: point.clientY,
     items: [
       ...(writable
         ? [
@@ -357,6 +361,15 @@ async function removeConnection(connection: Connection) {
     // the active one, so the main area falls back to its empty state.
     await connections.remove(connection.id);
     toasts.ok(`Connection “${connection.name}” removed.`);
+    await nextTick();
+    // The card is gone. Land the keyboard on the remaining open card, or on the
+    // New button when that was the last connection.
+    if (!document.activeElement?.closest("[data-connection-card]")) {
+      const target = connections.activeId
+        ? document.querySelector<HTMLElement>(`[data-testid=connection-${connections.activeId}]`)
+        : null;
+      (target ?? document.getElementById("new-connection"))?.focus();
+    }
   } catch (error) {
     toasts.apiError(error, "Cannot remove connection");
   }
@@ -425,7 +438,7 @@ async function checkForUpdates() {
 
 // ------------------------------------------------------------------- keyboard
 
-const PAGE_ROWS = 10;
+const PAGE_ROWS = 10; // fallback when the list has not reported its viewport
 const TYPE_AHEAD_MS = 700;
 /** Type-ahead buffer: printable keys typed in a row search the visible names. */
 let typeAhead = "";
@@ -440,7 +453,11 @@ function clearTypeAhead() {
 /** Keys on a button, link or menu belong to that control, not to the list. */
 function isInteractiveTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  return Boolean(target.closest('button, a, [role="menu"], [role="menuitem"], [role="separator"]'));
+  return Boolean(
+    target.closest(
+      'button, a, input, select, textarea, summary, [role="menu"], [role="menuitem"], [role="separator"]',
+    ),
+  );
 }
 
 /** A nested view (the PDF) owns the list-only keys while it has focus. */
@@ -465,6 +482,7 @@ function moveFocus(index: number, extend = false) {
     objects.focus(entry.key);
   }
   objectList.value?.scrollToRow(next);
+  objectList.value?.focusList();
   void objects.previewEntry(entry);
 }
 
@@ -477,13 +495,22 @@ function runTypeAhead(character: string) {
   }, TYPE_AHEAD_MS);
 
   const rows = objects.visibleEntries;
-  const index = rows.findIndex((entry) => entry.name.toLowerCase().startsWith(typeAhead));
-  if (index === -1) return;
-  const entry = rows[index];
+  // A fresh letter starts below the cursor and wraps, so repeating it walks
+  // through the matches instead of staying on the first one forever.
+  const start = typeAhead.length === 1 ? Math.max(0, focusedRowIndex() + 1) : 0;
+  const ordered = [...rows.slice(start), ...rows.slice(0, start)];
+  const found = ordered.findIndex((entry) => entry.name.toLowerCase().startsWith(typeAhead));
+  if (found === -1) return;
+  const entry = ordered[found];
+  const index = rows.indexOf(entry);
   objects.focus(entry.key);
   objectList.value?.scrollToRow(index);
+  objectList.value?.focusList();
   void objects.previewEntry(entry);
 }
+
+// A new folder or filter makes the buffered prefix meaningless.
+watch(() => [objects.prefix, objects.filter], () => clearTypeAhead());
 
 /**
  * Enter or ↓ in the filter field lands on the first match.
@@ -516,6 +543,65 @@ function onFindClear() {
   objectList.value?.focusList();
 }
 
+/**
+ * Put the keyboard in the main column. Without a connection there is no list,
+ * so the placeholder's own button takes the focus instead of nothing.
+ */
+function focusMain() {
+  if (hasConnection.value) {
+    objectList.value?.focusList();
+    return;
+  }
+  document
+    .querySelector<HTMLElement>('[data-testid=no-connection-state] button')
+    ?.focus();
+}
+
+/** The visible Actions button opens the same menu a right-click would. */
+function openRowMenuAt(point: { x: number; y: number }) {
+  const key = objects.focusedKey;
+  const entry = key ? objects.visibleEntries.find((item) => item.key === key) : null;
+  if (!entry) return;
+  if (!objects.selected.has(entry.key)) objects.selectOnly(entry.key);
+  objects.focus(entry.key, { keepAnchor: true });
+  rowMenu(entry, { clientX: point.x, clientY: point.y });
+}
+
+/**
+ * Open the object menu without a pointer.
+ *
+ * Shift+F10 and the dedicated ContextMenu key are the standard equivalents of a
+ * right-click. With a cursor they open that row's menu; without one they open
+ * the folder menu the empty area would show. The menu itself already owns its
+ * arrows, Enter and Escape.
+ */
+async function openContextMenuFromKeyboard() {
+  // A wheel-scrolled cursor row may be virtualized out; paint it before
+  // measuring, then anchor the menu to the real row.
+  const index = objects.visibleEntries.findIndex((entry) => entry.key === objects.focusedKey);
+  if (index !== -1) objectList.value?.scrollToRow(index);
+  await nextTick();
+  const row = document.querySelector<HTMLElement>(".object-row[data-focused]");
+  const list = document.getElementById("object-list");
+  const rect = row?.getBoundingClientRect() ?? list?.getBoundingClientRect();
+  const point = {
+    clientX: Math.round((rect?.left ?? 0) + 32),
+    clientY: Math.round((rect?.top ?? 0) + 32),
+  };
+  const key = objects.focusedKey;
+  // Only a cursor the filter still shows may open a menu: a hidden row must
+  // never be the target of a Delete the user cannot see.
+  const entry = key ? objects.visibleEntries.find((item) => item.key === key) : null;
+  if (!entry) {
+    backgroundMenu(point);
+    return;
+  }
+  // The same "one set backs every item" rule a right-click follows (SEL-4).
+  if (!objects.selected.has(entry.key)) objects.selectOnly(entry.key);
+  objects.focus(entry.key, { keepAnchor: true });
+  rowMenu(entry, point);
+}
+
 async function onKeydown(event: KeyboardEvent) {
   // A nested control already handled this key (menu, resizer, PDF page).
   if (event.defaultPrevented) return;
@@ -530,42 +616,73 @@ async function onKeydown(event: KeyboardEvent) {
   // host, which handles it in a capture listener.
   if (dialogs.isOpen()) return;
 
-  if (meta && lower === "r") {
+  /*
+   * Which column owns the keyboard.
+   *
+   * A zone is a column root marked with `data-focus-zone`. `null` means the
+   * shell (the body, a toolbar button): it keeps the permissive behaviour the
+   * app had before the columns existed, so a closing dialog that restores focus
+   * to the toolbar does not turn the list keys off.
+   */
+  const activeElement =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const zoneElement = event.target instanceof HTMLElement ? event.target : activeElement;
+  const zone = zoneElement?.closest("[data-focus-zone]")?.getAttribute("data-focus-zone") ?? null;
+  const main = zone === "list" || zone === null;
+  // Copy/download are harmless and follow the cursor, so they also work while
+  // the preview has the keyboard; Delete, ⌘A and navigation stay list-only.
+  const objectActions = main || zone === "preview";
+
+  // A shell shortcut dismisses a transient menu: no command should run with a
+  // popup left on screen underneath it.
+  if (menu.value && meta) menu.value = null;
+
+  // Shift is part of the binding, not a variant of it: only the explicit
+  // ⌘⇧[C/N/U] shortcuts are shell bindings. Without this guard a shifted letter
+  // ran the unshifted command (⌘⇧U uploaded a file, ⌘⇧N opened a connection).
+  const plain = meta && !event.shiftKey;
+
+  if (plain && lower === "r") {
     event.preventDefault();
     await objects.reload();
     return;
   }
-  if (meta && lower === "u" && hasConnection.value) {
+  if (plain && lower === "u" && hasConnection.value) {
     event.preventDefault();
     await actions.upload();
     return;
   }
-  if (meta && lower === "n") {
+  if (plain && lower === "n") {
     event.preventDefault();
     await createConnection();
     return;
   }
-  if (meta && lower === "b") {
+  if (plain && lower === "b") {
     event.preventDefault();
     ui.toggleSidebar();
     return;
   }
-  if (meta && lower === "i" && connections.active) {
+  if (plain && lower === "i" && connections.active) {
     event.preventDefault();
-    await editConnection();
+    // The card under the keyboard wins: editing "the open connection" while
+    // another card is focused edits the wrong one.
+    const cardId = activeElement?.closest<HTMLElement>("[data-connection-card]")?.dataset
+      .connectionId;
+    const target = connections.all.find((item) => item.id === cardId);
+    await editConnection(target ?? connections.active ?? undefined);
     return;
   }
-  if (meta && lower === "l") {
+  if (plain && lower === "l") {
     event.preventDefault();
     document.querySelector<HTMLButtonElement>('[data-testid=address-edit]')?.click();
     return;
   }
-  if (meta && lower === "f" && !dialogs.isOpen()) {
+  if (plain && lower === "f") {
     event.preventDefault();
     document.querySelector<HTMLInputElement>('[data-testid=filter-input]')?.focus();
     return;
   }
-  if (meta && lower === "a" && !editing && hasConnection.value) {
+  if (plain && lower === "a" && !editing && main && hasConnection.value) {
     event.preventDefault();
     const keys = objects.visibleEntries.map((entry) => entry.key);
     objects.selectAll(keys);
@@ -574,6 +691,31 @@ async function onKeydown(event: KeyboardEvent) {
     if (!objects.focusedKey || !keys.includes(objects.focusedKey)) {
       objects.focus(keys[0] ?? null);
     }
+    objectList.value?.focusList();
+    return;
+  }
+  // The two row actions that previously lived only in the context menu and the
+  // preview header. Both act on the selection, or on the cursor row when
+  // nothing is selected, exactly like the menu items.
+  if (plain && lower === "d" && !editing && objectActions && hasConnection.value) {
+    event.preventDefault();
+    await actions.downloadSelection();
+    return;
+  }
+  if (meta && event.shiftKey && lower === "c" && !editing && objectActions && hasConnection.value) {
+    event.preventDefault();
+    await actions.copySelectionUris();
+    return;
+  }
+  // Finder's own bindings, kept for muscle memory.
+  if (meta && event.shiftKey && lower === "n" && hasConnection.value) {
+    event.preventDefault();
+    await actions.createFolder();
+    return;
+  }
+  if (meta && event.shiftKey && lower === "u" && hasConnection.value) {
+    event.preventDefault();
+    await actions.uploadFolder();
     return;
   }
 
@@ -601,13 +743,21 @@ async function onKeydown(event: KeyboardEvent) {
   // where a closing dialog restores it; the interactive-target guard below is
   // only for keys that would otherwise scroll or activate that control.
   if (key === "Escape") {
+    // Escape backs out one step. In a side column that means leaving it; only
+    // the main column clears the selection, so Escape in the sidebar or the
+    // preview cannot wipe a selection the user is not looking at.
+    if (zone === "sidebar" || zone === "preview") {
+      event.preventDefault();
+      focusMain();
+      return;
+    }
     objects.clearSelection();
     return;
   }
 
   // Up-navigation owns modified ArrowUp, so it must win over list movement.
   // macOS goes up with ⌘↑; bare Backspace must not navigate there at all.
-  if (meta && key === "ArrowUp" && objects.prefix) {
+  if (main && meta && key === "ArrowUp" && objects.prefix) {
     event.preventDefault();
     await objects.navigateUp();
     return;
@@ -617,21 +767,96 @@ async function onKeydown(event: KeyboardEvent) {
   const deletePressed = IS_MAC
     ? (meta && key === "Backspace") || key === "Delete"
     : key === "Delete";
-  if (deletePressed && objects.deleteTargets.length) {
+  if (main && deletePressed && objects.deleteTargets.length) {
     event.preventDefault();
     await actions.deleteSelection();
     return;
   }
 
-  // The PDF viewer handles its own keys; moving the list underneath it would
-  // be a second, invisible response to one key (KEY-1). Escape and the
-  // Cmd/Ctrl shortcuts above stay global; bare Backspace is list-only.
+  // Columns: Left/Right hand the keyboard to the neighbouring pane. This runs
+  // before the key-scope guard on purpose: the preview body is a scope of its
+  // own (it scrolls), yet Left must still leave it. A menu, a dialog, a
+  // resizer, the PDF and native media are handled elsewhere and never get here.
+  if (
+    (key === "ArrowLeft" || key === "ArrowRight") &&
+    !meta &&
+    !event.altKey &&
+    !event.shiftKey
+  ) {
+    // A media element seeks with these arrows; the preview pane does not.
+    const media = zoneElement?.closest("audio, video");
+    if (!media) {
+      if (zone === "list" && key === "ArrowLeft") {
+        event.preventDefault();
+        sidebar.value?.focusActive();
+        return;
+      }
+      if (zone === "sidebar" && key === "ArrowRight") {
+        event.preventDefault();
+        // An expanded preview has hidden the list; Right must not focus a
+        // display:none scroll container.
+        if (previewExpanded.value) {
+          ui.togglePreviewExpanded();
+          await nextTick();
+        }
+        focusMain();
+        return;
+      }
+      if (zone === "list" && key === "ArrowRight" && !ui.previewHidden) {
+        event.preventDefault();
+        previewPanel.value?.focusPanel();
+        return;
+      }
+      if (zone === "preview" && key === "ArrowLeft") {
+        // A horizontally scrollable preview keeps its own Left until it reaches
+        // the left edge; otherwise a wide code line could never be read back.
+        const scroller = zoneElement?.closest<HTMLElement>("[data-preview-scroll]");
+        if (scroller && scroller.scrollLeft > 0) return;
+        event.preventDefault();
+        if (previewExpanded.value) {
+          ui.togglePreviewExpanded();
+          await nextTick();
+        }
+        objectList.value?.focusList();
+        return;
+      }
+    }
+  }
+
+  // A key scope (PDF pages, the media player, the preview's scroll body) owns
+  // every key it does not hand back; moving the list underneath it would be a
+  // second, invisible response to one key (KEY-1).
   if (inKeyScope(event.target)) return;
+
+  // The row menu and the connection menu must not be pointer-only: Shift+F10
+  // and the ContextMenu key are the keyboard's right-click (KEY-5).
+  if ((key === "ContextMenu" || (event.shiftKey && key === "F10")) && !meta && !event.altKey) {
+    if (zone === "list") {
+      event.preventDefault();
+      openContextMenuFromKeyboard();
+      return;
+    }
+    if (zone === "sidebar") {
+      const card = activeElement?.closest<HTMLElement>("[data-connection-card]");
+      const id = card?.dataset.connectionId;
+      const connection = connections.all.find((item) => item.id === id);
+      if (connection && card) {
+        event.preventDefault();
+        const rect = card.getBoundingClientRect();
+        connectionMenu(connection, { x: Math.round(rect.right - 8), y: Math.round(rect.bottom - 8) });
+        return;
+      }
+    }
+  }
 
   // A key on a button, link or menu belongs to that control. Space and Enter
   // must keep their native activation there; only the list's own keys are
   // handled above and below this guard.
   if (isInteractiveTarget(event.target)) return;
+
+  // Everything below navigates the object list, so it belongs to the main
+  // column (or to the shell, where the permissive old behaviour still applies).
+  if (!main) return;
 
   if (!IS_MAC && key === "Backspace" && !meta && objects.prefix) {
     event.preventDefault();
@@ -642,6 +867,13 @@ async function onKeydown(event: KeyboardEvent) {
   const rows = objects.visibleEntries;
   const current = focusedRowIndex();
 
+  // macOS goes to the end with ⌘↓, the counterpart of Up with ⌘↑.
+  if (IS_MAC && meta && key === "ArrowDown") {
+    event.preventDefault();
+    moveFocus(rows.length - 1);
+    return;
+  }
+
   if (key === "ArrowDown" || key === "ArrowUp") {
     event.preventDefault();
     const delta = key === "ArrowDown" ? 1 : -1;
@@ -651,14 +883,16 @@ async function onKeydown(event: KeyboardEvent) {
 
   if (key === "PageDown" || key === "PageUp") {
     event.preventDefault();
-    const delta = key === "PageDown" ? PAGE_ROWS : -PAGE_ROWS;
-    moveFocus(current === -1 ? 0 : current + delta);
+    const page = objectList.value?.pageRows() ?? PAGE_ROWS;
+    const delta = key === "PageDown" ? page : -page;
+    moveFocus(current === -1 ? 0 : current + delta, event.shiftKey);
     return;
   }
 
   if (key === "Home" || key === "End") {
     event.preventDefault();
-    moveFocus(key === "Home" ? 0 : rows.length - 1);
+    // Shift extends the range to the edge (Shift+Home / Shift+End).
+    moveFocus(key === "Home" ? 0 : rows.length - 1, event.shiftKey);
     return;
   }
 
@@ -673,6 +907,9 @@ async function onKeydown(event: KeyboardEvent) {
   }
 
   if (key === " " && objects.focusedKey) {
+    // A hidden cursor is not a row the user can see, so Space must not add it
+    // to a selection that then acts on screen.
+    if (!objects.visibleEntries.some((entry) => entry.key === objects.focusedKey)) return;
     event.preventDefault();
     objects.toggleSelected(objects.focusedKey);
     return;
@@ -946,6 +1183,7 @@ function onDrop(paths: string[]) {
     <div v-else class="flex min-h-0 flex-1" data-app-shell>
       <div class="relative flex min-h-0 shrink-0" :style="{ width: ui.layout.collapsed ? undefined : `${sidebarWidth}px` }">
         <AppSidebar
+          ref="sidebar"
           @create="createConnection"
           @open="openConnection"
           @menu="connectionMenu"
@@ -967,7 +1205,7 @@ function onDrop(paths: string[]) {
       </div>
 
       <main class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <AppHeader @find="onFind" @find-clear="onFindClear" />
+        <AppHeader @find="onFind" @find-clear="onFindClear" @rowmenu="openRowMenuAt" />
 
         <div class="flex min-h-0 flex-1">
           <div
@@ -1002,7 +1240,7 @@ function onDrop(paths: string[]) {
               previewExpanded ? 'min-w-0 flex-1' : 'shrink-0',
             ]"
           >
-            <PreviewPanel />
+            <PreviewPanel ref="previewPanel" />
             <Resizer
               v-if="!previewExpanded"
               v-model="previewWidth"

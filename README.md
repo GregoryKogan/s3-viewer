@@ -32,8 +32,10 @@ The write/delete part can be switched off per connection if your policy forbids
 even that.
 
 **Browsing.** A Finder-style list with breadcrumbs, sorting, filtering,
-multi-select, shift-click ranges and keyboard navigation (`↑`/`↓`, `Enter` to
-open, `Backspace` to go up, `⌘R` refresh, `⌘U` upload, `⌘N` new connection). The
+multi-select, shift-click ranges and full keyboard control: columns move with
+`←`/`→`, `Enter` opens, `⌘D` downloads, `⌘⇧C` copies S3 URIs, the **Actions**
+button opens the row menu, and a visible cursor marks the current row inside a
+selection. See [`docs/keyboard.md`](docs/keyboard.md) for the whole map. The
 breadcrumb root is the root *of the connection*, so you cannot wander out of the
 prefix a connection was set up for.
 

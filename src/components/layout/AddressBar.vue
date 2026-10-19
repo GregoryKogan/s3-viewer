@@ -18,6 +18,11 @@ const draft = ref("");
 const busy = ref(false);
 const input = ref<HTMLInputElement | null>(null);
 const invalid = ref<string | null>(null);
+/**
+ * True while `submit()` owns the navigation. The prefix watcher uses it to tell
+ * "the folder moved under the editor" from "the editor opened this folder".
+ */
+let committing = false;
 
 const connection = computed(() => connections.active);
 
@@ -55,7 +60,7 @@ function onCrumbRowClick(event: MouseEvent) {
 
 function startEditing() {
   if (!connection.value) return;
-  draft.value = absolute.value.endsWith("/") || !objects.prefix ? absolute.value : `${absolute.value}/`;
+  draft.value = editableAddress();
   invalid.value = null;
   editing.value = true;
   void nextTick(() => {
@@ -64,9 +69,31 @@ function startEditing() {
   });
 }
 
+/** A folder address keeps its trailing slash; an object address does not. */
+function editableAddress(): string {
+  return absolute.value.endsWith("/") || !objects.prefix ? absolute.value : `${absolute.value}/`;
+}
+
 function cancel() {
   editing.value = false;
   invalid.value = null;
+}
+
+/**
+ * Close the editor and put the keyboard where the result will be: the list for
+ * an opened address, the pencil for a cancelled one. Closing used to drop focus
+ * on <body>, which also switched the column model off.
+ */
+function finishEditing(target: "list" | "address") {
+  editing.value = false;
+  invalid.value = null;
+  void nextTick(() => {
+    if (target === "address") {
+      document.querySelector<HTMLElement>("[data-testid=address-edit]")?.focus();
+      return;
+    }
+    document.getElementById("object-list")?.focus({ preventScroll: true });
+  });
 }
 
 /**
@@ -121,10 +148,14 @@ async function submit() {
   const key = parsed.key;
   busy.value = true;
   invalid.value = null;
+  // This navigation belongs to the text in the field: the prefix watch must not
+  // overwrite what the user is opening (the not-in-the-listing message stays
+  // correctable).
+  committing = true;
   try {
     const root = connection.value.prefix ?? "";
     if (!key || key.endsWith("/")) {
-      editing.value = false;
+      finishEditing("list");
       await objects.navigate(`${root}${key}`);
       return;
     }
@@ -145,7 +176,7 @@ async function submit() {
         invalid.value = `Opened ${parent || "/"}, but ${fullKey} is not in the listing.`;
         return;
       }
-      editing.value = false;
+      finishEditing("list");
       objects.focus(entry.key);
       objects.selectAll([entry.key]);
       await objects.previewEntry(entry, { force: true });
@@ -159,7 +190,7 @@ async function submit() {
       try {
         const probe = await api.listObjects({ connectionId: connection.value.id, prefix: folder });
         if (probe.entries.length) {
-          editing.value = false;
+          finishEditing("list");
           await objects.navigate(folder);
           return;
         }
@@ -167,7 +198,7 @@ async function submit() {
         // zero-byte marker object. Without this probe a real, empty folder
         // would report "Nothing found" (NAV-5).
         await api.objectMeta(connection.value.id, folder);
-        editing.value = false;
+        finishEditing("list");
         await objects.navigate(folder);
       } catch (folderError) {
         // The marker probe 403s as readily as it 404s; only the latter is
@@ -182,13 +213,34 @@ async function submit() {
     toasts.apiError(error, "Cannot open this address");
   } finally {
     busy.value = false;
+    committing = false;
   }
 }
 
+/**
+ * The editor follows the folder instead of freezing the address it was opened
+ * at: a navigation started elsewhere (a row, the sidebar, a preview action)
+ * moves the text with it and drops a stale error (NAV-7). An address the user
+ * is submitting is the exception — see `committing`.
+ */
 watch(
   () => objects.prefix,
   () => {
-    if (!editing.value) draft.value = absolute.value;
+    if (!editing.value) {
+      draft.value = absolute.value;
+      return;
+    }
+    if (committing) return;
+    draft.value = editableAddress();
+    invalid.value = null;
+  },
+);
+
+/** A different connection is a different address space; the draft belongs to the old one. */
+watch(
+  () => connections.activeId,
+  () => {
+    if (editing.value) cancel();
   },
 );
 </script>
@@ -262,13 +314,18 @@ watch(
           autocomplete="off"
           :placeholder="addressPlaceholder"
           data-testid="address-input"
+          @input="invalid = null"
           @keydown.enter.prevent="submit"
-          @keydown.esc.prevent="cancel"
+          @keydown.esc.prevent="finishEditing('address')"
           @blur="!busy && !invalid && cancel()"
         />
         <span v-if="busy" class="text-meta text-subtle">opening…</span>
       </div>
-      <p v-if="invalid" class="text-meta leading-snug text-danger" data-testid="address-error">
+      <p
+        v-if="invalid"
+        class="ml-5 text-meta leading-snug text-danger"
+        data-testid="address-error"
+      >
         {{ invalid }}
       </p>
     </form>

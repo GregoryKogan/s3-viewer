@@ -78,12 +78,34 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   if (!target) return false;
   const element = target as {
     tagName?: string;
+    type?: string;
     isContentEditable?: boolean;
     getAttribute?: (name: string) => string | null;
   };
   const tag = (element.tagName ?? "").toLowerCase();
-  if (tag === "input" || tag === "textarea" || tag === "select") return true;
+  if (tag === "textarea" || tag === "select") return true;
+  if (tag === "input") {
+    // Checkboxes, radios and the other non-text inputs are controls, not text
+    // fields: swallowing arrows, Delete and ⌘A for them turned the list into a
+    // dead keyboard target the moment one of them got focus.
+    const type = (element.type ?? "text").toLowerCase();
+    return !NON_TEXT_INPUTS.has(type);
+  }
   if (element.isContentEditable === true) return true;
   const editable = element.getAttribute?.("contenteditable");
   return editable !== null && editable !== undefined && editable !== "false";
 }
+
+/** Input types that are activated, not typed into. */
+const NON_TEXT_INPUTS = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "hidden",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);

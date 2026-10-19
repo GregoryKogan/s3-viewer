@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, nextTick } from "vue";
 import { ArrowRight, Check, FolderOpen } from "@lucide/vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import { api } from "@/lib/ipc";
@@ -48,6 +48,8 @@ function label(item: ProgressView): string {
 }
 
 async function cancel(item: ProgressView) {
+  const focus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const owned = focus?.closest("[data-testid=transfers]") != null;
   try {
     await api.cancelTransfer(item.id);
   } catch (error) {
@@ -56,6 +58,13 @@ async function cancel(item: ProgressView) {
     toasts.apiError(error, "Cannot cancel");
   }
   await progress.poll();
+  await nextTick();
+  // The Cancel button may have become Retry or vanished; never leave the
+  // keyboard on a detached node.
+  if (owned && !document.activeElement?.closest("[data-testid=transfers]")) {
+    document.querySelector<HTMLElement>("[data-testid=transfers] [data-testid=transfer-retry]")
+      ?.focus({ preventScroll: true });
+  }
 }
 
 async function retry(item: ProgressView) {
@@ -71,6 +80,8 @@ async function retry(item: ProgressView) {
 
 async function dismiss() {
   await progress.clear();
+  await nextTick();
+  document.getElementById("object-list")?.focus({ preventScroll: true });
   // This panel owns the progress list, not a toast: batch summaries are pushed
   // by the action that started the batch (useObjectActions) and carry their own
   // timeout. `dismiss(0)` never matched anything because toast ids start at 1,
@@ -83,6 +94,8 @@ async function dismiss() {
     v-if="visible.length"
     class="fixed right-3 bottom-3 z-30 flex max-h-[42vh] w-80 flex-col gap-2 overflow-y-auto rounded-panel border border-line-strong bg-elevated p-2.5 shadow-2xl shadow-black/40"
     data-testid="transfers"
+    role="region"
+    aria-label="Transfers"
   >
     <div class="flex items-center justify-between">
       <span class="text-meta font-semibold tracking-wider text-subtle uppercase">

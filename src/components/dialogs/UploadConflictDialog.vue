@@ -47,6 +47,9 @@ function skipExisting() {
     <ul
       v-if="shown.length"
       class="scrollbar max-h-44 list-disc space-y-1 overflow-y-auto rounded-control border border-line bg-inset p-3 pl-7 font-mono text-meta leading-relaxed text-muted"
+      tabindex="0"
+      role="group"
+      aria-label="Conflicting files"
     >
       <li v-for="key in shown" :key="key" class="break-all">{{ key }}</li>
       <li v-if="more" class="list-none text-subtle">…and {{ more }} more</li>

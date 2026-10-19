@@ -34,6 +34,7 @@ function confirm() {
  * only Enter elsewhere in the dialog confirms.
  */
 function onEnter(event: KeyboardEvent) {
+  if (event.isComposing) return;
   if (props.danger) return;
   const target = event.target;
   if (
@@ -62,6 +63,9 @@ function onEnter(event: KeyboardEvent) {
     <ul
       v-if="props.details.length"
       class="scrollbar max-h-52 list-disc space-y-1 overflow-y-auto rounded-control border border-line bg-inset p-3 pl-7 text-meta leading-relaxed text-muted"
+      tabindex="0"
+      role="group"
+      aria-label="Details"
       data-testid="confirm-details"
     >
       <li v-for="(line, index) in props.details" :key="index" class="break-all">{{ line }}</li>

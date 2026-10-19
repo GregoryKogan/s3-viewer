@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { AlertTriangle, FolderPlus, FolderUp, RefreshCw, SlidersHorizontal, Upload } from "@lucide/vue";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
@@ -118,6 +118,11 @@ function scrollToRow(index: number) {
   scrollTop.value = element.scrollTop;
 }
 
+/** Rows that fit on screen, for PageUp/PageDown. */
+function pageRows() {
+  return Math.max(1, Math.floor(viewportHeight.value / ROW_HEIGHT) - 1);
+}
+
 /** Hand the keyboard to the list; the filter field calls this when it commits. */
 function focusList() {
   scroller.value?.focus({ preventScroll: true });
@@ -131,6 +136,19 @@ function toggleAll(checked: boolean) {
   if (checked) objects.selectAll(rows.value.map((entry) => entry.key));
   else objects.clearSelection();
 }
+
+/**
+ * Unticking the last selected row unmounts the box that had focus (the header's
+ * select-all); without this the keyboard would fall to <body> and the column
+ * model would go quiet.
+ */
+watch(checkboxColumn, (shown) => {
+  if (shown) return;
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return;
+  if (!active.closest("[data-testid=select-all], [data-testid^=row-check-]")) return;
+  void nextTick(() => scroller.value?.focus({ preventScroll: true }));
+});
 
 // A new folder or filter starts at the top.
 watch(
@@ -176,6 +194,9 @@ function onClick(entry: (typeof rows.value)[number], event: MouseEvent) {
     objects.focus(entry.key);
   }
   void objects.previewEntry(entry);
+  // The list, not the row div, is the keyboard owner: a click has to hand it
+  // the focus so arrows, Shift+F10 and the column keys keep working (KEY-3).
+  scroller.value?.focus({ preventScroll: true });
 }
 
 /** Clicking the empty scroller behind the rows is the fastest way to deselect. */
@@ -223,11 +244,11 @@ async function onActivate(entry: (typeof rows.value)[number]) {
   else await objects.previewEntry(entry, { force: true });
 }
 
-defineExpose({ scrollToRow, focusList });
+defineExpose({ scrollToRow, focusList, pageRows });
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-1 flex-col" data-testid="browser">
+  <div class="flex min-h-0 flex-1 flex-col" data-testid="browser" data-focus-zone="list">
     <!-- Truncation is a fact about the listing, not a toast: it stays until the
          next complete listing replaces it (LST-2). -->
     <div
@@ -390,6 +411,8 @@ defineExpose({ scrollToRow, focusList });
           :grid-template="gridTemplate"
           :show-modified="showModified"
           :show-type="showType"
+          :pos-in-set="row.index + 1"
+          :set-size="rows.length"
           :selected="objects.selected.has(row.entry.key)"
           :focused="objects.focusedKey === row.entry.key"
           :checkbox-column="checkboxColumn"

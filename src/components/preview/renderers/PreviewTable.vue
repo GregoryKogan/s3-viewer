@@ -40,7 +40,7 @@ const note = computed(() => {
 
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
-    <div class="scrollbar min-h-0 flex-1 overflow-auto p-3" data-testid="preview-table">
+    <div class="scrollbar min-h-0 flex-1 overflow-auto p-3" tabindex="-1" data-preview-scroll data-testid="preview-table">
       <table v-if="table.rows.length" class="tabular w-full border-collapse text-meta">
         <thead>
           <tr>

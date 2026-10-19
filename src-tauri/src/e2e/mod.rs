@@ -558,6 +558,10 @@ const SCENARIO: &str = r#"(async () => {
       await wait('Home', async () => (active() === 0 ? true : null));
       press(list, 'PageDown');
       await wait('PageDown', async () => (active() > 0 ? true : null));
+      // A viewport-sized page can reach the last row; start the two-row probe
+      // from the top so the second Down is not clamped at the bottom.
+      press(list, 'Home');
+      await wait('Home after PageDown', async () => (active() === 0 ? true : null));
       const selectedBefore = window.__s3viewer.state.objects.selected.size;
       press(list, 'ArrowDown');
       await frame();
@@ -1469,6 +1473,14 @@ const SCENARIO: &str = r#"(async () => {
       const error = await wait('the address error', () => $('[data-testid=address-error]'), 20000);
       const text = error.textContent.trim();
       if (!/nothing found/i.test(text)) throw new Error('unhelpful message: ' + text);
+      // The message belongs to the address field, so it starts at the field's
+      // edge — under the database icon it read as a separate label.
+      const fieldLeft = input.getBoundingClientRect().left;
+      const errorLeft = error.getBoundingClientRect().left;
+      if (Math.abs(errorLeft - fieldLeft) > 1) {
+        throw new Error('the error starts at ' + Math.round(errorLeft)
+          + ', the address field at ' + Math.round(fieldLeft));
+      }
       closeAddress();
       await frame();
       return text.slice(0, 60);
@@ -1637,6 +1649,37 @@ const SCENARIO: &str = r#"(async () => {
       $('[data-testid=crumb-root]').click();
       await wait('the root listing again', async () => (rowNames().includes(folderName) ? true : null));
 
+      // An edited address follows a navigation started somewhere else, and a
+      // stale error goes with it (NAV-7). This is the frozen-editor case: the
+      // error kept the editor open while the folder changed underneath it.
+      press(document.body, 'l', { metaKey: true });
+      const address = await wait('the address editor', () => $('[data-testid=address-input]'), 5000);
+      address.value = 's3://' + window.__s3viewer.state.connections.active.bucket + '/'
+        + __PREFIX__ + 'does-not-exist-' + Date.now();
+      fire(address, 'input');
+      press(address, 'Enter');
+      await wait('the address error', () => $('[data-testid=address-error]'), 20000);
+      const staleRow = clickRow(folderName);
+      staleRow.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const expectedPrefix = __PREFIX__ + folderName + '/';
+      // The breadcrumb is hidden while the editor is open, so the store is the
+      // fact to wait on.
+      await wait('the folder to open behind the editor', async () =>
+        window.__s3viewer.state.objects.prefix === expectedPrefix ? true : null);
+      const expected = 's3://' + window.__s3viewer.state.connections.active.bucket + '/'
+        + __PREFIX__ + folderName + '/';
+      if ($('[data-testid=address-input]').value !== expected) {
+        throw new Error('the edited address froze at ' + $('[data-testid=address-input]').value
+          + ' instead of ' + expected);
+      }
+      if ($('[data-testid=address-error]')) {
+        throw new Error('the stale address error survived the navigation');
+      }
+      press($('[data-testid=address-input]'), 'Escape');
+      await frame();
+      $('[data-testid=crumb-root]').click();
+      await wait('the root listing again', async () => (rowNames().includes(folderName) ? true : null));
+
       const opsMenu = await rowMenu(folderName);
       menuClick(opsMenu, 'Delete');
       const confirm = await wait('the confirmation', () => $('[data-testid=confirm-ok]'), 8000).catch(() => null);
@@ -1737,6 +1780,230 @@ const SCENARIO: &str = r#"(async () => {
       if ($$('.object-row').length < 12) throw new Error('the filter did not come back off');
       return '↓ landed on ' + cursor.querySelector('.row-label').textContent
         + ' and previewed it; Escape cleared the filter';
+    });
+
+    await check('keyboard: a filtered-out cursor is inert', async () => {
+      const objects = window.__s3viewer.state.objects;
+      const list = $('[data-testid=object-list]');
+      objects.clearSelection();
+      const target = objects.visibleEntries.find((entry) => entry.name === 'notes.txt');
+      if (!target) throw new Error('notes.txt is not in the listing');
+      objects.focus(target.key);
+      list.focus();
+      setInput('[data-testid=filter-input]', 'sample');
+      await wait('the filtered list', async () => ($$('.object-row').length === 2 ? true : null), 10000);
+      press(list, ' ');
+      await frame();
+      if (objects.selected.size) {
+        throw new Error('Space selected a row the filter hides');
+      }
+      if (list.getAttribute('aria-activedescendant')) {
+        throw new Error('the hidden cursor still advertises an active descendant');
+      }
+      if (objects.deleteTargets.length) {
+        throw new Error('Delete would act on a hidden row');
+      }
+      // The row menu must not offer row actions for a row that is not on screen.
+      press(list, 'F10', { shiftKey: true });
+      await frame();
+      const menu = $('[data-testid=context-menu]');
+      if (menu) {
+        const labels = Array.from(menu.querySelectorAll('button')).map((b) => b.textContent.trim());
+        if (labels.some((label) => label.startsWith('Copy S3 URI'))) {
+          throw new Error('the keyboard menu offered row actions for a hidden row: ' + labels.join(' | '));
+        }
+        menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await wait('the menu to close', async () => ($('[data-testid=context-menu]') ? null : true), 4000);
+      }
+      setInput('[data-testid=filter-input]', '');
+      await wait('the unfiltered list', async () => ($$('.object-row').length >= 12 ? true : null), 10000);
+      objects.clearSelection();
+      objects.focus(null);
+      await frame();
+      return 'Space, Delete and the menu ignored the hidden cursor';
+    });
+
+    await check('keyboard: Left and Right move between the columns', async () => {
+      const list = $('[data-testid=object-list]');
+      const activeId = window.__s3viewer.state.connections.activeId;
+      list.focus();
+      press(list, 'ArrowLeft');
+      await frame();
+      const card = $('[data-testid=connection-' + activeId + ']');
+      if (!card) throw new Error('the active connection card is missing');
+      if (document.activeElement !== card) {
+        throw new Error('Left did not reach the connection column: '
+          + (document.activeElement && document.activeElement.outerHTML || '').slice(0, 90));
+      }
+
+      // Right goes back to the main column.
+      press(card, 'ArrowRight');
+      await frame();
+      if (document.activeElement !== list) {
+        throw new Error('Right did not come back to the list');
+      }
+
+      // The list's cursor is its focus indicator; the stray pane ring is gone.
+      press(list, 'ArrowDown');
+      await frame();
+      if (getComputedStyle(list).outlineStyle !== 'none') {
+        throw new Error('the list still draws a focus ring: ' + getComputedStyle(list).outline);
+      }
+      // With no cursor there is nothing else to show focus with, so the list
+      // draws its own inset ring instead of leaving the pane invisible.
+      window.__s3viewer.state.objects.focus(null);
+      await frame();
+      if (getComputedStyle(list).outlineStyle === 'none') {
+        throw new Error('the list has no focus indicator when the cursor is cleared');
+      }
+
+      // The visible Actions button opens the same menu as a right-click; it is
+      // the reliable path where F10 is a media key.
+      window.__s3viewer.state.objects.focus(window.__s3viewer.state.visible[0].key);
+      await frame();
+      const actions = $('[data-testid=row-actions]');
+      if (!actions) throw new Error('the Actions button is missing while a cursor exists');
+      actions.click();
+      const actionsMenu = await wait('the Actions menu', () => $('[data-testid=context-menu]'), 5000);
+      actionsMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await wait('the Actions menu to close', async () => ($('[data-testid=context-menu]') ? null : true), 4000);
+      list.focus();
+      await frame();
+
+      // A checkbox is a control, not a text field: Space on select-all must not
+      // reach the list and toggle the cursor row behind it.
+      clickRow('notes.txt');
+      await frame();
+      const selectAll = $('[data-testid=select-all]');
+      if (!selectAll) throw new Error('select-all is missing after selecting a row');
+      const cursorBefore = window.__s3viewer.state.objects.focusedKey;
+      selectAll.focus();
+      press(selectAll, ' ');
+      await frame();
+      if (window.__s3viewer.state.objects.selected.size !== 1) {
+        throw new Error('Space on select-all changed the row selection');
+      }
+      if (window.__s3viewer.state.objects.focusedKey !== cursorBefore) {
+        throw new Error('Space on select-all moved the cursor');
+      }
+      // Clearing the last row unmounts the box that had focus; the keyboard
+      // must land on the list, not on <body>.
+      selectAll.focus();
+      window.__s3viewer.state.objects.clearSelection();
+      await frame();
+      await frame();
+      if (document.activeElement !== list) {
+        throw new Error('clearing the selection dropped focus off the list');
+      }
+
+      // Right again: the preview is a column of its own and can take the keyboard.
+      if (window.__s3viewer.state.ui.previewHidden) {
+        $('[data-testid=toggle-preview]').click();
+        await frame();
+      }
+      press(list, 'ArrowRight');
+      await frame();
+      const body = $('[data-testid=preview-body]');
+      if (!body) throw new Error('the preview body is missing while the panel is visible');
+      // The column focuses the renderer's own scroller when there is one, so
+      // "the preview has the keyboard" means inside it, not the body itself.
+      if (!body.contains(document.activeElement)) {
+        throw new Error('Right did not reach the preview column');
+      }
+      press(document.activeElement, 'ArrowLeft');
+      await frame();
+      if (document.activeElement !== list) {
+        throw new Error('Left did not come back from the preview');
+      }
+
+      // Shift+F10 is the keyboard's right-click: the row menu opens on the cursor.
+      const target = window.__s3viewer.state.visible[0];
+      if (!target) throw new Error('the list is empty, so the keyboard menu cannot be probed');
+      window.__s3viewer.state.objects.focus(target.key);
+      list.focus();
+      await frame();
+      press(list, 'F10', { shiftKey: true });
+      const menu = await wait('the keyboard row menu', () => $('[data-testid=context-menu]'), 5000);
+      const labels = Array.from(menu.querySelectorAll('button')).map((b) => b.textContent.trim());
+      for (const wanted of ['Preview', 'Download', 'Copy S3 URI', 'Delete']) {
+        if (!labels.some((label) => label.startsWith(wanted))) {
+          throw new Error('the keyboard menu is missing "' + wanted + '": ' + labels.join(' | '));
+        }
+      }
+      menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await wait('the menu to close', async () => ($('[data-testid=context-menu]') ? null : true), 4000);
+      if (document.activeElement !== list) {
+        throw new Error('closing the menu did not restore the list');
+      }
+      return 'list ↔ connections ↔ preview, Shift+F10 menu, no pane ring';
+    });
+
+    await check('keyboard: range edges and viewport pages', async () => {
+      const objects = window.__s3viewer.state.objects;
+      const list = $('[data-testid=object-list]');
+      objects.clearSelection();
+      objects.focus(null);
+      list.focus();
+      const rows = objects.visibleEntries.length;
+      press(list, 'End');
+      await frame();
+      if (objects.focusedKey !== objects.visibleEntries[rows - 1].key) {
+        throw new Error('End did not land on the last row');
+      }
+      press(list, 'Home', { shiftKey: true });
+      await frame();
+      if (objects.selected.size !== rows) {
+        throw new Error('Shift+Home from the last row selected ' + objects.selected.size
+          + ' of ' + rows + ' rows');
+      }
+
+      // PageDown jumps by what is actually on screen, not by a fixed ten rows.
+      objects.clearSelection();
+      objects.focus(null);
+      press(list, 'Home');
+      await frame();
+      press(list, 'PageDown');
+      await frame();
+      const landed = objects.visibleEntries.findIndex((entry) => entry.key === objects.focusedKey);
+      const page = Math.max(1, Math.floor($('[data-testid=object-list]').clientHeight / 30) - 1);
+      const expected = Math.min(rows - 1, page);
+      if (landed !== expected) {
+        throw new Error('PageDown landed on row ' + landed + ', expected ' + expected
+          + ' (page size ' + page + ')');
+      }
+      objects.clearSelection();
+      objects.focus(null);
+      press(list, 'Escape');
+      await frame();
+      return 'Shift+Home covered ' + rows + ' rows, PageDown moved ' + page;
+    });
+
+    await check('keyboard: the copy and download shortcuts use the cursor row', async () => {
+      const objects = window.__s3viewer.state.objects;
+      objects.clearSelection();
+      const target = objects.visibleEntries.find((entry) => entry.name === 'notes.txt');
+      if (!target) throw new Error('notes.txt is not in the listing');
+      objects.focus(target.key);
+      const list = $('[data-testid=object-list]');
+      list.focus();
+      await frame();
+
+      press(list, 'c', { shiftKey: true, metaKey: true });
+      const toast = await wait('the URI toast', () =>
+        $$('[data-testid^=toast-]').find((node) => /s3:\/\/.*notes\.txt/.test(node.textContent)), 8000);
+      if (!toast) throw new Error('⌘⇧C did not copy the cursor row');
+      if ($$('[data-testid^=toast-]').some((node) => /nothing to/i.test(node.textContent))) {
+        throw new Error('⌘⇧C reported nothing to copy with a cursor row');
+      }
+
+      press(list, 'd', { metaKey: true });
+      const download = await wait('the cursor-row download', async () => {
+        const items = await invoke('transfer_progress');
+        return items.find((item) => /Downloading.*notes\.txt/i.test(item.label)) ?? null;
+      }, 15000);
+      objects.clearSelection();
+      await frame();
+      return 'copied and downloaded ' + target.name + ' with no selection';
     });
 
     await check('ops: the boto3 snippet copies to the clipboard', async () => {
@@ -2070,6 +2337,50 @@ const SCENARIO: &str = r#"(async () => {
       // Right-click opens the menu; it must not open the connection.
       const card = await wait('the copied card', () =>
         $('[data-testid=connection-' + copy.id + ']'), 8000);
+
+      // Shift+F10 is the keyboard's right-click on a card too (the collapsed
+      // rail has no visible ⋯ at all).
+      card.focus();
+      press(card, 'F10', { shiftKey: true });
+      const cardMenu = await wait('the connection menu from the keyboard',
+        () => $('[data-testid=context-menu]'), 5000);
+      const cardLabels = Array.from(cardMenu.querySelectorAll('button'))
+        .map((button) => button.textContent.trim());
+      if (!cardLabels.some((label) => label.startsWith('Open'))) {
+        throw new Error('Shift+F10 opened the wrong menu: ' + cardLabels.join(' | '));
+      }
+      cardMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await wait('the menu to close', async () => ($('[data-testid=context-menu]') ? null : true), 4000);
+
+      // The connection column is a keyboard list: Down/Up walk the cards, Enter
+      // (the click a focused button receives natively) opens one, Right hands
+      // the keyboard back to the object list.
+      const originalCard = $('[data-testid=connection-' + original + ']');
+      originalCard.focus();
+      press(originalCard, 'ArrowDown');
+      await frame();
+      if (document.activeElement !== card) {
+        throw new Error('Down did not move to the next connection');
+      }
+      press(card, 'ArrowUp');
+      await frame();
+      if (document.activeElement !== originalCard) {
+        throw new Error('Up did not move back to the first connection');
+      }
+      card.focus();
+      card.click();
+      await wait('the copy to become active', async () =>
+        (connections.activeId === copy.id ? true : null), 15000);
+      press(card, 'ArrowRight');
+      await frame();
+      if (document.activeElement !== $('[data-testid=object-list]')) {
+        throw new Error('Right did not leave the connection column');
+      }
+      // Back to the original before the removal assertions below.
+      originalCard.focus();
+      originalCard.click();
+      await wait('the original connection again', async () =>
+        (connections.activeId === original ? true : null), 15000);
       const box = card.getBoundingClientRect();
       card.dispatchEvent(new MouseEvent('contextmenu', {
         bubbles: true,

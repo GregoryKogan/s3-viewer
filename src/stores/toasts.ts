@@ -67,7 +67,10 @@ export const useToastsStore = defineStore("toasts", () => {
 
   function push(toast: Omit<Toast, "id" | "actions"> & { actions?: ToastAction[] }): number {
     const id = nextId++;
-    const timeout = toast.timeout ?? AUTO_DISMISS[toast.level];
+    // A toast that offers an action has to stay until the user answers it:
+    // reaching its button through the whole Tab order before it auto-dismisses
+    // is not a keyboard path.
+    const timeout = toast.timeout ?? (toast.actions?.length ? 0 : AUTO_DISMISS[toast.level]);
     toasts.value = [...toasts.value, { ...toast, id, actions: toast.actions ?? [] }];
     if (timeout > 0) {
       timers.set(id, {

@@ -99,10 +99,20 @@ async function run() {
   if (failures.length) toasts.error(failures.join("\n"), "Some connections failed");
   if (created.length) props.resolve(created);
 }
+
+/** The JSON textarea keeps Enter for newlines; ⌘/Ctrl+Enter imports. */
+function onEnter(event: KeyboardEvent) {
+  if (event.isComposing) return;
+  if (!(event.metaKey || event.ctrlKey)) return;
+  if (event.target instanceof HTMLElement && event.target.closest("button, a")) return;
+  event.preventDefault();
+  void run();
+}
+
 </script>
 
 <template>
-  <ModalFrame title="Import connections" :icon="FileUp" :size="props.size" @close="cancel">
+  <ModalFrame title="Import connections" :icon="FileUp" :size="props.size" @close="cancel" @keydown.enter="onEnter">
     <p class="text-meta leading-relaxed text-muted">
       Paste a JSON credentials file or a boto3 client snippet. Secrets are encrypted locally and
       never leave this machine.
@@ -130,7 +140,7 @@ async function run() {
     />
 
     <div class="flex flex-col gap-1.5" data-testid="import-preview">
-      <p class="text-meta" :class="problem ? 'text-danger' : 'text-subtle'">{{ hint }}</p>
+      <p class="text-meta" :class="problem ? 'text-danger' : 'text-subtle'" role="status">{{ hint }}</p>
       <ul v-if="drafts.length" class="list-disc pl-4 text-meta leading-relaxed text-muted">
         <li v-for="(draft, index) in drafts" :key="index">
           {{ draft.name }} → {{ draft.endpointUrl }} / {{ draft.bucket }}

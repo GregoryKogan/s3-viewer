@@ -30,6 +30,8 @@ const markup = computed(() => {
     <!-- eslint-disable-next-line vue/no-v-html -- produced by highlight.js from escaped text -->
     <pre
       class="scrollbar min-h-0 flex-1 overflow-auto p-3 font-mono text-meta leading-relaxed whitespace-pre text-content"
+      tabindex="-1"
+      data-preview-scroll
       data-testid="preview-code"
     ><code class="hljs" v-html="markup" /></pre>
 

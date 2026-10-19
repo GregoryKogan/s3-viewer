@@ -50,6 +50,12 @@ function submit() {
   }
   props.resolve(candidate);
 }
+/** Enter commits; an IME composition commit is not a submit. */
+function onEnter(event: KeyboardEvent) {
+  if (event.isComposing) return;
+  event.preventDefault();
+  submit();
+}
 </script>
 
 <template>
@@ -63,7 +69,7 @@ function submit() {
         :placeholder="props.placeholder"
         autofocus
         data-testid="prompt-input"
-        @keydown.enter.prevent="submit"
+        @keydown.enter="onEnter"
         @input="error = null"
       />
     </AppField>

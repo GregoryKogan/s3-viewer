@@ -194,7 +194,9 @@ export function useObjectActions() {
   async function downloadSelection() {
     const connection = connections.active;
     if (!connection || !sessionMatchesActive()) return;
-    const entries = targets.value.filter((entry) => !entry.isFolder);
+    // Selection, or the cursor row when nothing is selected — the same set
+    // Delete and the context menu act on.
+    const entries = writeTargets.value.filter((entry) => !entry.isFolder);
     if (!entries.length) {
       toasts.warn("Folders cannot be downloaded directly. Open the folder and select its files.", "Nothing to download");
       return;
@@ -267,7 +269,7 @@ export function useObjectActions() {
 
   async function copySelectionUris() {
     const connection = connections.active;
-    const entries = targets.value;
+    const entries = writeTargets.value;
     if (!connection || !entries.length || !sessionMatchesActive()) return;
     const text = entries.map((entry) => s3Uri(connection.bucket, entry.key)).join("\n");
     if (!(await copyText(text))) {

@@ -49,6 +49,8 @@ function onContentClick(event: MouseEvent) {
     <div
       v-if="props.view === 'rendered'"
       class="markdown scrollbar min-h-0 flex-1 overflow-auto px-4 py-3"
+      tabindex="-1"
+      data-preview-scroll
       data-testid="preview-markdown"
       v-html="rendered"
       @click="onContentClick"
@@ -57,6 +59,8 @@ function onContentClick(event: MouseEvent) {
     <pre
       v-else
       class="scrollbar min-h-0 flex-1 overflow-auto p-3 font-mono text-meta leading-relaxed whitespace-pre text-content"
+      tabindex="-1"
+      data-preview-scroll
       data-testid="preview-code"
     ><code class="hljs">{{ source }}</code></pre>
 

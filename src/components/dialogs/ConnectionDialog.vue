@@ -348,6 +348,25 @@ async function copySnippet() {
     copied.value = false;
   }, 2000);
 }
+
+/**
+ * Enter saves from any field, so the form is one gesture instead of fourteen
+ * Tab stops. A control keeps its own Enter (Cancel, a checkbox, the Advanced
+ * disclosure); an IME composition commit is never a submit.
+ */
+function onEnter(event: KeyboardEvent) {
+  if (event.isComposing) return;
+  const target = event.target;
+  if (
+    target instanceof HTMLElement &&
+    target.closest("button, a, select, textarea, input[type=checkbox], input[type=radio], summary")
+  ) {
+    return;
+  }
+  event.preventDefault();
+  void save();
+}
+
 </script>
 
 <template>
@@ -356,6 +375,7 @@ async function copySnippet() {
     :icon="isEdit ? Server : Sparkles"
     :size="props.size"
     @close="cancel"
+    @keydown.enter="onEnter"
   >
     <p class="text-meta leading-relaxed text-muted">
       Copy the settings from a working Python client and they will behave the same here. The basic
@@ -492,6 +512,8 @@ async function copySnippet() {
               type="button"
               class="grid size-7 shrink-0 place-items-center rounded-control border border-line text-muted transition-colors hover:bg-hover"
               :title="showingSecret ? 'Hide' : 'Show'"
+              :aria-label="showingSecret ? 'Hide the secret key' : 'Show the secret key'"
+              :aria-pressed="showingSecret"
               @click="showingSecret = !showingSecret"
             >
               <KeyRound class="size-3.5" />
@@ -521,6 +543,7 @@ async function copySnippet() {
       v-if="probeError"
       ref="probeErrorBlock"
       class="rounded-control border border-danger/40 bg-danger-soft px-2.5 py-1.5"
+      role="alert"
       data-testid="probe-error"
     >
       <ErrorNotice
@@ -535,6 +558,7 @@ async function copySnippet() {
       v-if="capabilities"
       ref="probeOutputBlock"
       class="flex flex-col gap-1.5"
+      role="status"
       data-testid="probe-output"
     >
       <div class="flex flex-wrap gap-1.5">
@@ -677,7 +701,7 @@ async function copySnippet() {
               </AppButton>
             </div>
             <!-- eslint-disable-next-line vue/no-v-html -- highlight.js over escaped text -->
-            <pre :class="codeClass" data-testid="boto3-snippet"><code class="hljs" v-html="snippetMarkup" /></pre>
+            <pre :class="codeClass" tabindex="0" aria-label="boto3 snippet" data-testid="boto3-snippet"><code class="hljs" v-html="snippetMarkup" /></pre>
           </div>
         </details>
       </div>
