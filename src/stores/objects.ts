@@ -69,6 +69,14 @@ export const useObjectsStore = defineStore("objects", () => {
   let listingRequest = 0;
   let previewRequest = 0;
   let staged: ObjectEntry[] = [];
+  /**
+   * The listing failure already announced by a toast. The `listing://error`
+   * event normally sets it; the rejected invoke covers failures raised before
+   * the stream starts (connection lookup, client construction), which never
+   * emit an event. The flag is what makes the two paths a single toast in
+   * either arrival order.
+   */
+  let announcedListingFailure: string | null = null;
 
   /**
    * Short transition logs. A hung listing or a stale preview is otherwise
@@ -125,6 +133,7 @@ export const useObjectsStore = defineStore("objects", () => {
     awaitingFirstPage.value = true;
     error.value = null;
     errorDetail.value = null;
+    announcedListingFailure = null;
     warning.value = null;
     truncated.value = false;
 
@@ -145,6 +154,9 @@ export const useObjectsStore = defineStore("objects", () => {
       await api.listObjectsStream({ connectionId: connection.id, prefix: prefix.value, requestId });
     } catch (failure) {
       if (String(listingRequest) === requestId) {
+        // The event may already have set the state and toasted. Capture that
+        // before the assignments below overwrite the message with the invoke's.
+        const reportedByEvent = error.value !== null || errorDetail.value !== null;
         loading.value = false;
         awaitingFirstPage.value = false;
         error.value = (failure as Error).message;
@@ -157,8 +169,13 @@ export const useObjectsStore = defineStore("objects", () => {
             requestId: failure.requestId ?? recordedRequestId(),
           };
         }
-        // The `listing://error` event owns the failure toast; toasting here too
-        // showed every failed listing twice (final review minor 9).
+        // One failure, one toast: the event is authoritative, and a failure
+        // that never emits an event (raised before the stream starts) is
+        // announced here instead. The shared id covers either arrival order.
+        if (!reportedByEvent && announcedListingFailure !== requestId) {
+          announcedListingFailure = requestId;
+          useToastsStore().apiError(failure, "Cannot list this folder");
+        }
       }
     } finally {
       clearTimeout(guard!);
@@ -236,11 +253,16 @@ export const useObjectsStore = defineStore("objects", () => {
       requestId: event.error?.requestId ?? null,
     };
     // Raise the event as an ApiError so the toast keeps the same hints and code
-    // the inline error state shows; a staged listing has no inline notice.
-    useToastsStore().apiError(
-      new ApiError(event.error ?? { message: "listing failed" }),
-      "Cannot list this folder",
-    );
+    // the inline error state shows; a staged listing has no inline notice. The
+    // rejected invoke may already have announced this request when the event
+    // arrives late, so the shared id guards the other order too.
+    if (announcedListingFailure !== event.requestId) {
+      announcedListingFailure = event.requestId;
+      useToastsStore().apiError(
+        new ApiError(event.error ?? { message: "listing failed" }),
+        "Cannot list this folder",
+      );
+    }
   }
 
   async function navigate(targetPrefix: string) {

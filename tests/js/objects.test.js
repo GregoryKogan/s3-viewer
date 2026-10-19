@@ -2,9 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { loadTs } from "./loadTs.mjs";
 
-const { api, createPinia, setActivePinia, useConnectionsStore, useObjectsStore } = await loadTs(
-  "tests/js/objectsHarness.ts",
-);
+const {
+  api,
+  ApiError,
+  createPinia,
+  setActivePinia,
+  useConnectionsStore,
+  useObjectsStore,
+  useToastsStore,
+} = await loadTs("tests/js/objectsHarness.ts");
 
 /**
  * The minimal shape `loadFolder` touches. The store reads the id and the scope
@@ -44,6 +50,25 @@ function pendingListing() {
   };
   return { started, release: () => release?.() };
 }
+
+/** A listing call the test rejects by hand; the store turns it into an error state. */
+function failingListing() {
+  let reject;
+  const started = [];
+  api.listObjectsStream = (input) => {
+    started.push(input);
+    return new Promise((_, rejectListing) => {
+      reject = rejectListing;
+    });
+  };
+  return { started, reject: (error) => reject?.(error) };
+}
+
+/** The real S3 shape: kind "s3", a service code, no HTTP status. */
+const missingKey = (message = "The specified key does not exist.") =>
+  new ApiError({ kind: "s3", code: "NoSuchKey", status: null, message });
+
+const errorToasts = () => useToastsStore().toasts.filter((toast) => toast.level === "error");
 
 function seed(sessionConnectionId) {
   setActivePinia(createPinia());
@@ -103,4 +128,50 @@ test("changing folders inside one connection still clears the preview", async ()
 
   listing.release();
   await navigating;
+});
+
+test("a listing failure toasts once when the event arrives before the rejection", async () => {
+  const { objects } = seed("a");
+  const toasts = useToastsStore();
+  toasts.clear();
+  const listing = failingListing();
+
+  const loading = objects.loadFolder("");
+  const requestId = listing.started[0].requestId;
+
+  // The event path announces the failure first.
+  objects.onListingError({
+    requestId,
+    error: { kind: "s3", code: "NoSuchKey", message: "The specified key does not exist." },
+  });
+  // The rejected invoke then lands for the same request.
+  listing.reject(missingKey());
+  await loading;
+
+  assert.equal(errorToasts().length, 1);
+  toasts.clear();
+});
+
+test("a listing failure toasts once when the rejection arrives before the event", async () => {
+  const { objects } = seed("a");
+  const toasts = useToastsStore();
+  toasts.clear();
+  const listing = failingListing();
+
+  const loading = objects.loadFolder("");
+  const requestId = listing.started[0].requestId;
+
+  // A failure raised before the stream starts never emits an event; the catch
+  // must still announce it exactly once.
+  listing.reject(missingKey());
+  await loading;
+  assert.equal(errorToasts().length, 1);
+
+  // A late event for the same request must not announce it again.
+  objects.onListingError({
+    requestId,
+    error: { kind: "s3", code: "NoSuchKey", message: "The specified key does not exist." },
+  });
+  assert.equal(errorToasts().length, 1);
+  toasts.clear();
 });

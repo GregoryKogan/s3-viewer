@@ -90,14 +90,18 @@ function toError(raw: unknown): ApiError {
 /**
  * Whether a failure means "this key does not exist".
  *
- * Probes that ask "is this address an object or a folder?" may legitimately fall
- * back on a 404. Any other failure (denied, network, bad credentials) must be
- * reported as itself instead of being mislabelled "Nothing found".
+ * The S3 client reports a missing key as `{ kind: "s3", code: "NoSuchKey" }`
+ * with no HTTP status, so the code list must mirror the backend's `is_missing`
+ * (`src-tauri/src/commands.rs`). Probes that ask "is this address an object or
+ * a folder?" may legitimately fall back on a 404. Any other failure (denied,
+ * network, bad credentials) must be reported as itself instead of being
+ * mislabelled "Nothing found".
  */
 export function isNotFound(error: unknown): boolean {
-  return (
-    error instanceof ApiError && (error.kind === "notFound" || error.status === 404)
-  );
+  if (!(error instanceof ApiError)) return false;
+  if (error.kind === "notFound" || error.status === 404) return true;
+  const code = error.code?.trim().toLowerCase() ?? "";
+  return code === "404" || code === "http404" || code === "notfound" || code.startsWith("nosuch");
 }
 
 let cachedInvoke: InvokeFn | null = null;

@@ -951,6 +951,7 @@ function onDrop(paths: string[]) {
               :max="900"
               label="Resize the preview panel"
               data-testid="resizer-preview"
+              @commit="ui.clampLayoutToWindow()"
               @reset="ui.resetPreviewWidth()"
             />
           </div>

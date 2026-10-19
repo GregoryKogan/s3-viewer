@@ -185,18 +185,23 @@ export const useUiStore = defineStore("ui", () => {
   function resetSidebarWidth() {
     layout.value.sidebar = LAYOUT_DEFAULTS.sidebar;
     applyLayoutDom();
+    updatePreviewAutoHide();
     persistLayout();
   }
 
   function resetPreviewWidth() {
     layout.value.preview = LAYOUT_DEFAULTS.preview;
     applyLayoutDom();
+    updatePreviewAutoHide();
     persistLayout();
   }
 
   function toggleSidebar() {
     layout.value.collapsed = !layout.value.collapsed;
     applyLayoutDom();
+    // Expanding the sidebar takes the list's width back; re-check the preview
+    // so the 264 px rail cannot recreate a 216 px list (final re-review minor 1).
+    updatePreviewAutoHide();
     persistLayout();
   }
 
@@ -235,7 +240,9 @@ export const useUiStore = defineStore("ui", () => {
    */
   function updatePreviewAutoHide() {
     const windowWidth = globalThis.innerWidth;
-    if (!windowWidth) return;
+    // A full-width preview is the user's explicit choice; a window shrink must
+    // not eject them into the list mid-inspection (final re-review minor 2).
+    if (!windowWidth || previewExpanded.value) return;
     const sidebar = layout.value.collapsed ? 0 : layout.value.sidebar;
     const listWidth = windowWidth - sidebar - layout.value.preview;
     if (listWidth >= LIST_MIN_WIDTH) {
