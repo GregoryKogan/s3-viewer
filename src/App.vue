@@ -671,10 +671,20 @@ const ipcSubscriptions: IpcSubscription[] = [
     listen<ListingPageEvent>("listing://page", (payload) => objects.onListingPage(payload)),
   ),
   ipcSubscription(() =>
-    listen<ListingDoneEvent>("listing://done", (payload) => objects.onListingDone(payload)),
+    listen<ListingDoneEvent>("listing://done", (payload) => {
+      // The listing is the strongest health signal: the bucket answered. A
+      // superseded request says nothing about the connection now on screen.
+      if (objects.onListingDone(payload) && connections.activeId) {
+        connections.markHealthy(connections.activeId);
+      }
+    }),
   ),
   ipcSubscription(() =>
-    listen<ListingErrorEvent>("listing://error", (payload) => objects.onListingError(payload)),
+    listen<ListingErrorEvent>("listing://error", (payload) => {
+      if (objects.onListingError(payload) && connections.activeId) {
+        connections.markUnhealthy(connections.activeId, payload.error?.message);
+      }
+    }),
   ),
 ];
 

@@ -50,12 +50,31 @@ function hueFor(id: string): number {
   return hash % 360;
 }
 
-function toneFor(connection: Connection): "ok" | "warn" | "danger" | "neutral" {
+function capabilityTone(connection: Connection): "ok" | "warn" | "danger" | "neutral" {
   const summary = describeCapabilities(connections.capabilitiesOf(connection.id));
   if (summary.badgeClass === "ok") return "ok";
   if (summary.badgeClass === "danger") return "danger";
   if (summary.badgeClass === "neutral") return "neutral";
   return "warn";
+}
+
+/** The dot reports reachability, never permissions: `ok` is green. */
+function healthTone(connection: Connection): "ok" | "danger" | "neutral" {
+  const state = connections.healthOf(connection.id);
+  if (state === "ok") return "ok";
+  if (state === "error") return "danger";
+  return "neutral";
+}
+
+function healthTitle(connection: Connection): string {
+  const state = connections.healthOf(connection.id);
+  if (state === "ok") {
+    return "Reachable: the bucket answered the last request.";
+  }
+  if (state === "error") {
+    return `Not reachable: ${connections.healthErrorOf(connection.id) || "the last request failed"}.`;
+  }
+  return "Health not checked yet. Open the connection to verify that the bucket answers.";
 }
 
 /**
@@ -192,11 +211,12 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
           <span
             class="absolute right-1 bottom-1 size-1.5 rounded-full"
             :class="{
-              'bg-ok': toneFor(view.connection) === 'ok',
-              'bg-warn': toneFor(view.connection) === 'warn',
-              'bg-danger': toneFor(view.connection) === 'danger',
-              'bg-subtle': toneFor(view.connection) === 'neutral',
+              'bg-ok': healthTone(view.connection) === 'ok',
+              'bg-danger': healthTone(view.connection) === 'danger',
+              'bg-subtle': healthTone(view.connection) === 'neutral',
             }"
+            :data-testid="`connection-health-${view.connection.id}`"
+            :title="healthTitle(view.connection)"
           />
         </button>
       </template>
@@ -229,12 +249,12 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
               <span
                 class="size-1.5 shrink-0 rounded-full"
                 :class="{
-                  'bg-ok': toneFor(view.connection) === 'ok',
-                  'bg-warn': toneFor(view.connection) === 'warn',
-                  'bg-danger': toneFor(view.connection) === 'danger',
-                  'bg-subtle': toneFor(view.connection) === 'neutral',
+                  'bg-ok': healthTone(view.connection) === 'ok',
+                  'bg-danger': healthTone(view.connection) === 'danger',
+                  'bg-subtle': healthTone(view.connection) === 'neutral',
                 }"
-                :title="capabilityTitle(view.capabilities)"
+                :data-testid="`connection-health-${view.connection.id}`"
+                :title="healthTitle(view.connection)"
               />
             </div>
 
@@ -242,7 +262,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
               {{ view.connection.bucket }}<span class="text-muted">/{{ view.connection.prefix }}</span>
             </div>
             <div class="flex flex-wrap gap-1">
-              <AppBadge :tone="toneFor(view.connection)" :title="capabilityTitle(view.capabilities)">
+              <AppBadge :tone="capabilityTone(view.connection)" :title="capabilityTitle(view.capabilities)">
                 {{ describeCapabilities(view.capabilities).badge }}
               </AppBadge>
               <AppBadge v-if="view.connection.signatureVersion !== 's3v4'" tone="accent">

@@ -38,12 +38,24 @@ export function describeCapabilities(capabilities?: Capabilities | null): Capabi
   return { level: "ro", summary: "read-only", badge: "read-only", badgeClass: "warn" };
 }
 
+/**
+ * Whether the bucket behind a connection answers at all.
+ *
+ * Deliberately separate from the permission badge: a read-only connection that
+ * answers is healthy, while a connection whose last request timed out is not.
+ * `unknown` means no request has been made yet, not that something is wrong.
+ */
+export type ConnectionHealth = "unknown" | "ok" | "error";
+
 /** Saved connections, their credentials, and their probed rights. */
 export const useConnectionsStore = defineStore("connections", () => {
   const views = ref<ConnectionView[]>([]);
   const activeId = ref<string | null>(null);
   /** Connections already probed during this session, to avoid repeating it. */
   const probedThisSession = ref(new Set<string>());
+  /** In-memory health, per connection. Never persisted. */
+  const health = ref<Record<string, ConnectionHealth>>({});
+  const healthError = ref<Record<string, string | null>>({});
 
   const all = computed(() => views.value.map((view) => view.connection));
 
@@ -75,6 +87,21 @@ export const useConnectionsStore = defineStore("connections", () => {
 
   async function load() {
     views.value = await api.listConnections();
+    const ids = new Set(views.value.map((view) => view.connection.id));
+    for (const view of views.value) {
+      const id = view.connection.id;
+      // A stored probe means the endpoint answered at least once. Keep a live
+      // red/green result from this session: only a missing id is seeded.
+      if (health.value[id] === undefined) {
+        health.value[id] = view.capabilities?.probed ? "ok" : "unknown";
+      }
+    }
+    for (const id of Object.keys(health.value)) {
+      if (!ids.has(id)) {
+        delete health.value[id];
+        delete healthError.value[id];
+      }
+    }
   }
 
   function find(id: string): ConnectionView | undefined {
@@ -85,8 +112,34 @@ export const useConnectionsStore = defineStore("connections", () => {
     return find(id)?.capabilities;
   }
 
+  function healthOf(id: string): ConnectionHealth {
+    return health.value[id] ?? "unknown";
+  }
+
+  function healthErrorOf(id: string): string | null {
+    return healthError.value[id] ?? null;
+  }
+
+  function setHealth(id: string, state: ConnectionHealth, message: string | null = null) {
+    health.value[id] = state;
+    healthError.value[id] = message;
+  }
+
+  /** The bucket answered the last request. */
+  function markHealthy(id: string) {
+    if (health.value[id] !== "ok" || healthError.value[id]) setHealth(id, "ok");
+  }
+
+  /** The last request failed; `message` is shown in the dot's tooltip. */
+  function markUnhealthy(id: string, message?: string | null) {
+    setHealth(id, "error", message || "the last request failed");
+  }
+
   async function save(draft: ConnectionDraft): Promise<Connection> {
     const saved = await api.saveConnection(draft);
+    // The endpoint or the keys may have changed: the previous health result
+    // cannot speak for the new configuration.
+    setHealth(saved.id, "unknown");
     await load();
     return saved;
   }
@@ -108,11 +161,27 @@ export const useConnectionsStore = defineStore("connections", () => {
 
   /** Run the capability probe and remember the outcome. */
   async function detect(id: string): Promise<Capabilities> {
-    const capabilities = await api.detectCapabilities(id);
-    const view = find(id);
-    if (view) view.capabilities = capabilities;
-    probedThisSession.value.add(id);
-    return capabilities;
+    try {
+      const capabilities = await api.detectCapabilities(id);
+      const view = find(id);
+      if (view) view.capabilities = capabilities;
+      probedThisSession.value.add(id);
+      // `probed` is false only when the endpoint did not answer at all; an
+      // AccessDenied still proves the bucket is alive.
+      if (capabilities.probed) {
+        markHealthy(id);
+      } else {
+        const details = capabilities.details ?? [];
+        markUnhealthy(
+          id,
+          details[details.length - 1] ?? "the bucket did not answer the permission probe",
+        );
+      }
+      return capabilities;
+    } catch (error) {
+      markUnhealthy(id, (error as Error).message);
+      throw error;
+    }
   }
 
   /**
@@ -171,6 +240,10 @@ export const useConnectionsStore = defineStore("connections", () => {
     load,
     find,
     capabilitiesOf,
+    healthOf,
+    healthErrorOf,
+    markHealthy,
+    markUnhealthy,
     save,
     remove,
     duplicate,

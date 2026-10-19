@@ -203,9 +203,10 @@ export const useObjectsStore = defineStore("objects", () => {
     }
   }
 
-  function onListingDone(event: ListingDoneEvent) {
+  /** Returns false when the event belongs to a superseded request. */
+  function onListingDone(event: ListingDoneEvent): boolean {
     note(listingLog, `done#${event.requestId} total=${event.total}`);
-    if (event.requestId !== String(listingRequest)) return;
+    if (event.requestId !== String(listingRequest)) return false;
     entries.value = staged;
     staged = [];
     loading.value = false;
@@ -236,11 +237,13 @@ export const useObjectsStore = defineStore("objects", () => {
         void refreshPreview();
       }
     }
+    return true;
   }
 
-  function onListingError(event: ListingErrorEvent) {
+  /** Returns false when the event belongs to a superseded request. */
+  function onListingError(event: ListingErrorEvent): boolean {
     note(listingLog, `error#${event.requestId} ${event.error?.message ?? ""}`);
-    if (event.requestId !== String(listingRequest)) return;
+    if (event.requestId !== String(listingRequest)) return false;
     staged = [];
     loading.value = false;
     awaitingFirstPage.value = false;
@@ -263,6 +266,7 @@ export const useObjectsStore = defineStore("objects", () => {
         "Cannot list this folder",
       );
     }
+    return true;
   }
 
   async function navigate(targetPrefix: string) {

@@ -306,6 +306,12 @@ pub async fn probe_capabilities(
                 "listing failed: {}",
                 crate::model::describe_error(&err)
             ));
+            // An S3 error code means the endpoint answered (403, 404, 500);
+            // only a transport-level failure means it did not. The sidebar uses
+            // this to colour the health dot, not the permission badge.
+            if crate::model::error_code(&err).is_none() {
+                caps.probed = false;
+            }
         }
     }
 
