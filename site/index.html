@@ -245,7 +245,7 @@
             <li>Secret keys are sealed with XChaCha20-Poly1305 before anything is written to disk.</li>
             <li>The master key lives in the OS keychain, not in a file.</li>
             <li>The config file is <code>0600</code> inside a <code>0700</code> directory, written atomically.</li>
-            <li>No telemetry. The only network traffic is to the endpoint you configure.</li>
+            <li>No telemetry. The only background request is the update check against GitHub Releases; everything else goes to the endpoint you configure.</li>
           </ul>
         </div>
         <div>
