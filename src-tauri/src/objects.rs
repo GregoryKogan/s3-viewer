@@ -183,22 +183,22 @@ pub async fn list_folder(
     Ok((entries, truncated))
 }
 
-/// Every key at or below `prefix` (recursive), capped by [`MAX_RECURSIVE_KEYS`].
+/// Every object at or below `prefix` (recursive), capped by
+/// [`MAX_RECURSIVE_KEYS`]. Sizes come from the same page, so a bulk download can
+/// report progress in bytes without a HEAD per key.
 ///
 /// Folder markers are keys too: a nested empty folder that this app created is
 /// a zero-byte object ending in `/`, and leaving it behind makes the parent
 /// folder reappear after a recursive delete.
-pub async fn list_all_keys(store: &AnyStore, prefix: &str) -> AppResult<Vec<String>> {
-    let mut keys = Vec::new();
+pub async fn list_all_entries(store: &AnyStore, prefix: &str) -> AppResult<Vec<ObjectEntry>> {
+    let mut entries = Vec::new();
     let mut token: Option<String> = None;
     loop {
         let page = store
             .list_page(prefix, None, token.as_deref(), PAGE_SIZE)
             .await?;
-        for entry in page.entries {
-            keys.push(entry.key);
-        }
-        if keys.len() > MAX_RECURSIVE_KEYS {
+        entries.extend(page.entries);
+        if entries.len() > MAX_RECURSIVE_KEYS {
             return Err(AppError::invalid(format!(
                 "refusing to operate on more than {MAX_RECURSIVE_KEYS} keys at once"
             )));
@@ -211,7 +211,16 @@ pub async fn list_all_keys(store: &AnyStore, prefix: &str) -> AppResult<Vec<Stri
             _ => break,
         }
     }
-    Ok(keys)
+    Ok(entries)
+}
+
+/// Every key at or below `prefix` (recursive); see [`list_all_entries`].
+pub async fn list_all_keys(store: &AnyStore, prefix: &str) -> AppResult<Vec<String>> {
+    Ok(list_all_entries(store, prefix)
+        .await?
+        .into_iter()
+        .map(|entry| entry.key)
+        .collect())
 }
 
 /// Human summary used in confirmation prompts, e.g. `12 files (3.4 GB)`.

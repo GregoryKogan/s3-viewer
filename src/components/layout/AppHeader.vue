@@ -23,6 +23,8 @@ const emit = defineEmits<{
   find: [open: boolean];
   /** Escape in the field: drop the filter and go back to the list. */
   "find-clear": [];
+  /** The toolbar's Upload button: the shell owns the menu it opens. */
+  "upload-menu": [point: { x: number; y: number }];
 }>();
 
 /** The filter is local state, debounced into the store. */
@@ -145,6 +147,6 @@ function togglePreviewPanel() {
       </div>
     </div>
 
-    <AppToolbar v-if="hasConnection" />
+    <AppToolbar v-if="hasConnection" @upload-menu="emit('upload-menu', $event)" />
   </header>
 </template>

@@ -92,6 +92,38 @@ pub async fn reserve_unique_path(
     )))
 }
 
+/// Reserve a fresh directory atomically, appending ` (1)`, ` (2)`, … like
+/// [`reserve_unique_path`] does for files.
+///
+/// `create_dir` both takes the slot and fails when the name is taken, so two
+/// concurrent downloads of folders with the same name cannot merge into one.
+pub async fn reserve_unique_dir(dir: &Path, name: &str) -> AppResult<PathBuf> {
+    tokio::fs::create_dir_all(dir)
+        .await
+        .map_err(|e| AppError::msg(format!("cannot create {}: {e}", dir.display())))?;
+    for n in 0..10_000 {
+        let candidate = if n == 0 {
+            dir.join(name)
+        } else {
+            dir.join(format!("{name} ({n})"))
+        };
+        match tokio::fs::create_dir(&candidate).await {
+            Ok(()) => return Ok(candidate),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(AppError::msg(format!(
+                    "cannot create {}: {e}",
+                    candidate.display()
+                )))
+            }
+        }
+    }
+    Err(AppError::msg(format!(
+        "cannot find a free name for {name} in {}",
+        dir.display()
+    )))
+}
+
 /// Open a file with the OS default application.
 pub fn open(path: &Path) -> AppResult<()> {
     let opener = opener_command();
@@ -237,6 +269,28 @@ mod tests {
         assert_eq!(path, nested.join("photo.png"));
         assert!(nested.is_dir());
         drop(file);
+    }
+
+    #[tokio::test]
+    async fn reserve_unique_dir_never_merges_two_folder_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = reserve_unique_dir(dir.path(), "photos").await.unwrap();
+        let second = reserve_unique_dir(dir.path(), "photos").await.unwrap();
+
+        assert_eq!(first.file_name().unwrap(), "photos");
+        assert_eq!(second.file_name().unwrap(), "photos (1)");
+        assert_ne!(first, second);
+        assert!(first.is_dir());
+        assert!(second.is_dir());
+    }
+
+    #[tokio::test]
+    async fn reserve_unique_dir_creates_a_missing_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("downloads/2024");
+        let created = reserve_unique_dir(&nested, "photos").await.unwrap();
+        assert_eq!(created, nested.join("photos"));
+        assert!(created.is_dir());
     }
 
     #[test]

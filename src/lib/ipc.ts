@@ -16,6 +16,7 @@ import type {
   ConnectionView,
   CopyInput,
   DeleteInput,
+  DownloadFolderInput,
   DownloadInput,
   ErrorPayload,
   ListResult,
@@ -229,6 +230,9 @@ export const api = {
 
   // transfers
   downloadObject: (input: DownloadInput) => invoke<TransferResult>("download_object", { input }),
+  /** Download a whole prefix into a new directory below `destDir`. */
+  downloadFolder: (input: DownloadFolderInput) =>
+    invoke<TransferResult>("download_folder", { input }),
   uploadFiles: (input: UploadInput) => invoke<UploadPlanItem[]>("upload_files", { input }),
   /** Keys from the same upload plan that already exist. Uploads nothing. */
   uploadConflicts: (input: UploadInput) => invoke<string[]>("upload_conflicts", { input }),

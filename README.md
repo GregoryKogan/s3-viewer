@@ -151,11 +151,13 @@ file name and a size. This one shows you the file.
   for. The address bar (<kbd>⌘L</kbd> or the pencil) accepts `s3://bucket/key`,
   `bucket/key` or a bare key; a bucket that is not this connection's is refused,
   and an address that does not exist says so instead of failing silently.
-- **Transfers you can steer.** Upload by button or drag and drop, download with
-  progress, create folder or file, delete folders recursively, copy and move —
-  including between two saved connections. Downloads go to your Downloads folder
-  under a non-colliding name; the transfer panel offers Open and Reveal. A failed
-  transfer can be retried or cancelled without leaving the app.
+- **Transfers you can steer.** Upload files or a whole folder tree by button or
+  drag and drop, download files or a folder with progress, create folder or file,
+  delete folders recursively, copy and move — including between two saved
+  connections. Downloads go to your Downloads folder under a non-colliding name;
+  a folder becomes its own directory with its nested structure intact. The
+  transfer panel offers Open and Reveal. A failed transfer can be retried or
+  cancelled without leaving the app.
 - **Copy and move without a round trip.** A server-side copy sends a selection to
   another folder or another saved connection. A file can travel between buckets
   without passing through your disk, and the same menu handles folders and single

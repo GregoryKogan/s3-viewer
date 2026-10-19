@@ -61,6 +61,7 @@ pub fn run() {
             commands::get_preview,
             commands::object_meta,
             commands::download_object,
+            commands::download_folder,
             commands::upload_files,
             commands::upload_conflicts,
             commands::cancel_transfer,

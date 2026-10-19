@@ -114,12 +114,14 @@ const shortcuts = [
 
 /**
  * Downloads go through the shared action so "ask where to save" applies here
- * too (PRV-1); the panel does not call the IPC command directly.
+ * too (PRV-1); the panel does not call the IPC command directly. A folder is
+ * downloaded as a tree below the chosen parent, not as one object.
  */
 function download() {
   const key = objects.previewKey;
-  if (!key || isFolder.value) return;
-  void actions.downloadKey(key, leafName(key));
+  if (!key) return;
+  if (isFolder.value) void actions.downloadFolderKey(key);
+  else void actions.downloadKey(key, leafName(key));
 }
 
 async function copyUri() {
@@ -227,7 +229,6 @@ defineExpose({ focusPanel });
           @click="objects.refreshPreview()"
         />
         <AppButton
-          v-if="!isFolder"
           size="sm"
           variant="ghost"
           :icon="Download"

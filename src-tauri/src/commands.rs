@@ -706,6 +706,205 @@ fn default_file_name(key: &str) -> String {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DownloadFolderInput {
+    pub connection_id: String,
+    /// Folder key, e.g. `photos/`. A trailing slash is added when missing.
+    pub prefix: String,
+    /// Parent directory the folder is created in. The configured download
+    /// directory is used when absent.
+    #[serde(default)]
+    pub dest_dir: Option<String>,
+}
+
+/// Where one object of a downloaded folder lands on disk.
+#[derive(Debug, PartialEq, Eq)]
+pub enum LocalTarget {
+    /// A regular object: its bytes go to this path below the folder's root.
+    File(PathBuf),
+    /// A zero-byte folder marker: an empty directory at this path.
+    Dir(PathBuf),
+}
+
+/// Map `key` to its place below the root of a downloaded folder.
+///
+/// The key is remote input and may contain `..`, `.`, empty segments or control
+/// characters. Every segment is either dropped or joined below the root, so no
+/// key can write outside the directory the user chose. `None` means the prefix
+/// marker itself — the folder being downloaded, not its content.
+pub fn local_target(prefix: &str, key: &str) -> Option<LocalTarget> {
+    let rest = key.strip_prefix(prefix)?;
+    let mut path = PathBuf::new();
+    for segment in rest.split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            continue;
+        }
+        path.push(segment);
+    }
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    if key.ends_with('/') {
+        Some(LocalTarget::Dir(path))
+    } else {
+        Some(LocalTarget::File(path))
+    }
+}
+
+/// A folder name that is safe to create on disk.
+///
+/// A key tail is arbitrary text: it can be `..`, contain a separator, or be
+/// empty for a bucket root. None of those may decide where the download lands.
+fn safe_dir_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    match cleaned.trim() {
+        "" | "." | ".." => "folder".to_string(),
+        trimmed => trimmed.to_string(),
+    }
+}
+
+#[tauri::command]
+pub async fn download_folder(
+    app: State<'_, Arc<AppCore>>,
+    input: DownloadFolderInput,
+) -> CmdResult<TransferResult> {
+    let ctx = Ctx(&app);
+    download_folder_impl(ctx.core(), input).await.map_err(err)
+}
+
+/// Download every object under a prefix into a new directory of its own.
+///
+/// The tree is listed before anything is written, so an unreadable prefix fails
+/// without leaving a directory or a progress entry behind. Files are fetched one
+/// at a time: one request per file is what makes cancellation possible between
+/// files, and a folder listing is never a ranged batch GET anyway.
+///
+/// A failed file does not stop the batch — the rest of the folder is still worth
+/// having — and the entry then reports how many failed and the first error.
+pub async fn download_folder_impl(
+    core: &AppCore,
+    input: DownloadFolderInput,
+) -> AppResult<TransferResult> {
+    core.connection(&input.connection_id)?;
+    let store = core.client(&input.connection_id)?;
+    let prefix = as_folder_prefix(&input.prefix);
+    if prefix.is_empty() {
+        return Err(AppError::invalid("a folder download needs a folder prefix"));
+    }
+    let entries = objects::list_all_entries(&store, &prefix).await?;
+
+    let base = input
+        .dest_dir
+        .as_deref()
+        .filter(|dir| !dir.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| core.settings().download_dir.map(PathBuf::from))
+        .unwrap_or_else(crate::fsutil::download_dir);
+    let folder_name = safe_dir_name(&objects::leaf_name(&prefix, ""));
+    let root = crate::fsutil::reserve_unique_dir(&base, &folder_name).await?;
+
+    let mut files: Vec<(String, PathBuf)> = Vec::new();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut total = 0u64;
+    for entry in &entries {
+        match local_target(&prefix, &entry.key) {
+            Some(LocalTarget::File(rel)) => {
+                total = total.saturating_add(entry.size.max(0) as u64);
+                files.push((entry.key.clone(), rel));
+            }
+            Some(LocalTarget::Dir(rel)) => dirs.push(rel),
+            None => {}
+        }
+    }
+
+    let label = format!(
+        "Downloading {folder_name} ({} file{})",
+        files.len(),
+        if files.len() == 1 { "" } else { "s" }
+    );
+    let progress_id = core
+        .progress
+        .start(label, if total == 0 { None } else { Some(total) });
+    let tracker = core.progress.clone();
+    let id_task = progress_id.clone();
+    let root_task = root.clone();
+
+    tauri::async_runtime::spawn(async move {
+        // Markers first: `create_dir_all` is a no-op where a file already
+        // created the same parent directory.
+        for rel in &dirs {
+            let path = root_task.join(rel);
+            if let Err(e) = tokio::fs::create_dir_all(&path).await {
+                tracker.fail_if_running(&id_task, format!("cannot create {}: {e}", path.display()));
+                return;
+            }
+        }
+
+        let mut failed = 0usize;
+        let mut first_error = String::new();
+        for (key, rel) in &files {
+            if !entry_is_running(&tracker, &id_task) {
+                // Cancelled between files. An in-flight GET cannot be aborted,
+                // so only whole files are ever skipped.
+                return;
+            }
+            let dest = root_task.join(rel);
+            // A fresh root cannot already hold these bytes; the reservation is
+            // what keeps two keys that sanitize to the same path apart.
+            let outcome = async {
+                let parent = dest.parent().unwrap_or(root_task.as_path());
+                let name = dest
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "object".to_string());
+                let (path, mut file) = crate::fsutil::reserve_unique_path(parent, &name).await?;
+                match store.get_to(key, &mut file).await {
+                    Ok(written) => Ok::<u64, AppError>(written),
+                    Err(e) => {
+                        // Never leave a truncated file behind.
+                        let _ = tokio::fs::remove_file(&path).await;
+                        Err(e)
+                    }
+                }
+            }
+            .await;
+            match outcome {
+                Ok(written) => tracker.advance(&id_task, written),
+                Err(e) => {
+                    failed += 1;
+                    if first_error.is_empty() {
+                        first_error = format!("{key}: {}", crate::model::describe_error(&e));
+                    }
+                }
+            }
+        }
+
+        if failed > 0 {
+            tracker.fail_if_running(
+                &id_task,
+                format!("{failed} of {} files failed: {first_error}", files.len()),
+            );
+        } else {
+            tracker.finish_if_running(&id_task, Some(root_task.display().to_string()));
+        }
+    });
+
+    Ok(TransferResult {
+        id: progress_id,
+        path: root.display().to_string(),
+    })
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UploadInput {
     pub connection_id: String,
     /// Folder the files are uploaded into (S3 prefix).
@@ -1757,6 +1956,49 @@ mod tests {
         assert_eq!(default_file_name("c.png"), "c.png");
         assert_eq!(default_file_name("a/b/"), "b");
         assert_eq!(default_file_name(""), "object");
+    }
+
+    #[test]
+    fn folder_download_keeps_the_nested_structure() {
+        assert_eq!(
+            local_target("a/", "a/b/c.png"),
+            Some(LocalTarget::File(PathBuf::from("b/c.png")))
+        );
+        assert_eq!(
+            local_target("a/", "a/x/y/"),
+            Some(LocalTarget::Dir(PathBuf::from("x/y")))
+        );
+        // The marker of the folder being downloaded is the root itself.
+        assert_eq!(local_target("a/", "a/"), None);
+        // A key outside the prefix is not part of this download.
+        assert_eq!(local_target("a/", "b/c.png"), None);
+    }
+
+    #[test]
+    fn folder_download_cannot_escape_the_chosen_directory() {
+        assert_eq!(
+            local_target("a/", "a/../../etc/passwd"),
+            Some(LocalTarget::File(PathBuf::from("etc/passwd")))
+        );
+        assert_eq!(
+            local_target("a/", "a/./x"),
+            Some(LocalTarget::File(PathBuf::from("x")))
+        );
+        assert_eq!(
+            local_target("a/", "a//x"),
+            Some(LocalTarget::File(PathBuf::from("x")))
+        );
+        assert_eq!(local_target("a/", "a/.."), None);
+    }
+
+    #[test]
+    fn folder_download_names_are_safe() {
+        assert_eq!(safe_dir_name("photos"), "photos");
+        assert_eq!(safe_dir_name(""), "folder");
+        assert_eq!(safe_dir_name("."), "folder");
+        assert_eq!(safe_dir_name(".."), "folder");
+        assert_eq!(safe_dir_name("a/b"), "a_b");
+        assert_eq!(safe_dir_name("  spaced  "), "spaced");
     }
 
     /// A unique directory under the system temp dir, removed on drop.

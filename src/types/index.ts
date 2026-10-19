@@ -272,6 +272,14 @@ export interface DownloadInput {
   destDir?: string | null;
 }
 
+export interface DownloadFolderInput {
+  connectionId: string;
+  /** Folder key, e.g. `photos/`. A trailing slash is added when missing. */
+  prefix: string;
+  /** Parent directory the folder is created in; the configured one when absent. */
+  destDir?: string | null;
+}
+
 export interface UploadInput {
   connectionId: string;
   prefix: string;

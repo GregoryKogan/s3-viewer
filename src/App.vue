@@ -102,7 +102,6 @@ function rowMenu(entry: (typeof objects.entries)[number], point: { clientX: numb
   // one set backs every item (SEL-4).
   const targets = objects.deleteTargets.length ? objects.deleteTargets : [entry];
   const count = targets.length;
-  const fileCount = targets.filter((item) => !item.isFolder).length;
   const names = targets.map((item) => item.name);
   const transferLabel = (base: string) =>
     count > 1 ? `${base} ${count} items to…` : `${base} to…`;
@@ -122,10 +121,9 @@ function rowMenu(entry: (typeof objects.entries)[number], point: { clientX: numb
             },
           },
       {
-        label: fileCount > 1 ? `Download ${fileCount} files` : "Download",
+        label: count > 1 ? `Download ${count} items` : "Download",
         icon: Download,
         shortcut: shortcutLabel("D"),
-        disabled: fileCount === 0,
         run: () => void actions.downloadSelection(),
       },
       {
@@ -165,6 +163,35 @@ function rowMenu(entry: (typeof objects.entries)[number], point: { clientX: numb
   };
 }
 
+/**
+ * The two pickers the Upload button and the empty-area menu both offer.
+ *
+ * A native open panel cannot select files and folders at once, so the choice has
+ * to come first. "⌘U" stays the one-key fast path for files.
+ */
+function uploadItems(): MenuItem[] {
+  return [
+    {
+      label: "Upload files…",
+      icon: Upload,
+      shortcut: shortcutLabel("U"),
+      run: () => void actions.upload(),
+    },
+    {
+      label: "Upload folder…",
+      icon: FolderUp,
+      shortcut: `${modLabel()}⇧U`,
+      run: () => void actions.uploadFolder(),
+    },
+  ] as MenuItem[];
+}
+
+/** The toolbar's Upload button opens the same menu, anchored under it. */
+function openUploadMenu(point: { x: number; y: number }) {
+  if (!connections.canWriteActive) return;
+  menu.value = { x: point.x, y: point.y, items: uploadItems() };
+}
+
 function backgroundMenu(point: { clientX: number; clientY: number }) {
   const writable = connections.canWriteActive;
   menu.value = {
@@ -173,8 +200,7 @@ function backgroundMenu(point: { clientX: number; clientY: number }) {
     items: [
       ...(writable
         ? [
-            { label: "Upload files…", icon: Upload, run: () => void actions.upload() },
-            { label: "Upload folder…", icon: FolderUp, run: () => void actions.uploadFolder() },
+            ...uploadItems(),
             { label: "New folder…", icon: FolderPlus, run: () => void actions.createFolder() },
             { label: "New file…", icon: FilePlus, run: () => void actions.createFile() },
           ]
@@ -1195,7 +1221,7 @@ function onDrop(paths: string[]) {
       </div>
 
       <main class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <AppHeader @find="onFind" @find-clear="onFindClear" />
+        <AppHeader @find="onFind" @find-clear="onFindClear" @upload-menu="openUploadMenu" />
 
         <div class="flex min-h-0 flex-1">
           <div

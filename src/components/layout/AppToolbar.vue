@@ -12,14 +12,31 @@ const objects = useObjectsStore();
 const connections = useConnectionsStore();
 const actions = useObjectActions();
 
+const emit = defineEmits<{
+  /** The Upload button was pressed: the shell opens its menu under the button. */
+  "upload-menu": [point: { x: number; y: number }];
+}>();
+
 const selectionCount = computed(() => objects.selected.size);
-/** Folders cannot be downloaded, so a folder-only selection has nothing to do. */
-const fileSelectionCount = computed(
-  () => objects.selectedEntries.filter((entry) => !entry.isFolder).length,
-);
 const canWrite = computed(() => connections.canWriteActive && Boolean(connections.active));
 /** macOS deletes with ⌘⌫; Linux deletes with the forward-delete key. */
 const deleteShortcut = IS_MAC ? shortcutLabel("Backspace") : "Del";
+
+/**
+ * The Upload button offers both pickers.
+ *
+ * A native open panel cannot select files and folders at once (it shows either),
+ * so one button cannot cover both. The menu itself belongs to the shell, which
+ * already owns the row menu's keyboard: arrows and Escape must not reach the
+ * list behind it. "⌘U" stays the one-key fast path for files.
+ */
+function openUploadMenu(event: MouseEvent) {
+  const rect = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect();
+  emit("upload-menu", {
+    x: Math.round(rect?.left ?? 0),
+    y: Math.round((rect?.bottom ?? 0) + 4),
+  });
+}
 
 /** The Clear button unmounts with the selection; keep the keyboard on the list. */
 async function clearSelection() {
@@ -50,9 +67,9 @@ const status = computed(() => {
     <AppButton
       :icon="Upload"
       :disabled="!canWrite"
-      :title="`Upload files (${shortcutLabel('U')})`"
+      :title="`Upload files or a folder (${shortcutLabel('U')} picks files)`"
       data-testid="upload"
-      @click="actions.upload()"
+      @click="openUploadMenu"
     >
       Upload
     </AppButton>
@@ -87,10 +104,7 @@ const status = computed(() => {
       <template v-if="selectionCount > 1">
         <AppButton
           :icon="Download"
-          :disabled="fileSelectionCount === 0"
-          :title="fileSelectionCount
-            ? `Download ${fileSelectionCount} file(s) to one folder`
-            : 'Folders cannot be downloaded; select at least one file'"
+          :title="`Download ${selectionCount} selected item(s) to one folder`"
           data-testid="download"
           @click="actions.downloadSelection()"
         >

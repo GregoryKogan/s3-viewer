@@ -737,6 +737,24 @@ const SCENARIO: &str = r#"(async () => {
       return 'one row: count only; two rows: bulk actions; Escape clears';
     });
 
+    await check('ui: the Upload button offers files and a folder', async () => {
+      $('[data-testid=upload]').click();
+      const menu = await wait('the upload menu', () => $('[data-testid=context-menu]'), 8000);
+      const labels = Array.from(menu.querySelectorAll('button')).map((b) => b.textContent.trim());
+      if (!labels.some((label) => /^Upload files/.test(label))) {
+        throw new Error('no file picker in the menu: ' + labels.join(' | '));
+      }
+      if (!labels.some((label) => /^Upload folder/.test(label))) {
+        throw new Error('no folder picker in the menu: ' + labels.join(' | '));
+      }
+      // Escape must close the menu without opening a native dialog: the check
+      // must never reach the OS picker.
+      press(menu, 'Escape');
+      await wait('the upload menu to close', async () =>
+        ($('[data-testid=context-menu]') ? null : true));
+      return labels.join(' | ');
+    });
+
     await check('ui: the address bar edits in place and explains bad addresses', async () => {
       const row = $('[data-testid=breadcrumb]').firstElementChild;
       row.click();
@@ -935,7 +953,8 @@ const SCENARIO: &str = r#"(async () => {
       clickRow(folder);
       const card = await wait('the folder preview card', () => $('[data-testid=preview-folder]'), 10000);
       if (!$('[data-testid=preview-folder-open]')) throw new Error('the folder card has no Open button');
-      if ($('[data-testid=preview-download]')) throw new Error('a folder offered Download');
+      // A folder downloads its whole tree, so the card offers Download like a file.
+      if (!$('[data-testid=preview-download]')) throw new Error('the folder card has no Download button');
       if ($('[data-testid=preview-expand]')) throw new Error('a folder offered Expand');
       $('[data-testid=preview-folder-open]').click();
       await wait('the breadcrumb to follow the folder', async () =>
@@ -948,8 +967,6 @@ const SCENARIO: &str = r#"(async () => {
       for (const id of ['empty-upload', 'empty-upload-folder', 'empty-new-folder']) {
         if (!$('[data-testid=' + id + ']')) throw new Error('the empty state is missing ' + id);
       }
-      const up = $('[data-testid=navigate-up]');
-      if (up.disabled) throw new Error('Up is disabled inside a folder');
       $('[data-testid=empty-new-folder]').click();
       await wait('the nested-folder prompt', () => $('[data-testid=prompt-input]'));
       const nested = 'nested-' + Date.now();
@@ -957,9 +974,14 @@ const SCENARIO: &str = r#"(async () => {
       $('[data-testid=prompt-ok]').click();
       await wait('the nested folder row', async () => (rowNames().includes(nested) ? true : null));
 
-      $('[data-testid=navigate-up]').click();
+      // The dedicated up arrow was removed: the crumbs and ⌘↑ walk up now, so
+      // the root crumb is the pointer equivalent of leaving the folder.
+      $('[data-testid=crumb-root]').click();
       await wait('the root listing', async () => (rowNames().includes(folder) ? true : null), 15000);
-      if (!$('[data-testid=navigate-up]').disabled) throw new Error('Up is enabled at the scope root');
+      const prefix = window.__s3viewer.state.objects.prefix;
+      if (prefix !== __PREFIX__) {
+        throw new Error('the root crumb did not reach the scope root: ' + prefix);
+      }
 
       const menu = await rowMenu(folder);
       const chosen = Array.from(window.__s3viewer.state.objects.selected);
@@ -2072,6 +2094,57 @@ const SCENARIO: &str = r#"(async () => {
       await wait('the finished transfer to disappear', async () =>
         ($('[data-testid=transfer-done]') ? null : true), 20000);
       return 'cleared without pressing Clear';
+    });
+
+    await check('transfer: a folder downloads as a nested tree', async () => {
+      const folder = 'dl-probe-' + Date.now();
+      const base = __PREFIX__ + folder + '/';
+      // One nested file is enough to prove structure: a flat download would
+      // write `note.txt` at the top of the new directory.
+      await invoke('create_file', {
+        input: { connectionId, prefix: base + 'sub/', name: 'note.txt', content: 'folder probe' },
+      });
+      $('[data-testid=crumb-root]').click();
+      $('[data-testid=refresh]').click();
+      await wait('the folder row', async () => {
+        const objects = window.__s3viewer.state.objects;
+        return !objects.loading && rowNames().includes(folder) ? true : null;
+      }, 20000);
+
+      const folderMenu = await rowMenu(folder);
+      menuClick(folderMenu, 'Download');
+      const done = await wait('the folder download', async () => {
+        const items = await invoke('transfer_progress');
+        return items.find((item) =>
+          item.state === 'done'
+          && /Downloading/i.test(item.label)
+          && item.label.indexOf(folder) !== -1) || null;
+      }, 60000);
+      if (!done.resultPath) throw new Error('the folder download reported no destination');
+
+      // Read the bytes back through the app: the nested path must exist, and a
+      // folder is not downloadable as one object.
+      const text = await invoke('read_text_file', {
+        path: done.resultPath + '/sub/note.txt',
+      });
+      if (text !== 'folder probe') throw new Error('unexpected nested content: ' + text);
+
+      await invoke('delete_objects', { input: { connectionId, keys: [base] } });
+      // The probe folder must not linger in the listing: later checks look at
+      // the same root and would see a row that no longer exists.
+      await wait('S3 to forget the probe folder', async () => {
+        const listing = await invoke('list_objects', {
+          input: { connectionId, prefix: __PREFIX__ },
+        });
+        return listing.entries.some((entry) => entry.key.indexOf(base) === 0) ? null : true;
+      }, 30000);
+      $('[data-testid=refresh]').click();
+      await wait('the cleanup listing', async () => {
+        const objects = window.__s3viewer.state.objects;
+        if (objects.loading || objects.awaitingFirstPage) return null;
+        return rowNames().includes(folder) ? null : true;
+      }, 20000);
+      return 'downloaded ' + done.resultPath.split('/').pop() + '/sub/note.txt';
     });
 
     await check('transfer: multi-object delete removes markers and children', async () => {

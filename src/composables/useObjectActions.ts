@@ -191,26 +191,77 @@ export function useObjectActions() {
     return downloadKey(entry.key, entry.name);
   }
 
+  /**
+   * Start one folder download. It gets no Retry: repeating it would download the
+   * same tree a second time under `folder (1)`, which is not what "retry the
+   * failed transfer" means. The whole folder is one progress entry.
+   */
+  async function startFolderDownload(
+    connectionId: string,
+    key: string,
+    destDir: string | null,
+  ): Promise<TransferResult> {
+    const result = await api.downloadFolder({ connectionId, prefix: key, destDir });
+    transfers.start();
+    return result;
+  }
+
+  /**
+   * Download one folder, honouring the "ask where to save" setting.
+   *
+   * `destDir` is the parent directory the folder is created in; without it the
+   * backend uses the configured download directory. Used by the preview's folder
+   * card and by a single-folder selection, so the policy lives here and not in a
+   * component.
+   */
+  async function downloadFolderKey(
+    key: string,
+    { destDir }: { destDir?: string | null } = {},
+  ): Promise<TransferResult | null> {
+    const connection = connections.active;
+    if (!connection || !sessionMatchesActive()) return null;
+
+    let parent = destDir ?? null;
+    if (!destDir && ui.settings?.askDownloadLocation) {
+      try {
+        const picked = await pickFiles({ directory: true, multiple: false });
+        if (!picked.length) return null;
+        parent = picked[0];
+      } catch (error) {
+        toasts.apiError(error, "Cannot choose a download folder");
+        return null;
+      }
+    }
+
+    try {
+      return await startFolderDownload(connection.id, key, parent);
+    } catch (error) {
+      toasts.apiError(error, "Download failed");
+      return null;
+    }
+  }
+
   async function downloadSelection() {
     const connection = connections.active;
     if (!connection || !sessionMatchesActive()) return;
     // Selection, or the cursor row when nothing is selected — the same set
     // Delete and the context menu act on.
-    const entries = writeTargets.value.filter((entry) => !entry.isFolder);
-    if (!entries.length) {
-      toasts.warn("Folders cannot be downloaded directly. Open the folder and select its files.", "Nothing to download");
-      return;
-    }
+    const entries = writeTargets.value;
+    if (!entries.length) return;
 
-    // One file keeps the ordinary "ask where to save" policy: a directory
+    // One item keeps the ordinary "ask where to save" policy: a directory
     // dialog for a single object is a needless extra step (MINOR 1).
     if (entries.length === 1) {
-      await downloadEntry(entries[0]);
+      const entry = entries[0];
+      if (entry.isFolder) await downloadFolderKey(entry.key);
+      else await downloadEntry(entry);
       return;
     }
 
     // One directory dialog for the whole batch. Off means the stored download
-    // folder, which the backend already applies when `destDir` is absent.
+    // folder, which the backend already applies when `destDir` is absent. It is
+    // the parent folder for both: files land in it, each folder becomes a
+    // subdirectory of it.
     let destDir: string | null = null;
     if (ui.settings?.askDownloadLocation) {
       try {
@@ -223,14 +274,18 @@ export function useObjectActions() {
       }
     }
 
-    // Start every file; a start failure is a batch failure, not one toast per
-    // file. The first error and the counts are reported once the started
+    // Start every item; a start failure is a batch failure, not one toast per
+    // item. The first error and the counts are reported once the started
     // transfers have also settled (MINOR 2).
     const started: TransferResult[] = [];
     const startErrors: string[] = [];
     for (const entry of entries) {
       try {
-        started.push(await startDownload(connection.id, entry.key, { destDir }));
+        started.push(
+          entry.isFolder
+            ? await startFolderDownload(connection.id, entry.key, destDir)
+            : await startDownload(connection.id, entry.key, { destDir }),
+        );
       } catch (error) {
         startErrors.push((error as Error).message);
       }
@@ -739,6 +794,7 @@ export function useObjectActions() {
     targets,
     writeTargets,
     downloadKey,
+    downloadFolderKey,
     downloadEntry,
     downloadSelection,
     copyUri,

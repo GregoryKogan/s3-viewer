@@ -116,6 +116,10 @@ Right-click and `⇧F10`/`ContextMenu` open the same row menu. On Apple
 keyboards `F10` is a media key and there is no `ContextMenu` key, so the pointer
 (right-click) is the equivalent entry point there.
 
+The **Upload** button opens the same kind of menu (files or a folder), because a
+native open panel cannot show both at once. It opens with `Enter`/`Space` on the
+button and is navigated like any other menu; `⌘U` and `⌘⇧U` skip it.
+
 ### Dialogs
 
 - Opening from the keyboard is always possible (`⌘N`, `⌘I`, the sidebar, the
