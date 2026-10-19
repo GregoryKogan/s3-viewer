@@ -18,6 +18,13 @@ const hasConnection = computed(() => Boolean(connections.active));
 
 const filterValue = ref("");
 
+const emit = defineEmits<{
+  /** Enter or ↓ in the field: hand the keyboard to the matched rows. */
+  find: [open: boolean];
+  /** Escape in the field: drop the filter and go back to the list. */
+  "find-clear": [];
+}>();
+
 /** The filter is local state, debounced into the store. */
 let filterTimer: ReturnType<typeof setTimeout> | undefined;
 function onFilterInput() {
@@ -26,6 +33,45 @@ function onFilterInput() {
     filterTimer = undefined;
     objects.filter = filterValue.value;
   }, 120);
+}
+
+/**
+ * Apply the pending keystroke before the list acts on it.
+ *
+ * Enter can arrive well inside the 120 ms debounce, and handing over the row
+ * that matched the *previous* text is the one wrong answer a find gesture can
+ * give (KEY-4).
+ */
+function flushFilter() {
+  if (filterTimer) {
+    clearTimeout(filterTimer);
+    filterTimer = undefined;
+  }
+  if (objects.filter !== filterValue.value) objects.filter = filterValue.value;
+}
+
+/**
+ * The field is a find control, not a text area. Once the text names what the
+ * user is after, ↓ and Enter have to reach the list: finding an object with the
+ * keyboard and then reaching for the mouse to open it defeats the search.
+ */
+function onFilterKeydown(event: KeyboardEvent) {
+  if (event.key === "ArrowDown" || event.key === "Enter") {
+    event.preventDefault();
+    flushFilter();
+    emit("find", event.key === "Enter");
+    return;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    if (filterTimer) {
+      clearTimeout(filterTimer);
+      filterTimer = undefined;
+    }
+    filterValue.value = "";
+    objects.filter = "";
+    emit("find-clear");
+  }
 }
 
 /**
@@ -74,6 +120,7 @@ function togglePreviewPanel() {
             data-testid="filter-input"
             autocomplete="off"
             @input="onFilterInput"
+            @keydown="onFilterKeydown"
           />
         </div>
 

@@ -70,7 +70,7 @@ const status = computed(() => {
 
     <!-- One selected row is the common case: its actions live in the row menu
          and in the preview header, so the bar only reports the selection. The
-         bulk actions appear for a real set, where neither of those can act on
+         bulk actions appear from two rows on, where neither of those can act on
          every row at once (SEL-5). -->
     <template v-if="selectionCount">
       <span class="mx-1 h-4 w-px bg-line" />

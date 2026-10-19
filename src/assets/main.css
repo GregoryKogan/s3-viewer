@@ -266,6 +266,19 @@
   display: none !important;
 }
 
+/* ------------------------------------------------------- object list cursor
+   Selection and the keyboard cursor are different states: a selected set is a
+   flat blue field, so the row the keyboard is on needs a mark of its own. A
+   bright left bar plus a hairline ring stays visible inside that field and at
+   the far end of a wide window, where a tint alone reads as "another selected
+   row". */
+
+.object-row[data-focused] {
+  box-shadow:
+    inset 3px 0 0 0 var(--c-accent-text),
+    inset 0 0 0 1px color-mix(in oklab, var(--c-accent-text) 45%, transparent);
+}
+
 /* ------------------------------------------------------- reduced motion
    VIS-7: spinners, progress bars and panel transitions keep their state changes
    but stop moving. The durations are near-zero rather than `none` so events

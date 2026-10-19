@@ -587,12 +587,28 @@ const SCENARIO: &str = r#"(async () => {
 
     await check('ui: type-ahead focuses the matching row and restarts', async () => {
       const list = $('[data-testid=object-list]');
+      // Typing into a listing that is still streaming matches nothing, and a
+      // stale buffer (its reset timer fires late on a loaded machine) poisons
+      // the first letter. Both are timing, not behaviour: settle, then retry.
+      await wait('the listing to settle', async () => {
+        const objects = window.__s3viewer.state.objects;
+        return !objects.loading && !objects.awaitingFirstPage && objects.visibleEntries.length
+          ? true
+          : null;
+      }, 20000);
       list.focus();
-      press(list, 's');
-      await wait('sample.json by type-ahead', async () => {
+      const match = async (name) => {
         const key = window.__s3viewer.state.objects.focusedKey;
-        return key && key.endsWith('/sample.json') ? key : null;
-      });
+        return key && key.endsWith('/' + name) ? key : null;
+      };
+      press(list, 's');
+      try {
+        await wait('sample.json by type-ahead', () => match('sample.json'), 8000);
+      } catch {
+        await sleep(1200);
+        press(list, 's');
+        await wait('sample.json by type-ahead, second try', () => match('sample.json'));
+      }
       press(list, 'a');
       await frame();
       const together = window.__s3viewer.state.objects.focusedKey;
@@ -1309,7 +1325,7 @@ const SCENARIO: &str = r#"(async () => {
       return 'one row, then the selection followed a second plain click';
     });
 
-    await check('ui: checkboxes appear only for a real set, not for one row', async () => {
+    await check('ui: checkboxes appear with the first selected row, never at rest', async () => {
       window.__s3viewer.state.objects.clearSelection();
       window.__s3viewer.state.objects.focus(null);
       await frame();
@@ -1322,39 +1338,74 @@ const SCENARIO: &str = r#"(async () => {
       const rows = $$('.object-row');
       rows[0].dispatchEvent(new MouseEvent('click', { bubbles: true, view: window }));
       await frame();
-      let selected = window.__s3viewer.state.objects.selected.size;
+      const selected = window.__s3viewer.state.objects.selected.size;
       if (selected !== 1) {
         throw new Error('clicking a row selected ' + selected + ' row(s) instead of one');
       }
-      // One row is for preview and navigation; it must not turn the list into
-      // checkbox mode.
-      if ($$('[data-testid^=row-check-]').length) {
-        throw new Error('a single selected row brought the checkboxes back');
+      // One selected row is already a selection: it shows a checked box, the
+      // select-all box and the cursor. That is what tells the user a click
+      // registered instead of leaving the list looking unchanged.
+      const boxes = $$('[data-testid^=row-check-]');
+      if (boxes.length !== rows.length) {
+        throw new Error('one selected row rendered ' + boxes.length + ' checkbox(es) for '
+          + rows.length + ' rows');
       }
-      if ($('[data-testid=select-all]')) throw new Error('one row turned on select-all');
+      if (boxes.filter((box) => box.checked && box.offsetParent !== null).length !== 1) {
+        throw new Error('the selected row does not show exactly one checked box');
+      }
+      if (!$('[data-testid=select-all]')) throw new Error('one row did not turn on select-all');
 
-      // A second selected row is a set: the column appears, select-all included.
+      // A selected set is a flat tint, so the cursor needs a marker of its own.
+      if (rows[0].dataset.focused !== 'true') {
+        throw new Error('the clicked row is not marked as the cursor');
+      }
+      if (getComputedStyle(rows[0]).boxShadow === 'none') {
+        throw new Error('the cursor row has no visible marker inside the selection');
+      }
+
+      // A second row may widen the selection, but never produces a second cursor.
       rows[1].dispatchEvent(new MouseEvent('click', {
         bubbles: true,
         metaKey: true,
         view: window,
       }));
       await frame();
-      selected = window.__s3viewer.state.objects.selected.size;
-      if (selected !== 2) throw new Error('⌘-click produced ' + selected + ' selected rows');
-      const boxes = $$('[data-testid^=row-check-]');
-      if (!boxes.length) throw new Error('the checkbox column is missing for a set of two');
-      if (boxes.some((box) => box.offsetParent === null)) {
-        throw new Error('some checkboxes in the column are invisible');
+      const pair = window.__s3viewer.state.objects.selected.size;
+      if (pair !== 2) throw new Error('⌘-click produced ' + pair + ' selected rows');
+      if ($$('[data-testid^=row-check-]').filter((box) => box.checked).length !== 2) {
+        throw new Error('a two-row selection does not show two checked boxes');
       }
-      if (!$('[data-testid=select-all]')) throw new Error('select-all is missing for a set');
+      const cursors = $$('.object-row').filter((row) => row.dataset.focused === 'true');
+      if (cursors.length !== 1 || cursors[0] !== rows[1]) {
+        throw new Error('the set has ' + cursors.length + ' cursor row(s) instead of one');
+      }
 
       press($('[data-testid=object-list]'), 'Escape');
       await frame();
       if ($$('[data-testid^=row-check-]').length) {
         throw new Error('clearing the set left the checkbox column behind');
       }
-      return 'none at rest, none for one row, full column for two; Escape hides it';
+
+      // Select-all is the flattest state the list can be in: every row ticked,
+      // and the cursor still has to land on one of them.
+      window.__s3viewer.state.objects.focus(null);
+      await frame();
+      press($('[data-testid=object-list]'), 'a', { metaKey: true });
+      await frame();
+      const everything = window.__s3viewer.state.objects.visibleEntries.length;
+      if (window.__s3viewer.state.objects.selected.size !== everything) {
+        throw new Error('⌘A selected ' + window.__s3viewer.state.objects.selected.size
+          + ' of ' + everything + ' rows');
+      }
+      const marks = $$('.object-row').filter((row) => row.dataset.focused === 'true');
+      if (marks.length !== 1) throw new Error('⌘A left ' + marks.length + ' cursor row(s)');
+      const firstKey = window.__s3viewer.state.objects.visibleEntries[0].key;
+      if (window.__s3viewer.state.objects.focusedKey !== firstKey) {
+        throw new Error('⌘A put the cursor on ' + window.__s3viewer.state.objects.focusedKey);
+      }
+      press($('[data-testid=object-list]'), 'Escape');
+      await frame();
+      return 'none at rest, full column for one row, one cursor inside the set; ⌘A keeps a cursor';
     });
 
     await check('ui: shift-click selects a contiguous range', async () => {
@@ -1568,6 +1619,24 @@ const SCENARIO: &str = r#"(async () => {
         $('[data-testid=breadcrumb]').textContent.includes(folderName) ? true : null);
       $('[data-testid=crumb-root]').click();
       await wait('the root listing again', async () => (rowNames().includes(folderName) ? true : null));
+
+      // A folder found by name opens from the keyboard too: ⌘F, type, Enter.
+      // This is the find-and-open gesture that used to need the mouse.
+      press(document.body, 'f', { metaKey: true });
+      await frame();
+      setInput('[data-testid=filter-input]', folderName);
+      press($('[data-testid=filter-input]'), 'Enter');
+      await wait('the folder to open from the filter', async () =>
+        $('[data-testid=breadcrumb]').textContent.includes(folderName) ? true : null);
+      if (document.activeElement !== $('[data-testid=object-list]')) {
+        throw new Error('Enter left the keyboard in the filter field');
+      }
+      if ($('[data-testid=filter-input]').value !== '') {
+        throw new Error('the filter stayed behind after opening the folder');
+      }
+      $('[data-testid=crumb-root]').click();
+      await wait('the root listing again', async () => (rowNames().includes(folderName) ? true : null));
+
       const opsMenu = await rowMenu(folderName);
       menuClick(opsMenu, 'Delete');
       const confirm = await wait('the confirmation', () => $('[data-testid=confirm-ok]'), 8000).catch(() => null);
@@ -1624,6 +1693,50 @@ const SCENARIO: &str = r#"(async () => {
         throw new Error('the cleared status reads: ' + clearedStatus);
       }
       return names.join(', ') + ' · ' + status;
+    });
+
+    await check('keyboard: the filter hands the keyboard to the matches', async () => {
+      window.__s3viewer.state.objects.clearSelection();
+      window.__s3viewer.state.objects.focus(null);
+      await frame();
+      press(document.body, 'f', { metaKey: true });
+      await frame();
+      const field = $('[data-testid=filter-input]');
+      if (document.activeElement !== field) throw new Error('⌘F did not focus the filter field');
+
+      // Type and commit in one gesture: the 120 ms debounce must not hand the
+      // list the previous query, which would open the wrong row (KEY-4).
+      setInput('[data-testid=filter-input]', 'notes');
+      press(field, 'ArrowDown');
+      await wait('the cursor to reach the match', async () => {
+        const objects = window.__s3viewer.state.objects;
+        return objects.focusedKey && objects.focusedKey.endsWith('notes.txt')
+          && String(objects.previewKey).includes('notes.txt') ? true : null;
+      }, 10000);
+      const list = $('[data-testid=object-list]');
+      if (document.activeElement !== list) {
+        throw new Error('↓ left the keyboard in the filter field');
+      }
+      const active = list.getAttribute('aria-activedescendant');
+      const cursor = $$('.object-row').find((row) => row.dataset.focused === 'true');
+      if (!active || !cursor || active !== cursor.id) {
+        throw new Error('the list has no active option after ↓: ' + active + ' / ' + (cursor && cursor.id));
+      }
+
+      // Escape backs out of the filter without leaving the text behind.
+      press(document.body, 'f', { metaKey: true });
+      await frame();
+      press($('[data-testid=filter-input]'), 'Escape');
+      await wait('the filter to clear', async () => {
+        const input = $('[data-testid=filter-input]');
+        return input.value === '' && window.__s3viewer.state.objects.filter === '' ? true : null;
+      }, 5000);
+      if (document.activeElement !== $('[data-testid=object-list]')) {
+        throw new Error('Escape left the keyboard in the filter field');
+      }
+      if ($$('.object-row').length < 12) throw new Error('the filter did not come back off');
+      return '↓ landed on ' + cursor.querySelector('.row-label').textContent
+        + ' and previewed it; Escape cleared the filter';
     });
 
     await check('ops: the boto3 snippet copies to the clipboard', async () => {

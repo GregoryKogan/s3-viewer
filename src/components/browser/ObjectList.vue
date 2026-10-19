@@ -41,15 +41,15 @@ const showType = computed(() => viewportWidth.value >= 820);
 const canWrite = computed(() => connections.canWriteActive);
 
 /**
- * The checkbox column exists only for a set (2+ rows). A plain click still
- * selects one row for the preview, but that is navigation, not selection: the
- * list must not carry an empty gutter and a checkbox over every row.
+ * Anyone can see what a click did: the first selected row brings the checkbox
+ * column and the header box with it. Nothing is selected, nothing is reserved:
+ * the list carries no empty gutter and no box over every row.
  */
-const bulkSelection = computed(() => objects.selected.size > 1);
+const checkboxColumn = computed(() => objects.selected.size > 0);
 
 const gridTemplate = computed(() =>
   [
-    bulkSelection.value ? "34px" : null,
+    checkboxColumn.value ? "34px" : null,
     "minmax(150px, 1fr)",
     "88px",
     showModified.value ? "132px" : null,
@@ -116,6 +116,11 @@ function scrollToRow(index: number) {
     element.scrollTop = bottom - element.clientHeight;
   }
   scrollTop.value = element.scrollTop;
+}
+
+/** Hand the keyboard to the list; the filter field calls this when it commits. */
+function focusList() {
+  scroller.value?.focus({ preventScroll: true });
 }
 
 function onScroll() {
@@ -218,7 +223,7 @@ async function onActivate(entry: (typeof rows.value)[number]) {
   else await objects.previewEntry(entry, { force: true });
 }
 
-defineExpose({ scrollToRow });
+defineExpose({ scrollToRow, focusList });
 </script>
 
 <template>
@@ -258,7 +263,7 @@ defineExpose({ scrollToRow });
       :style="{ gridTemplateColumns: gridTemplate }"
       data-testid="table-head"
     >
-      <label v-if="bulkSelection" class="flex items-center">
+      <label v-if="checkboxColumn" class="flex items-center">
         <input
           type="checkbox"
           class="size-3.5 cursor-pointer accent-accent"
@@ -295,16 +300,20 @@ defineExpose({ scrollToRow });
       </button>
     </div>
 
+    <!-- Focusable even while the folder is empty or loading: the filter field
+         hands the keyboard here after Enter, and a tabindex that disappears
+         mid-navigation would drop focus on the body the moment the new folder
+         starts with zero rows. -->
     <div
       ref="scroller"
       class="scrollbar relative min-h-0 flex-1 overflow-y-auto"
       id="object-list"
       data-testid="object-list"
-      :role="rows.length ? 'listbox' : undefined"
+      :role="rows.length ? 'listbox' : 'group'"
       :aria-multiselectable="rows.length ? true : undefined"
-      :aria-label="rows.length ? 'Objects' : undefined"
+      :aria-label="rows.length ? 'Objects' : 'Object list'"
       :aria-activedescendant="activeDescendant"
-      :tabindex="rows.length ? 0 : undefined"
+      :tabindex="0"
       @scroll="onScroll"
       @click="onBackgroundClick"
       @contextmenu="onBackgroundContextMenu"
@@ -383,7 +392,7 @@ defineExpose({ scrollToRow });
           :show-type="showType"
           :selected="objects.selected.has(row.entry.key)"
           :focused="objects.focusedKey === row.entry.key"
-          :bulk-selection="bulkSelection"
+          :checkbox-column="checkboxColumn"
           @click="onClick"
           @activate="onActivate"
           @toggle-check="onToggleCheck"

@@ -76,6 +76,7 @@ const shortcuts = [
   { action: "Edit connection", keys: shortcutLabel("I") },
   { action: "Address", keys: shortcutLabel("L") },
   { action: "Filter", keys: shortcutLabel("F") },
+  { action: "Jump to matches", keys: `${keyLabel("ArrowDown")} / ${keyLabel("Enter")}` },
   { action: "Up", keys: shortcutLabel("ArrowUp") },
   { action: "Toggle sidebar", keys: shortcutLabel("B") },
   { action: "Select all", keys: shortcutLabel("A") },

@@ -14,8 +14,8 @@ const props = defineProps<{
   showType: boolean;
   selected: boolean;
   focused: boolean;
-  /** The checkbox column only exists once a real set (2+ rows) is selected. */
-  bulkSelection: boolean;
+  /** The checkbox column exists as soon as any row is selected. */
+  checkboxColumn: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -40,13 +40,16 @@ const modifiedTitle = computed(() => {
   <div
     class="object-row group absolute inset-x-0 grid h-[var(--row-height)] cursor-default items-center gap-1.5 px-3.5 select-none"
     :class="[
-      props.selected
-        ? 'bg-accent/20'
-        : props.focused
-          ? 'bg-accent/[0.07] shadow-[inset_2px_0_0_0_var(--color-accent)]'
-          : 'hover:bg-hover',
+      props.selected && props.focused
+        ? 'bg-accent/30'
+        : props.selected
+          ? 'bg-accent/20'
+          : props.focused
+            ? 'bg-accent/[0.07]'
+            : 'hover:bg-hover',
       props.entry.isFolder ? 'text-content' : 'text-content/90',
     ]"
+    :data-focused="props.focused ? 'true' : undefined"
     :style="{
       transform: `translateY(${props.index * props.rowHeight}px)`,
       gridTemplateColumns: props.gridTemplate,
@@ -62,7 +65,7 @@ const modifiedTitle = computed(() => {
     @dblclick="emit('activate', props.entry)"
     @contextmenu.prevent="emit('contextmenu', props.entry, $event)"
   >
-    <label v-if="props.bulkSelection" class="flex items-center" @click.stop>
+    <label v-if="props.checkboxColumn" class="flex items-center" @click.stop>
       <input
         type="checkbox"
         class="size-3.5 cursor-pointer accent-accent"

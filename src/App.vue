@@ -485,6 +485,37 @@ function runTypeAhead(character: string) {
   void objects.previewEntry(entry);
 }
 
+/**
+ * Enter or ↓ in the filter field lands on the first match.
+ *
+ * The search is a find gesture: the cursor, the preview and the keyboard must
+ * end up on the object that was searched for. Enter also opens it, exactly as
+ * Enter does on a focused row, so filtering a folder by name and opening the
+ * result never requires the mouse (KEY-4).
+ */
+async function onFind(open: boolean) {
+  const rows = objects.visibleEntries;
+  if (!rows.length) return;
+  // A cursor already on a match keeps its place; anything else (no cursor, or a
+  // cursor the filter just hid) starts from the first row on screen.
+  const current = rows.findIndex((entry) => entry.key === objects.focusedKey);
+  const index = current === -1 ? 0 : current;
+  const entry = rows[index];
+  objects.focus(entry.key);
+  objectList.value?.scrollToRow(index);
+  objectList.value?.focusList();
+  if (open && entry.isFolder) await objects.navigate(entry.key);
+  else await objects.previewEntry(entry, { force: open });
+  // Opening a folder collapses an expanded preview and brings the list back;
+  // the first focus call happened while that list could still be hidden.
+  objectList.value?.focusList();
+}
+
+/** Escape in the field clears the filter and leaves the list owning the keys. */
+function onFindClear() {
+  objectList.value?.focusList();
+}
+
 async function onKeydown(event: KeyboardEvent) {
   // A nested control already handled this key (menu, resizer, PDF page).
   if (event.defaultPrevented) return;
@@ -536,7 +567,13 @@ async function onKeydown(event: KeyboardEvent) {
   }
   if (meta && lower === "a" && !editing && hasConnection.value) {
     event.preventDefault();
-    objects.selectAll(objects.visibleEntries.map((entry) => entry.key));
+    const keys = objects.visibleEntries.map((entry) => entry.key);
+    objects.selectAll(keys);
+    // The cursor must not vanish inside the set: Enter, Space and the next ↓ all
+    // start from it, and a flat selected field otherwise has no current row.
+    if (!objects.focusedKey || !keys.includes(objects.focusedKey)) {
+      objects.focus(keys[0] ?? null);
+    }
     return;
   }
 
@@ -930,7 +967,7 @@ function onDrop(paths: string[]) {
       </div>
 
       <main class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <AppHeader />
+        <AppHeader @find="onFind" @find-clear="onFindClear" />
 
         <div class="flex min-h-0 flex-1">
           <div
