@@ -62,7 +62,7 @@
         </div>
 
         <p class="meta">
-          macOS 11 or later · Apple Silicon and Intel · about 5 MB · Linux
+          macOS 11 or later · Apple Silicon and Intel · about 12 MB · Linux
           <a href="https://github.com/GregoryKogan/s3-viewer/releases/latest">.deb and AppImage</a>
           in the same release
         </p>
@@ -72,7 +72,7 @@
             src="assets/app-window.png"
             srcset="assets/app-window@1x.png 1280w, assets/app-window.png 2560w"
             sizes="(max-width: 1120px) 100vw, 1120px"
-            alt="The S3 Viewer window: a connection in the sidebar, a file list with folders and files, and the preview panel."
+            alt="The S3 Viewer window: the Acme Analytics connection in the sidebar, a folder listing with two folders and eleven files, and image.png previewed in the right-hand panel."
             width="2560"
             height="1640"
             loading="eager"
@@ -141,6 +141,43 @@
               <p>
                 A probe tells you whether these credentials can list, read, write and delete.
                 Per-connection read-only mode blocks every write in the interface.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>Transfers you can steer</h3>
+              <p>
+                Every upload and download reports progress per file; a transfer that fails can be
+                retried or cancelled without leaving the app. When an upload would overwrite an
+                object you choose: replace it, replace all, or skip the existing ones. Selecting
+                several files downloads them into one folder.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>Copy and move without a round trip</h3>
+              <p>
+                Send a selection to another folder, or to a different saved connection, with a
+                server-side copy. A file can travel between buckets without passing through your
+                disk, and the same menu handles folders and single objects.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>Bring the credentials you already have</h3>
+              <p>
+                Paste the credentials JSON you already use, or a boto3 client snippet straight out
+                of your code, and the app builds the connections from it — secrets are encrypted
+                before anything is written to disk.
+              </p>
+            </article>
+
+            <article class="card">
+              <h3>It updates itself</h3>
+              <p>
+                On launch the app checks GitHub Releases and offers the new version, which it
+                installs and restarts into. The download is checked against a signing key built
+                into the app, so a tampered bundle is refused rather than installed.
               </p>
             </article>
 
