@@ -188,7 +188,7 @@ function menuAtButton(connection: Connection, event: MouseEvent) {
           v-for="view in connections.views"
           :key="view.connection.id"
           type="button"
-          class="relative grid size-11 shrink-0 place-items-center rounded-control border transition-colors"
+          class="relative mx-auto grid size-11 shrink-0 place-items-center rounded-control border transition-colors"
           :class="
             view.connection.id === connections.activeId
               ? 'border-line-strong bg-active text-content'

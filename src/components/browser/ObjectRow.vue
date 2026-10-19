@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { kindStyle } from "./kindIcon";
 import { humanDate, humanSize } from "@/lib/format";
 import { kindLabel } from "@/lib/fileKind";
@@ -14,8 +14,8 @@ const props = defineProps<{
   showType: boolean;
   selected: boolean;
   focused: boolean;
-  /** Checkboxes appear on hover or focus, and stay visible while a selection exists. */
-  selectionActive: boolean;
+  /** The checkbox column only exists once a real set (2+ rows) is selected. */
+  bulkSelection: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -26,7 +26,6 @@ const emit = defineEmits<{
 }>();
 
 const style = computed(() => kindStyle(props.entry.kind));
-const hovered = ref(false);
 
 /** The cell is short on purpose; the tooltip carries the whole timestamp. */
 const modifiedTitle = computed(() => {
@@ -35,10 +34,6 @@ const modifiedTitle = computed(() => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 });
-
-const checkboxVisible = computed(
-  () => props.selectionActive || hovered.value || props.focused,
-);
 </script>
 
 <template>
@@ -66,12 +61,9 @@ const checkboxVisible = computed(
     @click="emit('click', props.entry, $event)"
     @dblclick="emit('activate', props.entry)"
     @contextmenu.prevent="emit('contextmenu', props.entry, $event)"
-    @mouseenter="hovered = true"
-    @mouseleave="hovered = false"
   >
-    <label class="flex items-center" @click.stop>
+    <label v-if="props.bulkSelection" class="flex items-center" @click.stop>
       <input
-        v-show="checkboxVisible"
         type="checkbox"
         class="size-3.5 cursor-pointer accent-accent"
         :checked="props.selected"

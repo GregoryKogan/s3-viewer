@@ -1220,6 +1220,18 @@ const SCENARIO: &str = r#"(async () => {
           + ') collapsedFlag=' + window.__s3viewer.state.ui.layout.collapsed
           + ' styleWidth=' + sidebar.style.width);
       }
+      // The rail is a column of targets: each avatar must sit on the sidebar's
+      // centre line, not against its left edge.
+      const rail = $$('#connection-list button[data-testid^="connection-"]')[0];
+      if (!rail) throw new Error('the collapsed rail has no connection target');
+      const railBox = rail.getBoundingClientRect();
+      const sideBox = sidebar.getBoundingClientRect();
+      const offset = Math.abs(
+        railBox.left + railBox.width / 2 - (sideBox.left + sideBox.width / 2),
+      );
+      if (offset > 1.5) {
+        throw new Error('the collapsed rail avatar is off-centre by ' + offset.toFixed(1) + 'px');
+      }
       $('[data-testid=collapse-sidebar]').click();
       const restored = sidebar.getBoundingClientRect().width;
       if (Math.abs(restored - before) > 2) {
@@ -1297,38 +1309,52 @@ const SCENARIO: &str = r#"(async () => {
       return 'one row, then the selection followed a second plain click';
     });
 
-    await check('ui: checkboxes are hidden until something is selected', async () => {
+    await check('ui: checkboxes appear only for a real set, not for one row', async () => {
       window.__s3viewer.state.objects.clearSelection();
-      // The focused row shows its checkbox too (SEL-2), so clear the focus
-      // before asserting the at-rest state.
       window.__s3viewer.state.objects.focus(null);
-      // Hover is real state, so reset it: a row the pointer passed over earlier
-      // legitimately still shows its checkbox.
-      for (const row of $$('.object-row')) {
-        row.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
-      }
       await frame();
-      const boxes = $$('[data-testid^=row-check-]');
-      if (!boxes.length) throw new Error('no checkbox elements at all');
-      const visible = boxes.filter((box) => box.offsetParent !== null);
-      if (visible.length) {
-        throw new Error(
-          visible.length + ' checkbox(es) visible at rest: '
-          + visible.map((box) => box.dataset.testid).join(', ')
-          + ' | selected=' + window.__s3viewer.state.objects.selected.size,
-        );
+      // At rest the column does not exist at all: no gutter, no header box.
+      if ($$('[data-testid^=row-check-]').length) {
+        throw new Error('the checkbox column is rendered with nothing selected');
       }
+      if ($('[data-testid=select-all]')) throw new Error('the select-all box is rendered at rest');
 
-      const row = $$('.object-row')[0];
-      row.dispatchEvent(new MouseEvent('click', { bubbles: true, view: window }));
+      const rows = $$('.object-row');
+      rows[0].dispatchEvent(new MouseEvent('click', { bubbles: true, view: window }));
       await frame();
-      const selected = window.__s3viewer.state.objects.selected.size;
+      let selected = window.__s3viewer.state.objects.selected.size;
       if (selected !== 1) {
         throw new Error('clicking a row selected ' + selected + ' row(s) instead of one');
       }
-      const after = $$('[data-testid^=row-check-]').filter((box) => box.offsetParent !== null);
-      if (!after.length) throw new Error('checkboxes stayed hidden after selecting');
-      return 'hidden at rest, ' + after.length + ' visible in selection mode';
+      // One row is for preview and navigation; it must not turn the list into
+      // checkbox mode.
+      if ($$('[data-testid^=row-check-]').length) {
+        throw new Error('a single selected row brought the checkboxes back');
+      }
+      if ($('[data-testid=select-all]')) throw new Error('one row turned on select-all');
+
+      // A second selected row is a set: the column appears, select-all included.
+      rows[1].dispatchEvent(new MouseEvent('click', {
+        bubbles: true,
+        metaKey: true,
+        view: window,
+      }));
+      await frame();
+      selected = window.__s3viewer.state.objects.selected.size;
+      if (selected !== 2) throw new Error('⌘-click produced ' + selected + ' selected rows');
+      const boxes = $$('[data-testid^=row-check-]');
+      if (!boxes.length) throw new Error('the checkbox column is missing for a set of two');
+      if (boxes.some((box) => box.offsetParent === null)) {
+        throw new Error('some checkboxes in the column are invisible');
+      }
+      if (!$('[data-testid=select-all]')) throw new Error('select-all is missing for a set');
+
+      press($('[data-testid=object-list]'), 'Escape');
+      await frame();
+      if ($$('[data-testid^=row-check-]').length) {
+        throw new Error('clearing the set left the checkbox column behind');
+      }
+      return 'none at rest, none for one row, full column for two; Escape hides it';
     });
 
     await check('ui: shift-click selects a contiguous range', async () => {

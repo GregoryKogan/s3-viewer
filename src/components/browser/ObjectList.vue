@@ -40,9 +40,16 @@ const showType = computed(() => viewportWidth.value >= 820);
 
 const canWrite = computed(() => connections.canWriteActive);
 
+/**
+ * The checkbox column exists only for a set (2+ rows). A plain click still
+ * selects one row for the preview, but that is navigation, not selection: the
+ * list must not carry an empty gutter and a checkbox over every row.
+ */
+const bulkSelection = computed(() => objects.selected.size > 1);
+
 const gridTemplate = computed(() =>
   [
-    "34px",
+    bulkSelection.value ? "34px" : null,
     "minmax(150px, 1fr)",
     "88px",
     showModified.value ? "132px" : null,
@@ -96,8 +103,7 @@ const selectedVisible = computed(() => {
   return { all, some };
 });
 
-/** Checkboxes are hidden until a selection exists, so the list stays quiet. */
-const selectionActive = computed(() => objects.selected.size > 0);
+
 
 /** Bring one row into view; keyboard navigation and the e2e suite both need it. */
 function scrollToRow(index: number) {
@@ -252,7 +258,7 @@ defineExpose({ scrollToRow });
       :style="{ gridTemplateColumns: gridTemplate }"
       data-testid="table-head"
     >
-      <label class="flex items-center">
+      <label v-if="bulkSelection" class="flex items-center">
         <input
           type="checkbox"
           class="size-3.5 cursor-pointer accent-accent"
@@ -377,7 +383,7 @@ defineExpose({ scrollToRow });
           :show-type="showType"
           :selected="objects.selected.has(row.entry.key)"
           :focused="objects.focusedKey === row.entry.key"
-          :selection-active="selectionActive"
+          :bulk-selection="bulkSelection"
           @click="onClick"
           @activate="onActivate"
           @toggle-check="onToggleCheck"
