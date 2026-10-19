@@ -207,6 +207,7 @@ h1 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 0.55rem;
   min-height: 2.75rem;
   padding: 0 1.25rem;
   border: 1px solid var(--line-strong);
@@ -224,6 +225,18 @@ h1 {
 .button:hover {
   background: #232833;
   border-color: #4a5262;
+}
+
+.button__icon {
+  flex: none;
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.button__icon--apple {
+  width: 1.2rem;
+  height: 1.2rem;
+  margin-top: -0.1rem;
 }
 
 .button--primary {
