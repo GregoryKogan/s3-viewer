@@ -306,7 +306,9 @@ pub async fn test_connection(
         .map(|e| e.key.clone())
         .collect::<Vec<_>>();
 
-    let caps = objects::probe_capabilities(&store, input.detect_write).await;
+    // The draft carries no local read-only switch, so only the credentials are
+    // probed here; `detect_capabilities` reports the switch for saved connections.
+    let caps = objects::probe_capabilities(&store, &conn.prefix, input.detect_write, false).await;
 
     Ok(ProbeOutcome {
         capabilities: caps,
@@ -329,7 +331,8 @@ pub async fn detect_capabilities(
     let conn = core.connection(&id).map_err(err)?;
     let store = core.client(&id).map_err(err)?;
     let detect = conn.security.detect_permissions;
-    let caps = objects::probe_capabilities(&store, detect).await;
+    let read_only = conn.security.read_only_mode;
+    let caps = objects::probe_capabilities(&store, &conn.prefix, detect, read_only).await;
     core.set_capabilities(&id, caps.clone()).map_err(err)?;
     Ok(caps)
 }
@@ -467,6 +470,12 @@ pub async fn list_objects_stream(
 }
 
 /// Keep every folder and trim only the file tail past `limit`.
+///
+/// `objects::list_folder` already applies this rule page by page (see
+/// `objects::list_folder_streaming`), so for its result this is a no-op guard
+/// and the `truncated` flag comes from the stream. It is kept as the
+/// non-streaming enforcement point for any caller that assembles entries
+/// another way, and it documents the limit = 0 case: no files, folders only.
 fn trim_to_limit(entries: &mut Vec<ObjectEntry>, limit: usize) -> bool {
     if entries.iter().filter(|e| !e.is_folder).count() <= limit {
         return false;
