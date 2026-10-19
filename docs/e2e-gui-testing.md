@@ -286,7 +286,9 @@ permissions prompt for the whole screen, but the window must be frontmost.
 ## 11. What this suite does not cover
 
 - **Native dialogs** (open/save). The file pickers cannot be driven; the checks
-  exercise the backend command behind them instead.
+  exercise the backend command behind them instead. File uploads do go through
+  the real queue: the scenario hands a real local path to
+  `window.__s3viewer.queueUploads`, the same entry point the picker feeds.
 - **OS drag & drop.** Cannot be synthesised in a webview.
 - **The updater.** Needs two published releases and a real install; see
   `AGENTS.md`.

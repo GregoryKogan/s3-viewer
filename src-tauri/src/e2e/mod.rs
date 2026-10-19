@@ -50,6 +50,9 @@ pub struct TestPlan {
     pub download_dir: Option<String>,
     /// A credentials file the scenario reads through the backend.
     pub import_file: Option<String>,
+    /// The isolated config directory the runner set; the scenario proves it is
+    /// the one actually in use and that the keychain was never touched.
+    pub config_dir: Option<String>,
 }
 
 impl TestPlan {
@@ -68,6 +71,7 @@ impl TestPlan {
             output: need(ENV_OUT).unwrap_or_else(|| "e2e-report.json".to_string()),
             download_dir: need(ENV_DOWNLOAD_DIR),
             import_file: need(ENV_IMPORT_FILE),
+            config_dir: need("S3VIEWER_CONFIG_DIR"),
         })
     }
 }
@@ -126,23 +130,28 @@ pub fn scenario_script(plan: &TestPlan) -> String {
             "__IMPORT_FILE__",
             &json(plan.import_file.as_deref().unwrap_or("")),
         )
+        .replace(
+            "__CONFIG_DIR__",
+            &json(plan.config_dir.as_deref().unwrap_or("")),
+        )
 }
 
 const SCENARIO: &str = r#"(async () => {
+  // Injecting twice must not run the suite twice: the second run would race the
+  // first and its final report could overwrite a failing one with a pass.
+  if (window.__S3VIEWER_E2E_STARTED) return;
+  window.__S3VIEWER_E2E_STARTED = true;
+
   // The harness may inject before the page has finished loading. Wait for the
   // Tauri bridge (injected as a global) and for the app shell to exist, so a slow
   // start is a wait rather than a crash.
   {
     const deadline = Date.now() + 60000;
     while (!(window.__TAURI__ && window.__TAURI__.core && window.__s3viewer)) {
-      if (Date.now() > deadline) {
-        window.__S3VIEWER_E2E_STARTED = true;
-        return;
-      }
+      if (Date.now() > deadline) return;
       await new Promise((r) => setTimeout(r, 100));
     }
   }
-  window.__S3VIEWER_E2E_STARTED = true;
   const REPORT = [];
   const connectionName = __CONNECTION_NAME__;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -246,6 +255,14 @@ const SCENARIO: &str = r#"(async () => {
     fire(node, 'input');
     fire(node, 'change');
   };
+  /** A real key press as the app's window listener sees it. */
+  const press = (target, key, init = {}) =>
+    target.dispatchEvent(new KeyboardEvent('keydown', {
+      key,
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    }));
   const rowNames = () => $$('.object-row .row-label').map((n) => n.textContent);
   /** Right-click a row and hand back the menu. Both steps are real user input. */
   const rowMenu = async (label) => {
@@ -477,6 +494,299 @@ const SCENARIO: &str = r#"(async () => {
       return names.length + ' rows · ' + $('[data-testid=folder-status]').textContent;
     });
 
+    await check('ui: the list is a listbox and the keyboard owns it', async () => {
+      window.__s3viewer.state.objects.clearSelection();
+      const list = $('[data-testid=object-list]');
+      if (!list) throw new Error('the object list is missing');
+      if (list.getAttribute('role') !== 'listbox') {
+        throw new Error('the list is not a listbox: ' + list.getAttribute('role'));
+      }
+      if (list.getAttribute('aria-multiselectable') !== 'true') {
+        throw new Error('the list does not advertise multiple selection');
+      }
+      list.focus();
+      press(list, 'ArrowDown');
+      await wait('aria-activedescendant', async () => {
+        const id = list.getAttribute('aria-activedescendant');
+        return id && $('#' + id) ? id : null;
+      });
+      const rows = window.__s3viewer.state.visible;
+      const active = () => Number((list.getAttribute('aria-activedescendant') || '').replace('row-', ''));
+      if (active() !== 0) throw new Error('ArrowDown did not land on the first row: ' + active());
+      if (window.__s3viewer.state.objects.focusedKey !== rows[0].key) {
+        throw new Error('focus and aria-activedescendant disagree');
+      }
+      await wait('the preview to follow the focus', async () => {
+        const key = window.__s3viewer.state.objects.previewKey;
+        return key === rows[0].key ? true : null;
+      });
+      press(list, 'End');
+      await wait('End', async () => (active() === rows.length - 1 ? true : null));
+      press(list, 'Home');
+      await wait('Home', async () => (active() === 0 ? true : null));
+      press(list, 'PageDown');
+      await wait('PageDown', async () => (active() > 0 ? true : null));
+      const selectedBefore = window.__s3viewer.state.objects.selected.size;
+      press(list, 'ArrowDown');
+      await frame();
+      if (window.__s3viewer.state.objects.selected.size !== selectedBefore) {
+        throw new Error('a plain arrow changed the selection');
+      }
+      press(list, 'Escape');
+      await frame();
+      press(list, 'ArrowDown');
+      press(list, 'ArrowDown', { shiftKey: true });
+      await frame();
+      const extended = window.__s3viewer.state.objects.selected.size;
+      if (extended !== 2) throw new Error('Shift+ArrowDown selected ' + extended + ' row(s)');
+      press(list, 'Escape');
+      await frame();
+      press(list, 'a', { metaKey: true });
+      await frame();
+      const all = window.__s3viewer.state.objects.selected.size;
+      if (all !== rows.length) {
+        throw new Error('select all covered ' + all + ' of ' + rows.length + ' rows');
+      }
+      const countLabel = $('[data-testid=selection-count]').textContent.trim();
+      press(list, 'Escape');
+      await frame();
+      return 'Home/End/PageDown, Shift+Arrow and ⌘A (' + all + ' rows, "' + countLabel + '")';
+    });
+
+    await check('ui: type-ahead focuses the matching row and restarts', async () => {
+      const list = $('[data-testid=object-list]');
+      list.focus();
+      press(list, 's');
+      await wait('sample.json by type-ahead', async () => {
+        const key = window.__s3viewer.state.objects.focusedKey;
+        return key && key.endsWith('/sample.json') ? key : null;
+      });
+      press(list, 'a');
+      await frame();
+      const together = window.__s3viewer.state.objects.focusedKey;
+      if (!/sample\.(json|py)$/.test(together)) {
+        throw new Error('the second letter restarted the search: ' + together);
+      }
+      await sleep(800);
+      press(list, 'n');
+      const notes = await wait('notes.txt after the timeout', async () => {
+        const key = window.__s3viewer.state.objects.focusedKey;
+        return key && key.endsWith('/notes.txt') ? key : null;
+      });
+      return notes.split('/').pop() + ' after "sa" → "n"';
+    });
+
+    await check('ui: Cmd/Ctrl-click toggles one row', async () => {
+      window.__s3viewer.state.objects.clearSelection();
+      const rows = $$('.object-row');
+      if (rows.length < 3) throw new Error('not enough rows');
+      const click = (row, init = {}) =>
+        row.dispatchEvent(new MouseEvent('click', { bubbles: true, view: window, ...init }));
+      click(rows[0]);
+      click(rows[2], { metaKey: true });
+      await frame();
+      if (window.__s3viewer.state.objects.selected.size !== 2) {
+        throw new Error('⌘-click did not add: ' + window.__s3viewer.state.objects.selected.size);
+      }
+      click(rows[2], { metaKey: true });
+      await frame();
+      const left = window.__s3viewer.state.objects.selected.size;
+      if (left !== 1) throw new Error('a second ⌘-click did not remove: ' + left);
+      window.__s3viewer.state.objects.clearSelection();
+      await frame();
+      return 'added then removed one row';
+    });
+
+    await check('ui: the context menu acts on the pointed row only', async () => {
+      window.__s3viewer.state.objects.clearSelection();
+      await frame();
+      const list = $('[data-testid=object-list]');
+      const rows = $$('.object-row');
+      rows[0].dispatchEvent(new MouseEvent('click', { bubbles: true, view: window }));
+      rows[2].dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true, view: window }));
+      await frame();
+      if (window.__s3viewer.state.objects.selected.size !== 3) {
+        throw new Error('the range setup selected ' + window.__s3viewer.state.objects.selected.size);
+      }
+      const inside = rowNames()[1];
+      const menu = await rowMenu(inside);
+      const labels = Array.from(menu.querySelectorAll('button')).map((b) => b.textContent.trim());
+      if (!labels.some((label) => label.startsWith('Delete 3 items'))) {
+        throw new Error('the menu lost the selection count: ' + labels.join(' | '));
+      }
+      if (window.__s3viewer.state.objects.selected.size !== 3) {
+        throw new Error('right-click inside the selection changed it');
+      }
+      // The menu must start on a runnable item and give focus back to the list.
+      if (!document.activeElement || document.activeElement.getAttribute('role') !== 'menuitem') {
+        throw new Error('the menu did not take focus');
+      }
+      press(menu, 'Escape');
+      await wait('the menu to close', async () => ($('[data-testid=context-menu]') ? null : true));
+      if (document.activeElement !== list) {
+        throw new Error('focus did not return to the list: ' + (document.activeElement || {}).tagName);
+      }
+      // Right-clicking an unselected row collapses the set to that row.
+      const outside = rowNames()[5];
+      const second = await rowMenu(outside);
+      const secondLabels = Array.from(second.querySelectorAll('button')).map((b) => b.textContent.trim());
+      if (window.__s3viewer.state.objects.selected.size !== 1) {
+        throw new Error('right-click outside the selection did not select one row');
+      }
+      if (secondLabels.some((label) => /^Delete \d+ items/.test(label))) {
+        throw new Error('the menu still counts a stale selection: ' + secondLabels.join(' | '));
+      }
+      press(second, 'Escape');
+      await wait('the second menu to close', async () => ($('[data-testid=context-menu]') ? null : true));
+      return '3 selected inside, 1 when pointed outside, focus restored';
+    });
+
+    await check('ui: the address bar edits in place and explains bad addresses', async () => {
+      const row = $('[data-testid=breadcrumb]').firstElementChild;
+      row.click();
+      const input = await wait('the address input', () => $('[data-testid=address-input]'));
+      if (document.activeElement !== input) throw new Error('the address input did not take focus');
+      if (!input.value.startsWith('s3://' + __BUCKET__ + '/')) {
+        throw new Error('unexpected draft: ' + input.value);
+      }
+      // A bare key is a key, not a bucket.
+      input.value = 'sample.json';
+      fire(input, 'input');
+      press(input, 'Enter');
+      const name = await wait('the preview from a bare address', () => {
+        const node = $('[data-testid=preview-name]');
+        return node && node.textContent.trim() === 'sample.json' ? node.textContent.trim() : null;
+      });
+      if ($('[data-testid=address-error]')) throw new Error('a valid bare address reported an error');
+      // A foreign bucket gets its own explanation, not "nothing found".
+      const again = await openAddress();
+      again.value = 's3://not-this-bucket/x';
+      fire(again, 'input');
+      press(again, 'Enter');
+      const error = await wait('the foreign-bucket message', () => $('[data-testid=address-error]'));
+      if (!/can only open/i.test(error.textContent)) {
+        throw new Error('unhelpful foreign-bucket message: ' + error.textContent);
+      }
+      closeAddress();
+      await frame();
+      return 'bare key opened, foreign bucket explained';
+    });
+
+    await check('ui: an address opens an object in another folder', async () => {
+      const key = __PREFIX__ + 'nested/deep.txt';
+      await invoke('create_file', {
+        input: { connectionId, prefix: __PREFIX__ + 'nested/', name: 'deep.txt', content: 'nested probe' },
+      });
+      $('[data-testid=refresh]').click();
+      await wait('the nested folder', async () => {
+        const objects = window.__s3viewer.state.objects;
+        return !objects.loading && rowNames().includes('nested') ? true : null;
+      }, 20000);
+      const input = await openAddress();
+      input.value = 's3://' + __BUCKET__ + '/' + key;
+      fire(input, 'input');
+      press(input, 'Enter');
+      const name = await wait('the nested preview', () => {
+        const node = $('[data-testid=preview-name]');
+        return node && node.textContent.trim() === 'deep.txt' ? node.textContent.trim() : null;
+      }, 20000);
+      if ($('[data-testid=address-error]')) {
+        throw new Error('opening an object one folder away reported: ' + $('[data-testid=address-error]').textContent);
+      }
+      const selected = window.__s3viewer.state.objects.selected.size;
+      if (selected !== 1) throw new Error('the opened object is not selected: ' + selected);
+      $('[data-testid=crumb-root]').click();
+      await wait('the root listing', async () => {
+        const objects = window.__s3viewer.state.objects;
+        return !objects.loading && rowNames().includes('nested') ? true : null;
+      });
+      // Remove the object and, if the provider kept one, the folder marker. A
+      // refresh clears the rows first, so waiting for absence must also wait for
+      // the new listing to settle or the check passes on the empty loading list.
+      await invoke('delete_objects', {
+        input: { connectionId, keys: [key, __PREFIX__ + 'nested/'] },
+      });
+      // The command starts a transfer and returns; confirm against the backend
+      // that the keys are gone before asking the UI to reload.
+      await wait('S3 to forget the nested key', async () => {
+        const listing = await invoke('list_objects', {
+          input: { connectionId, prefix: __PREFIX__ },
+        });
+        return listing.entries.some((entry) => entry.key.indexOf(__PREFIX__ + 'nested') === 0)
+          ? null
+          : true;
+      }, 30000);
+      $('[data-testid=refresh]').click();
+      await wait('the cleanup listing', async () => {
+        const objects = window.__s3viewer.state.objects;
+        if (objects.loading || objects.awaitingFirstPage) return null;
+        return rowNames().includes('nested') ? null : true;
+      }, 20000);
+      return name + ' selected, root restored';
+    });
+
+    await check('ops: New file takes content, validates the name and Delete works', async () => {
+      window.__s3viewer.state.objects.clearSelection();
+      $('[data-testid=new-file]').click();
+      const nameInput = await wait('the new file dialog', () => $('[data-testid=new-file-name]'));
+      $('[data-testid=new-file-create]').click();
+      // The error is rendered on a microtask; reading synchronously would see
+      // the pre-click attributes.
+      await wait('the name error', async () =>
+        (nameInput.getAttribute('aria-invalid') === 'true' ? true : null), 5000);
+      const described = nameInput.getAttribute('aria-describedby') || '';
+      const errorNode = described.split(/\s+/).map((id) => document.getElementById(id)).find(Boolean);
+      if (nameInput.getAttribute('aria-invalid') !== 'true') {
+        throw new Error('the invalid name is not marked aria-invalid');
+      }
+      if (!errorNode || !/file name is required/i.test(errorNode.textContent)) {
+        throw new Error('the name error is not associated: ' + described);
+      }
+      if (errorNode.getAttribute('role') !== 'alert') {
+        throw new Error('the validation message is not a live region');
+      }
+      if (document.activeElement !== nameInput) {
+        throw new Error('validation did not return focus to the field');
+      }
+
+      const name = 'keyboard-probe-' + Date.now() + '.txt';
+      setInput('[data-testid=new-file-name]', name);
+      setInput('[data-testid=new-file-content]', 'delete me\n');
+      $('[data-testid=new-file-create]').click();
+      await wait('the dialog to close', async () => ($('[data-testid=modal]') ? null : true), 10000);
+      await wait('the new row', async () => (rowNames().includes(name) ? true : null), 20000);
+      const preview = await wait('the new file preview', () => {
+        const node = $('[data-testid=preview-code]');
+        return node && node.textContent.includes('delete me') ? node : null;
+      }, 20000);
+      const shown = $('[data-testid=preview-name]').textContent.trim();
+      if (shown !== name) throw new Error('the preview did not follow the new file: ' + shown);
+
+      // The destructive key asks first; Cancel must leave the object alone.
+      const list = $('[data-testid=object-list]');
+      clickRow(name);
+      await frame();
+      press(list, 'Delete');
+      const cancel = await wait('the delete confirmation', () => $('[data-testid=confirm-cancel]'), 8000);
+      if (document.activeElement !== cancel) {
+        throw new Error('Cancel is not the default on a destructive confirmation');
+      }
+      $('[data-testid=modal]').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await frame();
+      if (!$('[data-testid=confirm-ok]')) throw new Error('Enter confirmed a destructive dialog');
+      cancel.click();
+      await wait('the dialog to close', async () => ($('[data-testid=modal]') ? null : true), 8000);
+      if (!rowNames().includes(name)) throw new Error('Cancel still deleted the file');
+
+      press(list, 'Backspace', { metaKey: true });
+      const ok = await wait('the second confirmation', () => $('[data-testid=confirm-ok]'), 8000);
+      ok.click();
+      await wait('the file to disappear', async () => (rowNames().includes(name) ? null : true), 20000);
+      return 'content previewed; Cancel kept it; ⌘⌫ removed it (' + preview.textContent.length + ' chars)';
+    });
+
     await check('navigation: folder rows are sorted before files', async () => {
       const toolbarProbe = 'toolbar=' + Boolean($('#toolbar'))
         + ' buttons=' + (($('#toolbar') || {}).querySelectorAll ? $('#toolbar').querySelectorAll('button').length : -1)
@@ -487,12 +797,19 @@ const SCENARIO: &str = r#"(async () => {
       }
       $('[data-testid=new-folder]').click();
       await wait('the folder prompt', () => $('[data-testid=prompt-input]'));
-      const folder = 'aaa-sort-probe-' + Date.now();
+      // "zzz" sorts after every fixture alphabetically, so the folder can only
+      // be first when folders are grouped before files.
+      const folder = 'zzz-sort-probe-' + Date.now();
       setInput('[data-testid=prompt-input]', folder);
       $('[data-testid=prompt-ok]').click();
       await wait('the new folder', async () => (rowNames().includes(folder) ? true : null));
-      const first = rowNames()[0];
-      if (first !== folder) throw new Error('folders are not listed first: ' + first);
+      const ordered = rowNames();
+      if (ordered[0] !== folder) {
+        throw new Error('folders are not listed first: ' + ordered.slice(0, 3).join(', '));
+      }
+      if (ordered.indexOf('blob.bin') < ordered.indexOf(folder)) {
+        throw new Error('the file sort leaked above the folder: ' + ordered.slice(0, 3).join(', '));
+      }
       const folderMenu = await rowMenu(folder);
       const deleteState = 'selected=' + window.__s3viewer.state.selected.size
         + ' rows=' + rowNames().join(',');
@@ -509,6 +826,84 @@ const SCENARIO: &str = r#"(async () => {
           + ' transfers=' + JSON.stringify(progress).slice(0, 300));
       }
       return 'folders sort first';
+    });
+
+    await check('navigation: Up, the folder card and empty-folder actions', async () => {
+      const folder = 'nav-probe-' + Date.now();
+      $('[data-testid=new-folder]').click();
+      await wait('the folder prompt', () => $('[data-testid=prompt-input]'));
+      setInput('[data-testid=prompt-input]', folder);
+      $('[data-testid=prompt-ok]').click();
+      await wait('the new folder row', async () => (rowNames().includes(folder) ? true : null));
+
+      clickRow(folder);
+      const card = await wait('the folder preview card', () => $('[data-testid=preview-folder]'), 10000);
+      if (!$('[data-testid=preview-folder-open]')) throw new Error('the folder card has no Open button');
+      if ($('[data-testid=preview-download]')) throw new Error('a folder offered Download');
+      if ($('[data-testid=preview-expand]')) throw new Error('a folder offered Expand');
+      $('[data-testid=preview-folder-open]').click();
+      await wait('the breadcrumb to follow the folder', async () =>
+        ($('[data-testid=breadcrumb]').textContent.includes(folder) ? true : null));
+
+      const empty = await wait('the empty-folder state', () => $('[data-testid=empty-folder]'), 10000);
+      if (!/this folder is empty/i.test(empty.textContent)) {
+        throw new Error('unexpected empty state: ' + empty.textContent.slice(0, 80));
+      }
+      for (const id of ['empty-upload', 'empty-upload-folder', 'empty-new-folder']) {
+        if (!$('[data-testid=' + id + ']')) throw new Error('the empty state is missing ' + id);
+      }
+      const up = $('[data-testid=navigate-up]');
+      if (up.disabled) throw new Error('Up is disabled inside a folder');
+      $('[data-testid=empty-new-folder]').click();
+      await wait('the nested-folder prompt', () => $('[data-testid=prompt-input]'));
+      const nested = 'nested-' + Date.now();
+      setInput('[data-testid=prompt-input]', nested);
+      $('[data-testid=prompt-ok]').click();
+      await wait('the nested folder row', async () => (rowNames().includes(nested) ? true : null));
+
+      $('[data-testid=navigate-up]').click();
+      await wait('the root listing', async () => (rowNames().includes(folder) ? true : null), 15000);
+      if (!$('[data-testid=navigate-up]').disabled) throw new Error('Up is enabled at the scope root');
+
+      const menu = await rowMenu(folder);
+      const chosen = Array.from(window.__s3viewer.state.objects.selected);
+      if (chosen.length !== 1 || chosen[0] !== __PREFIX__ + folder + '/') {
+        throw new Error('the delete would target ' + JSON.stringify(chosen) + ', not the folder');
+      }
+      menuClick(menu, 'Delete');
+      const confirm = await wait('the recursive-delete confirmation', () => $('[data-testid=confirm-ok]'), 8000);
+      const details = ($('[data-testid=confirm-details]') || {}).textContent || '';
+      if (!/recursively/i.test(details)) throw new Error('the delete did not warn about recursion: ' + details);
+      confirm.click();
+      // Wait for S3 itself to forget the folder marker. The delete command
+      // starts a background transfer and returns, so a transfer list (or a row)
+      // can be stale by the time it is read.
+      await wait('S3 to forget the folder', async () => {
+        const listing = await invoke('list_objects', {
+          input: { connectionId, prefix: __PREFIX__ },
+        });
+        const marker = __PREFIX__ + folder + '/';
+        return listing.entries.some((entry) => entry.key === marker) ? null : true;
+      }, 60000).catch(async (error) => {
+        const items = await invoke('transfer_progress');
+        const under = await invoke('list_objects', {
+          input: { connectionId, prefix: __PREFIX__ + folder + '/' },
+        }).catch((e) => ({ entries: [], error: String(e) }));
+        const root = await invoke('list_objects', {
+          input: { connectionId, prefix: __PREFIX__ },
+        }).catch((e) => ({ entries: [], error: String(e) }));
+        throw new Error(error.message + ' :: deletes='
+          + JSON.stringify(items.filter((item) => /Deleting/i.test(item.label)).slice(-2))
+          + ' under=' + JSON.stringify(under.entries.map((entry) => entry.key))
+          + ' root=' + JSON.stringify(root.entries.map((entry) => entry.key)));
+      });
+      $('[data-testid=refresh]').click();
+      await wait('the folder and its child to disappear', async () => {
+        const objects = window.__s3viewer.state.objects;
+        if (objects.loading || objects.awaitingFirstPage) return null;
+        return rowNames().includes(folder) ? null : true;
+      }, 30000);
+      return card.textContent.replace(/\s+/g, ' ').trim().slice(0, 60) + ' → nested → Up → deleted';
     });
 
     await check('preview: image decodes through the s3stream protocol', async () => {
@@ -558,7 +953,11 @@ const SCENARIO: &str = r#"(async () => {
       clickRow('vector.svg');
       const image = await wait('the SVG preview', () => $('[data-testid=preview-image]'));
       const width = await wait('the SVG to decode', async () => (image.naturalWidth > 0 ? image.naturalWidth : null));
-      return width + 'px wide';
+      // A stale image.png element would satisfy a bare naturalWidth check.
+      const name = $('[data-testid=preview-name]').textContent.trim();
+      if (name !== 'vector.svg') throw new Error('the preview did not follow the row: ' + name);
+      if (width !== 120) throw new Error('unexpected SVG width: ' + width);
+      return name + ' at ' + width + 'px';
     });
 
     await check('preview: Markdown renders structure and toggles to raw', async () => {
@@ -977,6 +1376,48 @@ const SCENARIO: &str = r#"(async () => {
       return before + ' → ' + grew + ' → ' + shrank + ' px';
     });
 
+    await check('preview: Expand, Escape and Close give the list back', async () => {
+      clickRow('readme.md');
+      await wait('the rendered markdown', () => $('[data-testid=preview-markdown]'));
+      const list = $('[data-testid=object-list]');
+      const expand = () => $('[data-testid=preview-expand]');
+      expand().click();
+      await wait('the expanded preview', async () =>
+        (expand().getAttribute('aria-pressed') === 'true' && list.offsetParent === null ? true : null));
+      press(document.body, 'Escape');
+      await wait('Escape to collapse it', async () =>
+        (list.offsetParent !== null && expand().getAttribute('aria-pressed') === 'false' ? true : null));
+      expand().click();
+      await wait('the expanded preview again', async () =>
+        (list.offsetParent === null ? true : null));
+      $('[data-testid=preview-close]').click();
+      await wait('Close to hide the panel', async () =>
+        ($('#preview').hidden && $('[data-testid=toggle-preview]').getAttribute('aria-pressed') === 'false'
+          ? true : null));
+      $('[data-testid=toggle-preview]').click();
+      await wait('the panel to come back', async () => (!$('#preview').hidden ? true : null));
+      return 'expanded, Escape collapsed, Close hid the panel';
+    });
+
+    await check('preview: the header downloads and copies the shown object', async () => {
+      clickRow('sample.json');
+      await wait('the JSON preview', () => $('[data-testid=preview-code]'));
+      $('[data-testid=preview-copy-uri]').click();
+      const toast = await wait('the copied URI', () => {
+        const found = $$('[data-testid^=toast-]').filter((node) => /s3:\/\/.*sample\.json/.test(node.textContent));
+        return found.length ? found[found.length - 1] : null;
+      }, 10000);
+      $('[data-testid=preview-download]').click();
+      const done = await wait('the panel download', async () => {
+        const items = await invoke('transfer_progress');
+        const finished = items.filter((item) =>
+          item.state === 'done' && /Downloading/i.test(item.label) && /sample\.json/.test(item.label));
+        return finished.length ? finished[finished.length - 1] : null;
+      }, 60000);
+      if (!done.resultPath) throw new Error('the panel download reported no destination');
+      return 'URI toast + ' + String(done.resultPath).split('/').pop();
+    });
+
     await check('preview: the panel can be hidden and shown again', async () => {
       $('[data-testid=toggle-preview]').click();
       if (!$('#preview') || !$('#preview').hidden && $('#preview')) {
@@ -986,6 +1427,36 @@ const SCENARIO: &str = r#"(async () => {
       $('[data-testid=toggle-preview]').click();
       if ($('#preview').hidden) throw new Error('the panel did not come back');
       return 'toggled';
+    });
+
+    await check('preview: an auto-hidden panel fetches on reveal', async () => {
+      clickRow('notes.txt');
+      await wait('the text preview', () => $('[data-testid=preview-code]'), 20000);
+      const ui = window.__s3viewer.state.ui;
+      // Showing the panel by hand pauses the automatic rule until a wide-window
+      // check clears it; the toggle in the previous check left that pause set.
+      ui.clampLayoutToWindow();
+      ui.setPreviewWidth(window.innerWidth);
+      ui.clampLayoutToWindow();
+      await wait('the automatic hide', async () => (ui.previewHidden ? true : null), 5000);
+
+      // Pointing at an object while the panel is hidden must keep the key and
+      // skip the fetch, not leave a stale preview behind.
+      clickRow('sample.json');
+      await frame();
+      const objects = window.__s3viewer.state.objects;
+      if (!objects.previewKey || !objects.previewKey.endsWith('sample.json')) {
+        throw new Error('the hidden panel forgot the clicked key: ' + objects.previewKey);
+      }
+      if (objects.preview !== null) throw new Error('the hidden panel fetched anyway');
+
+      ui.setPreviewWidth(420);
+      ui.clampLayoutToWindow();
+      await wait('the reveal', async () => (ui.previewHidden ? null : true), 5000);
+      await wait('the deferred fetch', () => $('[data-testid=preview-code]'), 15000);
+      const name = $('[data-testid=preview-name]').textContent.trim();
+      if (name !== 'sample.json') throw new Error('the revealed panel shows ' + name);
+      return 'deferred while hidden, fetched on reveal';
     });
 
     const folderName = 'e2e-folder-' + Date.now();
@@ -1011,7 +1482,8 @@ const SCENARIO: &str = r#"(async () => {
       }
       confirm.click();
       try {
-        await wait('the folder to disappear', async () => (rowNames().includes(folderName) ? null : true), 40000);
+        // Keep the sum of this check's waits under the 90 s watchdog.
+        await wait('the folder to disappear', async () => (rowNames().includes(folderName) ? null : true), 20000);
       } catch (error) {
         const progress = await invoke('transfer_progress');
         throw new Error(error.message + ' :: rows=' + rowNames().join(',')
@@ -1034,9 +1506,30 @@ const SCENARIO: &str = r#"(async () => {
       if (!names.every((name) => name.includes('sample'))) {
         throw new Error('the filter leaked unrelated rows: ' + names.join(', '));
       }
-      setInput('[data-testid=filter-input]', '');
-      await wait('the full list', async () => ($$('.object-row').length >= 12 ? true : null), 10000);
-      return names.join(', ');
+      const totalFiles = window.__s3viewer.state.entries.filter((entry) => !entry.isFolder).length;
+      const status = $('[data-testid=folder-status]').textContent;
+      if (!new RegExp('0 folders · 2 of ' + totalFiles + ' files').test(status)) {
+        throw new Error('the status does not report the filter: ' + status + ' (expected 2 of ' + totalFiles + ')');
+      }
+
+      // A filter with no matches must offer a way out, and that way must clear
+      // the input as well as the store.
+      setInput('[data-testid=filter-input]', 'zzz-no-match');
+      await wait('the no-match state', () => $('[data-testid=clear-filter]'), 10000);
+      const emptyText = $('[data-testid=empty-folder]').textContent;
+      if (!/nothing matches the filter/i.test(emptyText)) {
+        throw new Error('the no-match state reads: ' + emptyText.slice(0, 80));
+      }
+      $('[data-testid=clear-filter]').click();
+      await wait('the cleared filter', async () => {
+        const input = $('[data-testid=filter-input]');
+        return input.value === '' && $$('.object-row').length >= 12 ? true : null;
+      }, 10000);
+      const clearedStatus = $('[data-testid=folder-status]').textContent;
+      if (!new RegExp('0 folders · ' + totalFiles + ' files').test(clearedStatus)) {
+        throw new Error('the cleared status reads: ' + clearedStatus);
+      }
+      return names.join(', ') + ' · ' + status;
     });
 
     await check('ops: the boto3 snippet copies to the clipboard', async () => {
@@ -1075,6 +1568,29 @@ const SCENARIO: &str = r#"(async () => {
       return String(settled.resultPath).split('/').pop();
     });
 
+    // Immediately after a download the panel must exist, so this is not the
+    // vacuous "no panel left open" pass it used to be.
+    await check('transfer: a finished download hides itself', async () => {
+      await wait('the transfer panel', () => $('[data-testid=transfers]'), 8000);
+      await wait('the finished transfer to disappear', async () =>
+        ($('[data-testid=transfer-done]') ? null : true), 20000);
+      return 'cleared without pressing Clear';
+    });
+
+    await check('transfer: multi-object delete removes markers and children', async () => {
+      const outcome = await invoke('e2e_delete_many_check');
+      if (outcome.remaining.length) {
+        throw new Error('left behind ' + JSON.stringify(outcome.remaining)
+          + ' after deleting ' + JSON.stringify(outcome.keys));
+      }
+      if (outcome.parentExists) throw new Error('the folder marker survived the batch delete');
+      if (outcome.childExists) throw new Error('the nested folder marker survived the batch delete');
+      if (outcome.keys.length < 2) {
+        throw new Error('the expansion did not include the nested marker: ' + JSON.stringify(outcome.keys));
+      }
+      return outcome.keys.length + ' keys deleted, none left';
+    });
+
     await check('transfer: copy duplicates an object inside the bucket', async () => {
       const copyMenu = await rowMenu('notes.txt');
       menuClick(copyMenu, 'Copy to');
@@ -1097,16 +1613,145 @@ const SCENARIO: &str = r#"(async () => {
       return 'copied and cleaned up ' + copied.name;
     });
 
+    await check('transfer: Copy refuses the current folder and Move leaves no source', async () => {
+      // The previous copy reloads the listing in the background; queue nothing
+      // against a list that is still painting.
+      await wait('the listing to settle', async () => {
+        const objects = window.__s3viewer.state.objects;
+        if (objects.loading || objects.awaitingFirstPage) return null;
+        return rowNames().length >= 12 ? true : null;
+      }, 20000);
+      if ($('[data-testid=modal]')) await closeModal();
+      clickRow('sample.py');
+      $('[data-testid=copy]').click();
+      const input = await wait('the copy dialog', () => $('[data-testid=transfer-prefix]'), 10000);
+      if ($('[data-testid=transfer-confirm]').disabled) throw new Error('Copy starts disabled');
+      input.value = __PREFIX__;
+      fire(input, 'input');
+      await wait('the same-folder guard', async () =>
+        ($('[data-testid=transfer-confirm]').disabled ? true : null), 5000);
+      if (!/current folder/i.test($('[data-testid=modal]').textContent)) {
+        throw new Error('the guard does not explain itself: ' + $('[data-testid=modal]').textContent.slice(0, 100));
+      }
+      await closeModal();
+
+      clickRow('sample.py');
+      $('[data-testid=move]').click();
+      const dest = await wait('the move dialog', () => $('[data-testid=transfer-prefix]'), 10000);
+      dest.value = __PREFIX__ + 'moved/';
+      fire(dest, 'input');
+      $('[data-testid=transfer-confirm]').click();
+      const outcome = await wait('the move to finish', async () => {
+        const items = await invoke('transfer_progress');
+        const done = items.filter((item) => item.state !== 'running' && /Moving/i.test(item.label));
+        return done.length ? done[done.length - 1] : null;
+      }, 60000);
+      if (outcome.state !== 'done') throw new Error('move failed: ' + outcome.error);
+      await wait('the moved key on S3', async () => {
+        const listing = await invoke('list_objects', {
+          input: { connectionId, prefix: __PREFIX__ + 'moved/' },
+        });
+        return listing.entries.some((entry) => entry.key === __PREFIX__ + 'moved/sample.py')
+          ? true
+          : null;
+      }, 30000);
+      $('[data-testid=refresh]').click();
+      await wait('the source row to leave', async () => {
+        const objects = window.__s3viewer.state.objects;
+        if (objects.loading || objects.awaitingFirstPage) return null;
+        return rowNames().includes('sample.py') ? null : true;
+      }, 20000);
+      await invoke('delete_objects', {
+        input: { connectionId, keys: [__PREFIX__ + 'moved/sample.py', __PREFIX__ + 'moved/'] },
+      });
+      $('[data-testid=refresh]').click();
+      await wait('the cleanup listing to settle', async () =>
+        (window.__s3viewer.state.objects.loading ? null : true), 20000);
+      return 'guard blocked the current folder; Move left no source';
+    });
+
     await check('transfer: progress reporting is wired', async () => {
       const items = await invoke('transfer_progress');
       if (!Array.isArray(items)) throw new Error('transfer_progress did not return a list');
-      return items.length + ' tracked transfer(s)';
+      const download = items.find((item) =>
+        item.state === 'done' && /Downloading/i.test(item.label) && item.resultPath);
+      if (!download) {
+        throw new Error('the finished download is not tracked with a destination: '
+          + JSON.stringify(items.slice(-3)));
+      }
+      return items.length + ' tracked transfer(s), last at ' + download.resultPath.split('/').pop();
+    });
+
+    await check('transfer: upload conflicts offer Skip, Replace and Cancel', async () => {
+      const key = __PREFIX__ + 's3-creds.json';
+      await invoke('save_text_object', {
+        input: { connectionId, key, content: 'ORIGINAL', contentType: 'application/json' },
+      });
+      const read = async () => {
+        const preview = await invoke('get_preview', { input: { connectionId, key } });
+        return preview.text || '';
+      };
+
+      // Uploading the fixture file collides with the object created above.
+      void window.__s3viewer.queueUploads([__IMPORT_FILE__]);
+      const modal = await wait('the conflict dialog', () => $('[data-testid=upload-conflict-skip]'), 15000);
+      const text = $('[data-testid=modal]').textContent;
+      if (!/already exist/i.test(text) || !/s3-creds\.json/.test(text)) {
+        throw new Error('the conflict dialog does not name the collision: ' + text.slice(0, 120));
+      }
+      $('[data-testid=upload-conflict-skip]').click();
+      await wait('the dialog to close', async () => ($('[data-testid=upload-conflict-skip]') ? null : true), 10000);
+      // Skipped files do not necessarily get a progress entry; the content is
+      // the observable that matters.
+      await sleep(800);
+      if ((await read()) !== 'ORIGINAL') throw new Error('Skip overwrote the object');
+
+      window.__s3viewerE2EUpload = 'pending';
+      void window.__s3viewer.queueUploads([__IMPORT_FILE__]).then(
+        () => { window.__s3viewerE2EUpload = 'resolved'; },
+        (error) => { window.__s3viewerE2EUpload = 'rejected: ' + (error.message || error); },
+      );
+      await wait('the second conflict', () => $('[data-testid=upload-conflict-replace]'), 15000);
+      $('[data-testid=upload-conflict-replace]').click();
+      await wait('the replacement to land', async () => {
+        const body = await read();
+        return body.includes('import-fixture-bucket') ? true : null;
+      }, 30000).catch(async (error) => {
+        const items = await invoke('transfer_progress');
+        const listing = await invoke('list_objects', {
+          input: { connectionId, prefix: __PREFIX__ },
+        });
+        let body = 'unreadable';
+        try { body = (await read()).slice(0, 60); } catch (readError) { body = String(readError.message); }
+        throw new Error(error.message
+          + ' :: uploads=' + JSON.stringify(items.filter((item) => /Uploading|Skipped/.test(item.label)).slice(-4))
+          + ' promise=' + window.__s3viewerE2EUpload
+          + ' toasts=' + JSON.stringify($$('[data-testid^=toast-]').map((node) => node.textContent).slice(-3))
+          + ' errors=' + JSON.stringify((window.__s3viewerErrors || []).slice(-3))
+          + ' keys=' + listing.entries.map((entry) => entry.key).filter((key) => key.includes('s3-creds')).join('|')
+          + ' body=' + body);
+      });
+      const replaced = await read();
+
+      void window.__s3viewer.queueUploads([__IMPORT_FILE__]);
+      await wait('the third conflict', () => $('[data-testid=upload-conflict-cancel]'), 15000);
+      $('[data-testid=upload-conflict-cancel]').click();
+      await wait('the dialog to close', async () => ($('[data-testid=upload-conflict-cancel]') ? null : true), 10000);
+      await sleep(500);
+      if ((await read()) !== replaced) throw new Error('Cancel changed the object');
+
+      await invoke('delete_objects', { input: { connectionId, keys: [key] } });
+      $('[data-testid=refresh]').click();
+      await wait('the listing after the conflict probe', async () =>
+        (window.__s3viewer.state.objects.loading ? null : true), 20000);
+      return 'Skip kept, Replace wrote, Cancel left ' + replaced.length + ' bytes';
     });
 
     await check('security: secrets are sealed on disk, never in the clear', async () => {
       const status = await invoke('e2e_config_audit');
       if (!status.sealed) throw new Error('the stored secret is not sealed');
       if (status.containsSecret) throw new Error('THE SECRET LEAKED INTO config.json');
+      // The access key id is not a secret and is stored in the clear by design.
       if (status.mode !== '600') throw new Error('config.json mode is ' + status.mode + ', expected 600');
       if (status.dirMode !== '700') throw new Error('the config dir mode is ' + status.dirMode + ', expected 700');
       return 'sealed, file ' + status.mode + ', dir ' + status.dirMode;
@@ -1143,19 +1788,200 @@ const SCENARIO: &str = r#"(async () => {
       if (testButtons.length !== 1) {
         throw new Error('expected exactly one Test connection button, found ' + testButtons.length);
       }
-      return 'one button, no boto3 references';
+
+      // A button count is not a test. Fill the form and press it.
+      setInput('[data-testid=conn-name]', 'probe probe');
+      setInput('[data-testid=conn-endpoint]', __ENDPOINT__);
+      setInput('[data-testid=conn-region]', __REGION__);
+      setInput('[data-testid=conn-access-key]', __ACCESS__);
+      setInput('[data-testid=conn-bucket]', __BUCKET__);
+      setInput('[data-testid=conn-secret-key]', __SECRET__);
+      $('[data-testid=conn-test]').click();
+      const output = await wait('the probe result', () => $('[data-testid=probe-output]'), 45000)
+        .catch((error) => {
+          throw new Error(error.message + ' :: error='
+            + (($('[data-testid=probe-error]') || {}).textContent || 'none'));
+        });
+      const rights = Array.from(output.querySelectorAll('.text-ok')).map((chip) => chip.textContent.trim());
+      for (const wanted of ['list', 'read', 'write', 'delete']) {
+        if (!rights.some((label) => label.includes(wanted))) {
+          throw new Error('the probe did not grant ' + wanted + ': ' + rights.join(', '));
+        }
+      }
+
+      // A wrong secret must produce a readable denial, not a stuck spinner or
+      // "[object Object]".
+      setInput('[data-testid=conn-secret-key]', 'definitely-not-the-secret');
+      $('[data-testid=conn-test]').click();
+      const failure = await wait('the denied probe', () => $('[data-testid=probe-error]'), 45000);
+      const message = failure.textContent.trim();
+      if (!message || /\[object Object\]/.test(message)) {
+        throw new Error('unreadable probe failure: ' + message.slice(0, 120));
+      }
+      if ($('[data-testid=probe-output]')) throw new Error('the old probe result survived a failure');
+      await closeModal();
+      return 'four rights, then a readable denial (' + message.replace(/\s+/g, ' ').slice(0, 60) + ')';
     });
 
     await check('connection: copying the snippet confirms on the button', async () => {
+      // Open a fresh dialog: depending on the probe dialog left open by the
+      // previous check made one failure poison every later check.
+      $('#new-connection').click();
+      await wait('the connection dialog', () => $('[data-testid=copy-snippet]'), 10000);
       const copy = $('[data-testid=copy-snippet]');
-      if (!copy) throw new Error('the copy button is missing');
       copy.click();
       const confirmed = await wait('the button to confirm', async () => {
         const button = $('[data-testid=copy-snippet]');
         return button && /copied/i.test(button.textContent) ? button.textContent.trim() : null;
-      }, 8000);
+      }, 8000).catch(async (error) => {
+        const toasts = $$('[data-testid^=toast-]').map((node) => node.textContent).join(' | ');
+        throw new Error(error.message + ' :: toasts=' + toasts);
+      });
       await closeModal();
       return 'button said "' + confirmed + '"';
+    });
+
+    await check('connection: the card menu duplicates and removes without opening', async () => {
+      const connections = window.__s3viewer.state.connections;
+      const original = connections.activeId;
+      $('[data-testid=connection-menu-' + original + ']').click();
+      let menu = await wait('the connection menu', () => $('[data-testid=context-menu]'), 8000);
+      const labels = Array.from(menu.querySelectorAll('button')).map((b) => b.textContent.trim());
+      for (const wanted of ['Open', 'Edit connection', 'Duplicate', 'Copy bucket URI', 'Remove connection']) {
+        if (!labels.some((label) => label.startsWith(wanted))) {
+          throw new Error('the connection menu is missing "' + wanted + '": ' + labels.join(' | '));
+        }
+      }
+      menuClick(menu, 'Duplicate');
+      const copy = await wait('the duplicated card', () =>
+        connections.all.find((connection) => connection.name.endsWith('(copy)')), 10000);
+      if (connections.activeId !== original) throw new Error('Duplicate activated the copy');
+
+      // Right-click opens the menu; it must not open the connection.
+      const card = await wait('the copied card', () =>
+        $('[data-testid=connection-' + copy.id + ']'), 8000);
+      const box = card.getBoundingClientRect();
+      card.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: Math.round(box.left + 20),
+        clientY: Math.round(box.top + 20),
+      }));
+      menu = await wait('the copy menu', () => $('[data-testid=context-menu]'), 8000);
+      if (connections.activeId !== original) throw new Error('right-click activated the copy');
+
+      menuClick(menu, 'Remove connection');
+      const confirm = await wait('the removal confirmation', () => $('[data-testid=confirm-ok]'), 8000);
+      const wording = $('[data-testid=confirm-message]').textContent;
+      if (!/unaffected/i.test(wording)) throw new Error('removal wording lost the bucket note: ' + wording);
+      confirm.click();
+      await wait('the copy card to disappear', async () =>
+        (connections.all.some((connection) => connection.id === copy.id) ? null : true), 10000);
+      if (connections.activeId !== original) throw new Error('removing the copy changed the active connection');
+      return 'menu items, duplicate, right-click inert, removed';
+    });
+
+    await check('dialogs: focus is trapped, the shell is inert and shortcuts stay out', async () => {
+      // A real click focuses the trigger first; JS .click() alone does not, and
+      // then the focus-restore assertion would test the harness, not the app.
+      const trigger = $('[data-testid=open-settings]');
+      trigger.focus();
+      trigger.click();
+      const modal = await wait('the settings dialog', () => $('[data-testid=modal]'), 10000);
+      const title = $('[data-testid=modal-title]').textContent.trim();
+      if (title !== 'Settings') throw new Error('unexpected dialog: ' + title);
+      const shell = $('[data-app-shell]');
+      if (!shell || !shell.hasAttribute('inert')) {
+        throw new Error('the shell behind the modal is not inert');
+      }
+      if ($('[data-testid=modal-root]').parentElement !== document.body) {
+        throw new Error('the modal is rendered inside the inert shell');
+      }
+      const limit = await wait('the autofocused field', () => $('[data-testid=settings-preview-limit]'), 5000);
+      if (document.activeElement !== limit) {
+        throw new Error('the dialog did not focus its first control');
+      }
+
+      // A global shortcut must not stack another dialog or act on the shell.
+      press(document.activeElement, 'n', { metaKey: true });
+      await frame();
+      const open = $$('[data-testid=modal]').filter((node) => node.offsetParent !== null);
+      if (open.length !== 1) throw new Error('⌘N opened a dialog behind the modal: ' + open.length);
+      if ($('[data-testid=modal-title]').textContent.trim() !== title) {
+        throw new Error('⌘N replaced the dialog');
+      }
+      press(document.activeElement, 'r', { metaKey: true });
+      await frame();
+      if ($$('[data-testid=modal]').filter((node) => node.offsetParent !== null).length !== 1) {
+        throw new Error('⌘R acted behind the modal');
+      }
+
+      // Tab from the last control wraps inside the dialog; Shift+Tab wraps back.
+      $('[data-testid=settings-save]').focus();
+      press(document.activeElement, 'Tab');
+      await frame();
+      if (!modal.contains(document.activeElement)) {
+        throw new Error('Tab escaped the dialog to ' + document.activeElement.tagName);
+      }
+      $('[data-testid=modal-close]').focus();
+      press(document.activeElement, 'Tab', { shiftKey: true });
+      await frame();
+      if (!modal.contains(document.activeElement)) {
+        throw new Error('Shift+Tab escaped the dialog');
+      }
+
+      $('[data-testid=modal-close]').click();
+      await wait('the dialog to close', async () => ($('[data-testid=modal]') ? null : true), 8000);
+      if (shell.hasAttribute('inert')) throw new Error('the shell stayed inert after closing');
+      await wait('focus to return', async () =>
+        (document.activeElement === $('[data-testid=open-settings]') ? true : null), 5000);
+      return 'inert shell, focus trap both ways, ⌘N/⌘R blocked, focus restored';
+    });
+
+    await check('ui: toasts are announced and keep line breaks', async () => {
+      window.__s3viewer.toasts.error('first line\nsecond line', 'E2E toast');
+      const toast = await wait('the error toast', () => $('[data-testid=toast-error]'), 8000);
+      if (toast.getAttribute('role') !== 'alert') {
+        throw new Error('an error toast is not role=alert: ' + toast.getAttribute('role'));
+      }
+      const stack = $('[data-testid=toasts]');
+      if (!stack || stack.getAttribute('aria-live') !== 'polite') {
+        throw new Error('the toast stack has no aria-live region');
+      }
+      const message = Array.from(toast.querySelectorAll('p'))
+        .find((node) => node.textContent.includes('first line'));
+      if (!message || !/first line\nsecond line/.test(message.textContent)) {
+        throw new Error('the newline was lost: ' + (message || {}).textContent);
+      }
+      if (getComputedStyle(message).whiteSpace !== 'pre-line') {
+        throw new Error('the message does not preserve line breaks visually');
+      }
+      return 'role=alert, aria-live=polite, pre-line';
+    });
+
+    await check('settings: the theme follows the system and persists', async () => {
+      const setTheme = async (value) => {
+        $('[data-testid=open-settings]').click();
+        const select = await wait('the settings dialog', () => $('[data-testid=settings-theme]'), 10000);
+        select.value = value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        $('[data-testid=settings-save]').click();
+        await wait('the dialog to close', async () => ($('[data-testid=modal]') ? null : true), 10000);
+      };
+      await setTheme('system');
+      const expected = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      if (document.documentElement.dataset.theme !== expected) {
+        throw new Error('system theme resolved to ' + document.documentElement.dataset.theme
+          + ', expected ' + expected);
+      }
+      if (localStorage.getItem('s3viewer.theme') !== 'system') {
+        throw new Error('the pre-paint theme mirror was not updated: ' + localStorage.getItem('s3viewer.theme'));
+      }
+      await setTheme('light');
+      if (document.documentElement.dataset.theme !== 'light') throw new Error('light did not apply');
+      await setTheme('dark');
+      if (document.documentElement.dataset.theme !== 'dark') throw new Error('dark did not apply');
+      return 'system → ' + expected + ', light and dark applied, mirrored for pre-paint';
     });
 
     await check('settings: downloads can ask for a destination every time', async () => {
@@ -1185,14 +2011,6 @@ const SCENARIO: &str = r#"(async () => {
       return 'toggled and persisted';
     });
 
-    await check('transfers: a finished download hides itself', async () => {
-      const panel = $('[data-testid=transfers]');
-      if (!panel) return 'no transfer panel left open';
-      await wait('the finished transfer to disappear', async () =>
-        ($('[data-testid=transfer-done]') ? null : true), 20000);
-      return 'cleared without pressing Clear';
-    });
-
     await check('settings: the dialog saves a new preview limit', async () => {
       $('[data-testid=open-settings]').click();
       const select = await wait('the settings dialog', () => $('[data-testid=settings-preview-limit]'), 15000);
@@ -1219,6 +2037,70 @@ const SCENARIO: &str = r#"(async () => {
       return 'saved and restored ' + chosen + ' B';
     });
 
+    await check('settings: the list limit truncates the listing and says so', async () => {
+      // A failure below must not leave the 3-file limit in place for every
+      // later check, which is exactly what happened once.
+      try {
+        $('[data-testid=open-settings]').click();
+        await wait('the settings dialog', () => $('[data-testid=settings-list-limit]'), 10000);
+        setInput('[data-testid=settings-list-limit]', '3');
+        $('[data-testid=settings-save]').click();
+        await wait('the dialog to close', async () => ($('[data-testid=modal]') ? null : true), 10000);
+
+        $('[data-testid=refresh]').click();
+        const fileCount = () =>
+          window.__s3viewer.state.objects.visibleEntries.filter((entry) => !entry.isFolder).length;
+        await wait('the truncated listing', async () => {
+          const objects = window.__s3viewer.state.objects;
+          if (objects.loading || objects.awaitingFirstPage) return null;
+          return objects.truncated && fileCount() === 3 ? true : null;
+        }, 30000).catch((error) => {
+          throw new Error(error.message + ' :: rows=' + rowNames().join(',')
+            + ' files=' + fileCount()
+            + ' truncated=' + window.__s3viewer.state.objects.truncated);
+        });
+        const banner = $('[data-testid=truncation-banner]');
+        if (!banner) throw new Error('no truncation banner');
+        if (!/truncated at 3/i.test(banner.textContent)) {
+          throw new Error('the banner does not name the limit: ' + banner.textContent);
+        }
+        if (!/truncated/.test($('[data-testid=folder-status]').textContent)) {
+          throw new Error('the status line hides the truncation');
+        }
+
+        // Retry keeps the same limit and the same three files.
+        $('[data-testid=truncation-retry]').click();
+        await wait('the retried listing', async () => {
+          const objects = window.__s3viewer.state.objects;
+          return !objects.loading && !objects.awaitingFirstPage && fileCount() === 3 ? true : null;
+        }, 30000);
+
+        $('[data-testid=truncation-settings]').click();
+        await wait('the settings dialog from the banner', () => $('[data-testid=settings-list-limit]'), 10000);
+        setInput('[data-testid=settings-list-limit]', '20000');
+        $('[data-testid=settings-save]').click();
+        await wait('the dialog to close', async () => ($('[data-testid=modal]') ? null : true), 10000);
+        $('[data-testid=refresh]').click();
+        await wait('the restored listing', async () => {
+          const objects = window.__s3viewer.state.objects;
+          return !objects.loading && !objects.truncated && fileCount() >= 12 ? true : null;
+        }, 30000);
+        if ($('[data-testid=truncation-banner]')) throw new Error('the banner survived the restore');
+      } finally {
+        const settings = await invoke('get_settings');
+        if (settings.listPageLimit !== 20000) {
+          settings.listPageLimit = 20000;
+          await invoke('update_settings', { settings });
+        }
+        if ($('[data-testid=modal]')) {
+          await closeModal().catch(() => {});
+        }
+        $('[data-testid=refresh]')?.click();
+        await sleep(500);
+      }
+      return '3 files + banner, Retry stable, restored 17';
+    });
+
     await check('settings: the preview limit is exposed and configurable', async () => {
       const settings = await invoke('get_settings');
       if (typeof settings.previewMaxBytes !== 'number' || settings.previewMaxBytes <= 0) {
@@ -1226,7 +2108,84 @@ const SCENARIO: &str = r#"(async () => {
       }
       const security = await invoke('security_status');
       if (!security.configPath) throw new Error('no config path reported');
-      return 'limit ' + settings.previewMaxBytes + ' B';
+      // The run must stay in its throwaway directory and must never unlock the
+      // developer's login keychain.
+      if (__CONFIG_DIR__ && !security.configPath.startsWith(__CONFIG_DIR__)) {
+        throw new Error('the run is using ' + security.configPath + ', not the isolated config dir');
+      }
+      if (security.masterKeyInKeychain) {
+        throw new Error('the run read the master key from the login keychain');
+      }
+      return 'limit ' + settings.previewMaxBytes + ' B, isolated config';
+    });
+
+    await check('import: the dialog imports, opens and removes a connection', async () => {
+      if ($('[data-testid=modal]')) await closeModal();
+      $('[data-testid=import-connections]').click();
+      const area = await wait('the import dialog', () => $('[data-testid=import-textarea]'), 10000);
+      if (!$('[data-testid=import-confirm]').disabled) {
+        throw new Error('Import is enabled with nothing pasted');
+      }
+      const payload = {};
+      payload['E2E imported'] = {
+        access_key: __ACCESS__,
+        secret_key: __SECRET__,
+        endpoint: __ENDPOINT__,
+        region: __REGION__,
+        bucket: __BUCKET__,
+        prefix: __PREFIX__,
+      };
+      area.value = JSON.stringify(payload, null, 2);
+      fire(area, 'input');
+      await wait('the parsed preview', () => {
+        const preview = $('[data-testid=import-preview]');
+        return preview && /E2E imported/.test(preview.textContent) ? true : null;
+      }, 10000);
+      const confirm = $('[data-testid=import-confirm]');
+      if (confirm.disabled) throw new Error('Import stayed disabled after a valid paste');
+      confirm.click();
+      await wait('the dialog to close', async () =>
+        ($('[data-testid=import-textarea]') ? null : true), 15000);
+      await wait('the imported session', async () => {
+        const crumb = $('[data-testid=crumb-root]');
+        return crumb && crumb.textContent.includes('E2E imported') ? true : null;
+      }, 30000).catch((error) => {
+        throw new Error(error.message + ' :: cards=['
+          + $$('#connection-list button[data-testid^="connection-"]').map((c) => c.textContent.trim()).join(' | ') + ']');
+      });
+      const imported = window.__s3viewer.state.connections.all.find((c) => c.name === 'E2E imported');
+      if (!imported) throw new Error('the imported connection is not in the sidebar');
+      const menuButton = $('[data-testid=connection-menu-' + imported.id + ']');
+      if (!menuButton) throw new Error('the imported card has no menu');
+      menuButton.click();
+      const menu = await wait('the connection menu', () => $('[data-testid=context-menu]'), 8000);
+      menuClick(menu, 'Remove connection');
+      const confirmRemove = await wait('the removal confirmation', () => $('[data-testid=confirm-ok]'), 8000);
+      const wording = $('[data-testid=confirm-message]').textContent;
+      if (!/unaffected/i.test(wording)) {
+        throw new Error('the removal does not say the bucket is untouched: ' + wording);
+      }
+      confirmRemove.click();
+      await wait('the card to disappear', async () => {
+        const cards = $$('#connection-list button[data-testid^="connection-"]')
+          .filter((c) => c.textContent.includes('E2E imported'));
+        return cards.length ? null : true;
+      }, 10000);
+      const original = window.__s3viewer.state.connections.all.find((c) => c.name === connectionName);
+      const card = await wait('the original card', () =>
+        $('[data-testid=connection-' + original.id + ']'), 8000);
+      card.click();
+      await wait('the original session', async () => (rowNames().length >= 12 ? true : null), 30000)
+        .catch((error) => {
+          const state = window.__s3viewer.state;
+          throw new Error(error.message + ' :: active=' + state.connections.activeId
+            + ' prefix=' + JSON.stringify(state.objects.prefix)
+            + ' loading=' + state.objects.loading
+            + ' error=' + (state.objects.error || 'none')
+            + ' limit=' + (window.__s3viewer.state.ui.settings || {}).listPageLimit
+            + ' rows=' + rowNames().join(','));
+        });
+      return 'pasted, imported, opened, removed; original restored';
     });
   } catch (error) {
     REPORT.push({
@@ -1265,6 +2224,7 @@ mod tests {
             output: "/tmp/report.json".into(),
             download_dir: None,
             import_file: None,
+            config_dir: None,
         }
     }
 
@@ -1280,6 +2240,7 @@ mod tests {
             "__BUCKET__",
             "__PREFIX__",
             "__IMPORT_FILE__",
+            "__CONFIG_DIR__",
         ] {
             assert!(
                 !script.contains(placeholder),

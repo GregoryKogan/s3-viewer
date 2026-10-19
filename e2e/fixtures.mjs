@@ -220,8 +220,14 @@ def hello(name):
 };
 const SMALL_TEXT_FILE_NAMES = Object.keys(SMALL_TEXT_FILES);
 
-/** Write every fixture. Returns the directory. */
-export function writeFixtures({ bigBytes = 80 * 1024 * 1024 } = {}) {
+/**
+ * Write every fixture. Returns the directory.
+ *
+ * `bigBytes` only has to exceed the harness's deliberately tiny preview limit
+ * (1 MiB, see `E2E_PREVIEW_LIMIT`). It used to be 80 MB, which uploaded and
+ * deleted tens of megabytes on every run for the same assertion.
+ */
+export function writeFixtures({ bigBytes = 3 * 1024 * 1024 } = {}) {
   fs.rmSync(OUT, { recursive: true, force: true });
   fs.mkdirSync(OUT, { recursive: true });
 

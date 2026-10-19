@@ -125,6 +125,12 @@ pub fn maybe_run(app: &AppHandle, core: &Arc<AppCore>, plan: &TestPlan, slot: Ar
 async fn await_report(app: &AppHandle, slot: &Arc<ReportSlot>) -> AppResult<serde_json::Value> {
     let started = std::time::Instant::now();
     let deadline = started + SCENARIO_TIMEOUT;
+    // The report is polled every 400 ms; logging every poll wrote the same line
+    // up to a dozen times per check and filled the trace with duplicates. Log
+    // when the active check changes, plus a slow heartbeat every 30 s so a long
+    // check still looks alive.
+    let mut last_active: Option<String> = None;
+    let mut last_log = started;
     loop {
         let latest = slot.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if let Some(report) = &latest {
@@ -136,19 +142,27 @@ async fn await_report(app: &AppHandle, slot: &Arc<ReportSlot>) -> AppResult<serd
                 .unwrap_or(false)
             {
                 if let Some(active) = report.get("active").and_then(|v| v.as_str()) {
-                    eprintln!("s3viewer e2e: running — {active}");
-                    if let Ok(path) = std::env::var("S3VIEWER_E2E_TRACE") {
-                        use std::io::Write;
-                        if let Ok(mut file) = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(path)
-                        {
-                            // Elapsed time, not a wall-clock stamp: the point of
-                            // the line is how far into the run a check got.
-                            let _ =
-                                writeln!(file, "{:.0}s {active}", started.elapsed().as_secs_f64());
+                    let changed = last_active.as_deref() != Some(active);
+                    if changed || last_log.elapsed() >= Duration::from_secs(30) {
+                        eprintln!("s3viewer e2e: running — {active}");
+                        if let Ok(path) = std::env::var("S3VIEWER_E2E_TRACE") {
+                            use std::io::Write;
+                            if let Ok(mut file) = std::fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(path)
+                            {
+                                // Elapsed time, not a wall-clock stamp: the point
+                                // of the line is how far into the run a check got.
+                                let _ = writeln!(
+                                    file,
+                                    "{:.0}s {active}",
+                                    started.elapsed().as_secs_f64()
+                                );
+                            }
                         }
+                        last_active = Some(active.to_string());
+                        last_log = std::time::Instant::now();
                     }
                 }
             }
@@ -231,7 +245,7 @@ pub async fn e2e_setup(core: tauri::State<'_, Arc<AppCore>>) -> Result<String, S
 
     let store = core.client(&connection.id).map_err(|e| e.to_string())?;
     let detect = connection.security.detect_permissions;
-    let caps = crate::objects::probe_capabilities(&store, detect).await;
+    let caps = crate::objects::probe_capabilities(&store, &plan.prefix, detect, false).await;
     core.set_capabilities(&connection.id, caps)
         .map_err(|e| e.to_string())?;
 
@@ -263,22 +277,19 @@ pub async fn e2e_transfer_check(
         .size
         .unwrap_or(0);
 
-    let written = {
-        use tokio::io::AsyncWriteExt;
-        let file = tokio::fs::File::create(&dest)
-            .await
-            .map_err(|e| e.to_string())?;
-        let mut writer = tokio::io::BufWriter::new(file);
-        let written = store
-            .get_to(&key, &mut writer)
-            .await
-            .map_err(|e| e.to_string())?;
-        writer.flush().await.map_err(|e| e.to_string())?;
-        written
-    };
+    // Compare the bytes, not the sizes: a transfer that dropped or corrupted a
+    // block but kept the length would otherwise pass.
+    let remote = store
+        .get_bytes(&key, None)
+        .await
+        .map_err(|e| e.to_string())?;
+    tokio::fs::write(&dest, &remote.body)
+        .await
+        .map_err(|e| e.to_string())?;
 
-    let local_size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
-    let match_ = written == remote_size as u64 && local_size == remote_size as u64;
+    let local = std::fs::read(&dest).map_err(|e| e.to_string())?;
+    let local_size = local.len() as u64;
+    let match_ = local == remote.body && local_size == remote_size as u64;
     let _ = std::fs::remove_file(&dest);
 
     Ok(serde_json::json!({
@@ -320,6 +331,57 @@ pub async fn e2e_roundtrip_check(
         "uploaded": true,
         "deleted": !still_there,
         "size": body.len(),
+    }))
+}
+
+/// Reproduces the recursive-delete key set with the real store.
+///
+/// Creates a folder marker and a child marker, expands the folder the same way
+/// the delete command does, calls `delete_many`, and reports what S3 still has.
+#[tauri::command]
+pub async fn e2e_delete_many_check(
+    core: tauri::State<'_, Arc<AppCore>>,
+) -> Result<serde_json::Value, String> {
+    let plan = plan().map_err(|e| e.to_string())?;
+    let id = connection_with_name(&core).map_err(|e| e.to_string())?;
+    let store = core.client(&id).map_err(|e| e.to_string())?;
+    let parent = format!("{}delete-probe/parent/", plan.prefix);
+    let child = format!("{}delete-probe/parent/nested/", plan.prefix);
+    store
+        .put_bytes(&parent, Vec::new(), Some("application/x-directory"))
+        .await
+        .map_err(|e| e.to_string())?;
+    store
+        .put_bytes(&child, Vec::new(), Some("application/x-directory"))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut keys = vec![parent.clone()];
+    keys.extend(
+        crate::objects::list_all_keys(&store, &parent)
+            .await
+            .map_err(|e| e.to_string())?,
+    );
+    keys.sort();
+    keys.dedup();
+    store.delete_many(&keys).await.map_err(|e| e.to_string())?;
+
+    let remaining = crate::objects::list_all_keys(&store, &parent)
+        .await
+        .map_err(|e| e.to_string())?;
+    let parent_exists = store.stat(&parent).await.is_ok();
+    let child_exists = store.stat(&child).await.is_ok();
+    for key in &remaining {
+        let _ = store.delete_object(key).await;
+    }
+    let _ = store.delete_object(&parent).await;
+    let _ = store.delete_object(&child).await;
+
+    Ok(serde_json::json!({
+        "keys": keys,
+        "remaining": remaining,
+        "parentExists": parent_exists,
+        "childExists": child_exists,
     }))
 }
 

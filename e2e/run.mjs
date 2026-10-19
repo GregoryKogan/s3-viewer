@@ -33,8 +33,35 @@ const timeoutSeconds = 720;
 
 let s3 = null;
 let workDir = null;
+let child = null;
+let interrupted = false;
 
 const log = (message) => process.stdout.write(`${message}\n`);
+
+/**
+ * Ctrl-C must not leave the app running behind a lock. The app is killed first,
+ * then the fixture prefix is cleared; the lock goes last so a second run cannot
+ * start while this one is still deleting.
+ */
+async function stop(signal) {
+  if (interrupted) return;
+  interrupted = true;
+  log(`\n▶ ${signal}: stopping the app and clearing ${E2E_PREFIX}`);
+  if (child && child.exitCode === null) {
+    child.kill("SIGTERM");
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+  try {
+    if (s3) log(`  removed ${await s3.removePrefix(E2E_PREFIX)} object(s)`);
+  } catch (error) {
+    log(`  cleanup failed: ${error.message}`);
+  }
+  if (workDir) fs.rmSync(workDir, { recursive: true, force: true });
+  releaseLock();
+  process.exit(130);
+}
+process.on("SIGINT", () => void stop("interrupted"));
+process.on("SIGTERM", () => void stop("terminated"));
 
 function acquireLock() {
   try {
@@ -216,13 +243,25 @@ async function main() {
   if (keep) log(`\n--keep: config and downloads kept in ${workDir}`);
   else fs.rmSync(workDir, { recursive: true, force: true });
 
-  if (!report || !report.ok) process.exitCode = 1;
+  // The report is the app's claim; the exit code and the tally are what the
+  // runner can verify itself. A report that is final, complete and clean is
+  // still not a pass when the app died on the way out.
+  const checks = Array.isArray(report?.checks) ? report.checks : [];
+  const failed = checks.filter((entry) => !entry.ok);
+  const complete = report?.final === true && checks.length > 0;
+  if (!report || !report.ok || !complete || failed.length || exitCode !== 0) {
+    if (report?.ok && exitCode !== 0) {
+      log(`\nFAIL: the report claims success but the app exited with code ${exitCode}`);
+    }
+    if (report?.ok && !complete) log("\nFAIL: the app wrote no complete report");
+    process.exitCode = 1;
+  }
 }
 
 /** Launch the app and wait for it to exit on its own. */
 function launch({ binary, env }) {
   return new Promise((resolve) => {
-    const child = spawn(binary, [], {
+    child = spawn(binary, [], {
       cwd: root,
       env: { ...process.env, ...env },
       stdio: ["ignore", "pipe", "pipe"],
@@ -238,6 +277,7 @@ function launch({ binary, env }) {
     child.on("exit", (code, signal) => {
       clearTimeout(timer);
       if (signal) process.stdout.write(`  [app] killed by ${signal}\n`);
+      child = null;
       resolve(code ?? 1);
     });
   });
@@ -279,16 +319,18 @@ function contentTypeFor(name) {
   return "application/octet-stream";
 }
 
+// Cleanup (including the S3 prefix) must finish before the lock is released:
+// otherwise a second run can seed the same prefix while this one is deleting it.
 main()
-  .finally(() => releaseLock())
   .catch(async (error) => {
-  log(`\nFATAL: ${error.stack ?? error.message}`);
-  process.exitCode = 1;
-  if (s3) {
-    try {
-      log(`cleanup after failure: removed ${await s3.removePrefix(E2E_PREFIX)} object(s)`);
-    } catch (cleanupError) {
-      log(`cleanup also failed: ${cleanupError.message}`);
+    log(`\nFATAL: ${error.stack ?? error.message}`);
+    process.exitCode = 1;
+    if (s3) {
+      try {
+        log(`cleanup after failure: removed ${await s3.removePrefix(E2E_PREFIX)} object(s)`);
+      } catch (cleanupError) {
+        log(`cleanup also failed: ${cleanupError.message}`);
+      }
     }
-  }
-});
+  })
+  .finally(() => releaseLock());

@@ -79,6 +79,7 @@ pub fn run() {
             e2e::desktop::e2e_setup,
             e2e::desktop::e2e_transfer_check,
             e2e::desktop::e2e_roundtrip_check,
+            e2e::desktop::e2e_delete_many_check,
             e2e::desktop::e2e_config_audit,
             e2e::desktop::e2e_readonly_check,
             e2e::desktop::e2e_report,
