@@ -97,6 +97,14 @@ const activeDescendant = computed(() => {
   return drawn ? `row-${drawn.index}` : undefined;
 });
 
+/**
+ * Whether a drawn row carries the cursor. Used by CSS to decide between "the
+ * cursor row is the focus indicator" and "there is no cursor, draw a ring".
+ */
+const cursorVisible = computed(
+  () => Boolean(objects.focusedKey) && rows.value.some((entry) => entry.key === objects.focusedKey),
+);
+
 const selectedVisible = computed(() => {
   const all = rows.value.length > 0 && rows.value.every((entry) => objects.selected.has(entry.key));
   const some = !all && rows.value.some((entry) => objects.selected.has(entry.key));
@@ -334,6 +342,7 @@ defineExpose({ scrollToRow, focusList, pageRows });
       :aria-multiselectable="rows.length ? true : undefined"
       :aria-label="rows.length ? 'Objects' : 'Object list'"
       :aria-activedescendant="activeDescendant"
+      :data-cursor="cursorVisible ? 'true' : undefined"
       :tabindex="0"
       @scroll="onScroll"
       @click="onBackgroundClick"

@@ -557,16 +557,6 @@ function focusMain() {
     ?.focus();
 }
 
-/** The visible Actions button opens the same menu a right-click would. */
-function openRowMenuAt(point: { x: number; y: number }) {
-  const key = objects.focusedKey;
-  const entry = key ? objects.visibleEntries.find((item) => item.key === key) : null;
-  if (!entry) return;
-  if (!objects.selected.has(entry.key)) objects.selectOnly(entry.key);
-  objects.focus(entry.key, { keepAnchor: true });
-  rowMenu(entry, { clientX: point.x, clientY: point.y });
-}
-
 /**
  * Open the object menu without a pointer.
  *
@@ -1205,7 +1195,7 @@ function onDrop(paths: string[]) {
       </div>
 
       <main class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <AppHeader @find="onFind" @find-clear="onFindClear" @rowmenu="openRowMenuAt" />
+        <AppHeader @find="onFind" @find-clear="onFindClear" />
 
         <div class="flex min-h-0 flex-1">
           <div

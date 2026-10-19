@@ -288,7 +288,7 @@
 
 /* With no cursor row there is nothing else to show focus with (a fresh folder,
    a cleared cursor), so the list itself draws a quiet inset ring. */
-#object-list:focus-visible:not(:has(.object-row[data-focused])) {
+#object-list:focus-visible:not([data-cursor]) {
   outline: 2px solid var(--c-accent);
   outline-offset: -2px;
 }

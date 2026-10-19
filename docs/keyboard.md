@@ -75,7 +75,7 @@ the resizer, in the PDF viewer, on a native media element, or with `⌘`, `⌥` 
 | Open / preview | `Enter` |
 | Toggle the cursor row in the selection | `Space` |
 | Clear the selection | `Escape` |
-| Open the row menu | the **Actions** button in the toolbar, `⇧F10`, or the `ContextMenu` key |
+| Open the row menu | `⇧F10`, the `ContextMenu` key, or right-click |
 
 ### Object list
 
@@ -109,10 +109,9 @@ it. `Escape` clears the filter and returns to the list.
 label, `Enter`/`Space` run the item, `Escape` or `Tab` close. Closing restores
 focus to whatever opened the menu.
 
-The row menu has a visible trigger: the **Actions** button at the right end of
-the toolbar, shown whenever the cursor is on a row. It opens the same menu a
-right-click does. This is the reliable path on Apple keyboards, where `F10` is a
-media key and there is no `ContextMenu` key; `⇧F10` stays for other keyboards.
+Right-click and `⇧F10`/`ContextMenu` open the same row menu. On Apple
+keyboards `F10` is a media key and there is no `ContextMenu` key, so the pointer
+(right-click) is the equivalent entry point there.
 
 ### Dialogs
 
@@ -178,8 +177,8 @@ These actions move focus deliberately, because their trigger disappears:
 `src-tauri/src/e2e/mod.rs` drives the real window. The keyboard checks cover:
 type-ahead, arrows/Page/Home/End with and without Shift, `⌘A` with a surviving
 cursor, Space and `⌘`-click, cursor-only `⌘D`/`⌘⇧C`, the filter handoff (`↓`,
-`Enter`, `Escape`), the hidden-cursor cases, the Actions button and `⇧F10`
-menus (row and connection), column transitions in both directions, the focus
+`Enter`, `Escape`), the hidden-cursor cases, `⇧F10` menus (row and
+connection), column transitions in both directions, the focus
 rings, address editing (error alignment, draft sync, focus after close) and the
 sidebar's card navigation. `docs/e2e-gui-testing.md` explains how
 to run the suite.

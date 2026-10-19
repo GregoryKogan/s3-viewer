@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick } from "vue";
-import { Copy, Download, Ellipsis, FilePlus, FolderPlus, MoveRight, Trash2, Upload, X } from "@lucide/vue";
+import { Copy, Download, FilePlus, FolderPlus, MoveRight, Trash2, Upload, X } from "@lucide/vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
 import { humanSize } from "@/lib/format";
 import { IS_MAC, shortcutLabel } from "@/lib/keyboard";
 import { useObjectActions } from "@/composables/useObjectActions";
-
-const emit = defineEmits<{ rowmenu: [point: { x: number; y: number }] }>();
 
 const objects = useObjectsStore();
 const connections = useConnectionsStore();
@@ -22,18 +20,6 @@ const fileSelectionCount = computed(
 const canWrite = computed(() => connections.canWriteActive && Boolean(connections.active));
 /** macOS deletes with ⌘⌫; Linux deletes with the forward-delete key. */
 const deleteShortcut = IS_MAC ? shortcutLabel("Backspace") : "Del";
-
-/**
- * The visible equivalent of a right-click on the cursor row. Shift+F10 exists,
- * but F10 is a media key on Apple keyboards and the Menu key does not exist
- * there, so a button is the reliable way in for a pointer-free user.
- */
-function openRowActions(event: MouseEvent) {
-  const target = event.currentTarget;
-  if (!(target instanceof HTMLElement)) return;
-  const rect = target.getBoundingClientRect();
-  emit("rowmenu", { x: Math.round(rect.left), y: Math.round(rect.bottom + 4) });
-}
 
 /** The Clear button unmounts with the selection; keep the keyboard on the list. */
 async function clearSelection() {
@@ -157,15 +143,6 @@ const status = computed(() => {
     </template>
 
     <span class="flex-1" />
-    <AppButton
-      v-if="objects.focusedKey"
-      :icon="Ellipsis"
-      title="Actions for the current row (Shift+F10)"
-      aria-label="Actions for the current row"
-      aria-haspopup="menu"
-      data-testid="row-actions"
-      @click="openRowActions"
-    />
     <span class="tabular text-meta text-subtle" data-testid="folder-status">{{ status }}</span>
   </div>
 </template>
