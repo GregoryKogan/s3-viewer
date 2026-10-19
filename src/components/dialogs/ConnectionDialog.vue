@@ -65,7 +65,7 @@ const form = ref({
   addressingStyle: (props.connection?.addressingStyle ?? "virtual") as AddressingStyle,
   signatureVersion: (props.connection?.signatureVersion ?? "s3v4") as SignatureVersion,
   requestChecksumCalculation: (props.connection?.requestChecksumCalculation ??
-    "whenSupported") as ChecksumCalculation,
+    "whenRequired") as ChecksumCalculation,
   responseChecksumValidation: (props.connection?.responseChecksumValidation ??
     "whenSupported") as ChecksumValidation,
   readOnlyMode: props.connection?.security.readOnlyMode ?? false,
@@ -593,11 +593,11 @@ async function copySnippet() {
 
             <AppField
               label="Checksums on upload"
-              hint="Only change this if the service rejects checksum headers."
+              hint="Only change this if the service requires checksum headers."
             >
               <select v-model="form.requestChecksumCalculation" :class="selectClass">
-                <option value="whenSupported">When the service supports it</option>
                 <option value="whenRequired">Only when required</option>
+                <option value="whenSupported">When the service supports it</option>
               </select>
             </AppField>
 
@@ -613,8 +613,8 @@ async function copySnippet() {
           </div>
           <p class="mt-2 flex items-start gap-1.5 text-meta leading-relaxed text-subtle">
             <AlertTriangle class="mt-0.5 size-3 shrink-0" />
-            Some S3-compatible services reject the checksum headers the client adds. Switching both
-            to “only when required” is the documented workaround.
+            Some S3-compatible services reject the checksum headers the client adds. Uploads
+            already default to “only when required”; if downloads fail, switch that setting too.
           </p>
         </fieldset>
 

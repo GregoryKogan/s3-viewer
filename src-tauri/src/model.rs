@@ -63,17 +63,20 @@ fn default_auto_probe() -> bool {
 
 /// botocore: `Config(request_checksum_calculation=...)`.
 ///
-/// Some S3-compatible deployments reject or mishandle the checksum headers newer
-/// AWS SDKs and botocore add by default; switching this to `whenRequired` is the
-/// documented workaround.
+/// The default is `whenRequired`, not botocore's `whenSupported`. The Rust SDK
+/// implements "when supported" for a streamed file body as a trailing checksum
+/// signed with `STREAMING-UNSIGNED-PAYLOAD-TRAILER`, and several S3-compatible
+/// endpoints reject that with `XAmzContentSHA256Mismatch` before writing the
+/// object. With `whenRequired` those uploads work and are still protected by
+/// TLS and the SigV4 payload signature. A connection can opt back in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum ChecksumCalculation {
-    /// Add a checksum whenever the operation supports one (the AWS default).
-    #[default]
-    WhenSupported,
     /// Add a checksum only when the operation requires one.
+    #[default]
     WhenRequired,
+    /// Add a checksum whenever the operation supports one (the AWS default).
+    WhenSupported,
 }
 
 /// botocore: `Config(response_checksum_validation=...)`.
@@ -325,5 +328,24 @@ pub fn describe_error(err: &crate::error::AppError) -> String {
     match err {
         crate::error::AppError::S3 { code, message, .. } => format!("{code}: {message}"),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// File uploads rely on this: "when supported" makes the Rust SDK sign a
+    /// streamed body with a trailer several S3-compatible endpoints reject.
+    #[test]
+    fn upload_checksums_default_to_when_required() {
+        assert_eq!(
+            ChecksumCalculation::default(),
+            ChecksumCalculation::WhenRequired
+        );
+        assert_eq!(
+            serde_json::to_string(&ChecksumCalculation::WhenRequired).unwrap(),
+            "\"whenRequired\""
+        );
     }
 }

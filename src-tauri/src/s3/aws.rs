@@ -40,12 +40,6 @@ fn http_client() -> aws_smithy_runtime_api::client::http::SharedHttpClient {
 
 pub struct AwsStore {
     client: Client,
-    /// Same endpoint and credentials, but body-carrying uploads never use
-    /// "when supported" checksums. The Rust SDK implements those as a trailing
-    /// checksum with a `STREAMING-UNSIGNED-PAYLOAD-TRAILER` signature, which
-    /// several S3-compatible endpoints reject with `XAmzContentSHA256Mismatch`
-    /// before the object is written. Buffered `put_bytes` is unaffected.
-    upload_client: Client,
     bucket: String,
 }
 
@@ -102,16 +96,8 @@ impl AwsStore {
                 }
             })
             .build();
-        let upload_cfg = cfg
-            .clone()
-            .to_builder()
-            .request_checksum_calculation(
-                aws_sdk_s3::config::RequestChecksumCalculation::WhenRequired,
-            )
-            .build();
         AwsStore {
             client: Client::from_conf(cfg),
-            upload_client: Client::from_conf(upload_cfg),
             bucket: conn.bucket.clone(),
         }
     }
@@ -347,7 +333,7 @@ impl ObjectStore for AwsStore {
             .await
             .map_err(|e| AppError::msg(format!("open {}: {e}", path.display())))?;
         let mut req = self
-            .upload_client
+            .client
             .put_object()
             .bucket(&self.bucket)
             .key(key)
