@@ -119,7 +119,7 @@ const labelFits = computed(() => !collapsed.value && ui.layout.sidebar >= 176);
     <div v-else class="flex min-h-9 shrink-0 items-center gap-1 px-2 pt-2 pb-1.5" :class="labelFits ? 'justify-between' : 'justify-center'">
       <span
         v-if="labelFits"
-        class="sidebar-label min-w-0 truncate text-meta font-semibold tracking-wider text-subtle uppercase"
+        class="min-w-0 truncate text-meta font-semibold tracking-wider text-subtle uppercase"
       >
         Connections
       </span>

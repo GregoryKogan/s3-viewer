@@ -6,9 +6,9 @@ import { pathToFileURL } from "node:url";
 /**
  * Load a TypeScript module from the app source inside a Node test.
  *
- * Node strips the types itself; all it cannot do is resolve the `@/` alias or an
- * import without an extension. One resolve hook covers both, so a test imports
- * the real source file instead of a bundled copy that could drift.
+ * Node strips the types itself; all it cannot do is resolve the `@/` alias, which
+ * also needs its extension filled in. One resolve hook covers both, so a test
+ * imports the real source file instead of a bundled copy that could drift.
  */
 const root = path.resolve(import.meta.dirname, "../..");
 
