@@ -9,7 +9,7 @@ import { inputClass, selectClass, checkboxClass } from "@/components/ui/controls
 import type { ModalSize } from "@/components/ui/types";
 import { pickFiles } from "@/lib/ipc";
 import { humanSize } from "@/lib/format";
-import { IS_MAC, keyLabel, modLabel, shortcutLabel } from "@/lib/keyboard";
+import { IS_MAC, keyLabel, modLabel, shortcutLabel, submitOnEnter } from "@/lib/keyboard";
 import { useUiStore } from "@/stores/ui";
 import { useDialogsStore } from "@/stores/dialogs";
 import { useObjectsStore } from "@/stores/objects";
@@ -184,16 +184,7 @@ async function save() {
 
 /** Enter saves, except where the key belongs to a control. */
 function onEnter(event: KeyboardEvent) {
-  if (event.isComposing) return;
-  const target = event.target;
-  if (
-    target instanceof HTMLElement &&
-    target.closest("button, a, select, textarea, input[type=checkbox], input[type=radio], summary")
-  ) {
-    return;
-  }
-  event.preventDefault();
-  void save();
+  submitOnEnter(event, () => void save());
 }
 
 </script>

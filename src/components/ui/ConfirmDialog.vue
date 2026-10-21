@@ -3,6 +3,7 @@ import { AlertTriangle } from "@lucide/vue";
 import ModalFrame from "./ModalFrame.vue";
 import AppButton from "./AppButton.vue";
 import type { ModalSize } from "./types";
+import { submitOnEnter } from "@/lib/keyboard";
 
 const props = withDefaults(
   defineProps<{
@@ -32,17 +33,10 @@ function confirm() {
  * only Enter elsewhere in the dialog confirms.
  */
 function onEnter(event: KeyboardEvent) {
-  if (event.isComposing) return;
   if (props.danger) return;
-  const target = event.target;
-  if (
-    target instanceof HTMLElement &&
-    target.closest('[data-testid="confirm-cancel"], [data-testid="modal-close"]')
-  ) {
-    return;
-  }
-  event.preventDefault();
-  confirm();
+  submitOnEnter(event, confirm, {
+    ignoreIn: '[data-testid="confirm-cancel"], [data-testid="modal-close"]',
+  });
 }
 </script>
 

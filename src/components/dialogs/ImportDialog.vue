@@ -9,6 +9,7 @@ import { parseImport } from "@/lib/importParse";
 import { api, ApiError, pickFiles } from "@/lib/ipc";
 import { useConnectionsStore } from "@/stores/connections";
 import { useToastsStore } from "@/stores/toasts";
+import { submitOnEnter } from "@/lib/keyboard";
 import type { ConnectionDraft } from "@/types";
 
 const props = defineProps<{
@@ -101,11 +102,7 @@ async function run() {
 
 /** The JSON textarea keeps Enter for newlines; ⌘/Ctrl+Enter imports. */
 function onEnter(event: KeyboardEvent) {
-  if (event.isComposing) return;
-  if (!(event.metaKey || event.ctrlKey)) return;
-  if (event.target instanceof HTMLElement && event.target.closest("button, a")) return;
-  event.preventDefault();
-  void run();
+  submitOnEnter(event, () => void run(), { ignoreIn: "button, a", requireModifier: true });
 }
 
 </script>

@@ -7,6 +7,7 @@ import AppField from "@/components/ui/AppField.vue";
 import { inputClass, selectClass } from "@/components/ui/controls";
 import type { ModalSize } from "@/components/ui/types";
 import { asFolderPrefix, joinKey } from "@/lib/keys";
+import { submitOnEnter } from "@/lib/keyboard";
 import type { Connection, ObjectEntry } from "@/types";
 
 export interface CopyMoveResult {
@@ -82,10 +83,7 @@ function confirm() {
 
 /** Enter confirms the destination; the same-folder guard still wins. */
 function onEnter(event: KeyboardEvent) {
-  if (event.isComposing) return;
-  if (event.target instanceof HTMLElement && event.target.closest("button, a, select")) return;
-  event.preventDefault();
-  confirm();
+  submitOnEnter(event, confirm, { ignoreIn: "button, a, select" });
 }
 
 </script>

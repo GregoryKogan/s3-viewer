@@ -5,6 +5,7 @@ import AppButton from "./AppButton.vue";
 import AppField from "./AppField.vue";
 import { inputClass } from "./controls";
 import type { ModalSize } from "./types";
+import { submitOnEnter } from "@/lib/keyboard";
 
 const props = withDefaults(
   defineProps<{
@@ -49,9 +50,7 @@ function submit() {
 }
 /** Enter commits; an IME composition commit is not a submit. */
 function onEnter(event: KeyboardEvent) {
-  if (event.isComposing) return;
-  event.preventDefault();
-  submit();
+  submitOnEnter(event, submit);
 }
 </script>
 

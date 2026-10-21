@@ -21,6 +21,7 @@ import type { ModalSize } from "@/components/ui/types";
 import { boto3Snippet } from "@/lib/boto3";
 import { highlight } from "@/lib/highlight";
 import { ApiError, copyText } from "@/lib/ipc";
+import { submitOnEnter } from "@/lib/keyboard";
 import { useConnectionsStore } from "@/stores/connections";
 import { useToastsStore } from "@/stores/toasts";
 import { useDialogs } from "@/composables/useDialogs";
@@ -354,16 +355,7 @@ async function copySnippet() {
  * disclosure); an IME composition commit is never a submit.
  */
 function onEnter(event: KeyboardEvent) {
-  if (event.isComposing) return;
-  const target = event.target;
-  if (
-    target instanceof HTMLElement &&
-    target.closest("button, a, select, textarea, input[type=checkbox], input[type=radio], summary")
-  ) {
-    return;
-  }
-  event.preventDefault();
-  void save();
+  submitOnEnter(event, () => void save());
 }
 
 </script>

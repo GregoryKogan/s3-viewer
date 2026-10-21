@@ -7,7 +7,7 @@ import AppField from "@/components/ui/AppField.vue";
 import { inputClass, textareaClass } from "@/components/ui/controls";
 import type { ModalSize } from "@/components/ui/types";
 import { joinKey, validateKey } from "@/lib/keys";
-import { keyLabel, modLabel } from "@/lib/keyboard";
+import { keyLabel, modLabel, submitOnEnter } from "@/lib/keyboard";
 
 export interface CreateFileResult {
   name: string;
@@ -62,17 +62,12 @@ function submit() {
 
 /** Enter in the name field creates the file; an IME commit must not submit. */
 function onNameEnter(event: KeyboardEvent) {
-  if (event.isComposing) return;
-  event.preventDefault();
-  submit();
+  submitOnEnter(event, submit);
 }
 
 /** The content area keeps Enter for newlines; ⌘/Ctrl+Enter is the commit. */
 function onContentEnter(event: KeyboardEvent) {
-  if (event.isComposing) return;
-  if (!(event.metaKey || event.ctrlKey)) return;
-  event.preventDefault();
-  submit();
+  submitOnEnter(event, submit, { ignoreIn: "button, a", requireModifier: true });
 }
 </script>
 

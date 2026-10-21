@@ -109,3 +109,36 @@ const NON_TEXT_INPUTS = new Set([
   "reset",
   "submit",
 ]);
+
+/**
+ * Controls whose own Enter must win inside a dialog.
+ *
+ * A button activates, a select opens, a textarea inserts a newline and a
+ * disclosure toggles, so hijacking those keys took Cancel and the Advanced
+ * section away from the keyboard (DLG-5).
+ */
+const DIALOG_ENTER_IGNORE =
+  "button, a, select, textarea, input[type=checkbox], input[type=radio], summary";
+
+/**
+ * Run a dialog's submit action on Enter.
+ *
+ * Every dialog wants the same gesture — Enter commits from a plain field, never
+ * from a control that owns the key, and never from an IME composition commit.
+ * `ignoreIn` narrows the skip list for a dialog whose textarea keeps Enter for
+ * newlines; `requireModifier` then demands ⌘/Ctrl for the commit.
+ */
+export function submitOnEnter(
+  event: KeyboardEvent,
+  submit: () => void,
+  options: { ignoreIn?: string; requireModifier?: boolean } = {},
+): void {
+  if (event.isComposing) return;
+  if (options.requireModifier && !(event.metaKey || event.ctrlKey)) return;
+  const target = event.target;
+  if (target instanceof HTMLElement && target.closest(options.ignoreIn ?? DIALOG_ENTER_IGNORE)) {
+    return;
+  }
+  event.preventDefault();
+  submit();
+}
