@@ -17,14 +17,7 @@ export default defineConfig({
     // Content-hashed names. A fixed `app.js` is served from the webview's HTTP
     // cache across builds, so a user updating the app would keep seeing the
     // previous interface until the cache expired.
-    rollupOptions: {
-      output: { manualChunks: undefined },
-    },
     sourcemap: false,
     minify: "esbuild",
-  },
-  server: {
-    port: 1420,
-    strictPort: true,
   },
 });
