@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createPinia, setActivePinia } from "pinia";
 import { loadTs } from "./loadTs.mjs";
 
-const { api, createPinia, setActivePinia, useProgressStore } = await loadTs(
-  "tests/js/progressHarness.ts",
-);
+const { api } = await loadTs("src/lib/ipc.ts");
+const { useProgressStore } = await loadTs("src/stores/progress.ts");
 
 const view = (id, state, extra = {}) => ({ id, label: id, done: 0, state, ...extra });
 

@@ -1,17 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createPinia, setActivePinia } from "pinia";
 import { loadTs } from "./loadTs.mjs";
 
-const {
-  api,
-  ApiError,
-  createPinia,
-  setActivePinia,
-  useConnectionsStore,
-  useObjectsStore,
-  useToastsStore,
-  useUiStore,
-} = await loadTs("tests/js/objectsHarness.ts");
+const { api, ApiError } = await loadTs("src/lib/ipc.ts");
+const { useConnectionsStore } = await loadTs("src/stores/connections.ts");
+const { useObjectsStore } = await loadTs("src/stores/objects.ts");
+const { useToastsStore } = await loadTs("src/stores/toasts.ts");
+const { useUiStore } = await loadTs("src/stores/ui.ts");
 
 /**
  * The minimal shape `loadFolder` touches. The store reads the id and the scope
