@@ -130,30 +130,18 @@ fn is_canonical_subresource(part: &str) -> bool {
     SUBS.contains(&key)
 }
 
-/// Percent-encode a key for use in a request path, preserving `/` separators.
-/// Follows the same rules the AWS SDKs use (RFC 3986, unreserved set kept).
-pub fn encode_path(key: &str) -> String {
-    let mut out = String::with_capacity(key.len());
-    for byte in key.as_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
-                out.push(*byte as char)
-            }
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
-}
-
-/// Percent-encode a query parameter value (stricter than [`encode_path`]: `/`
-/// is encoded too).
-pub fn encode_query_value(value: &str) -> String {
+/// Percent-encode a value for a request path or a query string.
+///
+/// RFC 3986 unreserved set kept; `keep_slash` is the only difference between a
+/// key in a path (`/` is a separator) and a query value (`/` must be encoded).
+pub fn percent_encode(value: &str, keep_slash: bool) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.as_bytes() {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
                 out.push(*byte as char)
             }
+            b'/' if keep_slash => out.push('/'),
             _ => out.push_str(&format!("%{byte:02X}")),
         }
     }
@@ -298,17 +286,17 @@ mod tests {
     }
 
     #[test]
-    fn encode_path_keeps_slashes_and_encodes_specials() {
-        assert_eq!(encode_path("a/b c.png"), "a/b%20c.png");
-        assert_eq!(encode_path("a+b"), "a%2Bb");
+    fn percent_encode_keeps_slashes_in_a_path_and_encodes_specials() {
+        assert_eq!(percent_encode("a/b c.png", true), "a/b%20c.png");
+        assert_eq!(percent_encode("a+b", true), "a%2Bb");
         assert_eq!(
-            encode_path("кириллица"),
+            percent_encode("кириллица", true),
             "%D0%BA%D0%B8%D1%80%D0%B8%D0%BB%D0%BB%D0%B8%D1%86%D0%B0"
         );
     }
 
     #[test]
-    fn encode_query_value_encodes_slash() {
-        assert_eq!(encode_query_value("a/b"), "a%2Fb");
+    fn percent_encode_encodes_slash_in_a_query_value() {
+        assert_eq!(percent_encode("a/b", false), "a%2Fb");
     }
 }

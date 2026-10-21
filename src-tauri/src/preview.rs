@@ -22,22 +22,8 @@ pub fn stream_url(connection_id: &str, key: &str) -> String {
     format!(
         "s3stream://localhost/{}/{}",
         connection_id,
-        percent_encode_key(key)
+        crate::sigv2::percent_encode(key, false)
     )
-}
-
-/// Minimal percent-encoding for the key inside the custom-scheme URL.
-pub fn percent_encode_key(key: &str) -> String {
-    let mut out = String::with_capacity(key.len());
-    for b in key.as_bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(*b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 /// True when the kind can be rendered directly by a webview element.

@@ -17,7 +17,7 @@ fn http_date() -> String {
         .format("%a, %d %b %Y %H:%M:%S GMT")
         .to_string()
 }
-use crate::sigv2::{encode_path, encode_query_value, V2Request};
+use crate::sigv2::{percent_encode, V2Request};
 
 const XMLNS_S3: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
 
@@ -80,7 +80,7 @@ impl V2Store {
     fn url_for(&self, key: &str, query: &str) -> String {
         let scheme = self.endpoint.split("://").next().unwrap_or("https");
         let host = self.host();
-        let encoded = encode_path(key);
+        let encoded = percent_encode(key, true);
         let path = if self.virtual_host {
             format!("{scheme}://{}.{host}/{encoded}", self.bucket)
         } else {
@@ -202,13 +202,13 @@ impl V2Store {
         let mut q = String::from("list-type=2");
         q.push_str(&format!("&max-keys={max_keys}"));
         if !prefix.is_empty() {
-            q.push_str(&format!("&prefix={}", encode_query_value(prefix)));
+            q.push_str(&format!("&prefix={}", percent_encode(prefix, false)));
         }
         if let Some(d) = delimiter {
-            q.push_str(&format!("&delimiter={}", encode_query_value(d)));
+            q.push_str(&format!("&delimiter={}", percent_encode(d, false)));
         }
         if let Some(t) = token {
-            q.push_str(&format!("&continuation-token={}", encode_query_value(t)));
+            q.push_str(&format!("&continuation-token={}", percent_encode(t, false)));
         }
         q
     }
