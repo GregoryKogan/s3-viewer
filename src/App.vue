@@ -96,7 +96,9 @@ function rowMenu(entry: (typeof objects.entries)[number], point: { clientX: numb
   if (!connection) return;
   const writable = connections.canWriteActive;
   // ObjectList selects a right-clicked row that was outside the selection, so
-  // one set backs every item (SEL-4).
+  // one set backs every item (SEL-4). Every item is handed that set: a reload
+  // that lands before the item runs empties the store, and an item that looked
+  // the rows up again would silently do nothing.
   const targets = objects.deleteTargets.length ? objects.deleteTargets : [entry];
   const count = targets.length;
   const names = targets.map((item) => item.name);
@@ -121,13 +123,13 @@ function rowMenu(entry: (typeof objects.entries)[number], point: { clientX: numb
         label: count > 1 ? `Download ${count} items` : "Download",
         icon: Download,
         shortcut: shortcutLabel("D"),
-        run: () => void actions.downloadSelection(),
+        run: () => void actions.downloadSelection(targets),
       },
       {
         label: count > 1 ? `Copy ${count} S3 URIs` : "Copy S3 URI",
         icon: Link2,
         shortcut: `${modLabel()}⇧C`,
-        run: () => void actions.copySelectionUris(),
+        run: () => void actions.copySelectionUris(targets),
       },
       {
         label: count > 1 ? `Copy ${count} names` : "Copy name",
@@ -139,13 +141,13 @@ function rowMenu(entry: (typeof objects.entries)[number], point: { clientX: numb
         icon: MoveRight,
         separatorBefore: true,
         disabled: !writable,
-        run: () => void actions.transferSelection(false),
+        run: () => void actions.transferSelection(false, targets),
       },
       {
         label: transferLabel("Move"),
         icon: MoveRight,
         disabled: !writable,
-        run: () => void actions.transferSelection(true),
+        run: () => void actions.transferSelection(true, targets),
       },
       {
         label: count > 1 ? `Delete ${count} items` : "Delete",
@@ -154,7 +156,7 @@ function rowMenu(entry: (typeof objects.entries)[number], point: { clientX: numb
         shortcut: deleteShortcut,
         separatorBefore: true,
         disabled: !writable,
-        run: () => void actions.deleteSelection(),
+        run: () => void actions.deleteSelection(targets),
       },
     ] as MenuItem[],
   };

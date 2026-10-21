@@ -86,7 +86,13 @@ export function useObjectActions() {
     objects.selected.size ? objects.selectedEntries : [],
   );
 
-  /** Mutations act on the selection, or on the focused row when it is empty. */
+  /**
+   * Mutations act on the selection, or on the focused row when it is empty.
+   *
+   * Only a fallback: a menu item passes the rows it was opened for. A reload
+   * that lands between the click and the action empties `deleteTargets`, and an
+   * action that re-derived it would silently do nothing.
+   */
   const writeTargets = computed<ObjectEntry[]>(() => objects.deleteTargets);
 
   /**
@@ -281,12 +287,12 @@ export function useObjectActions() {
     }
   }
 
-  async function downloadSelection() {
+  async function downloadSelection(targets?: ObjectEntry[]) {
     const connection = connections.active;
     if (!connection || !sessionMatchesActive()) return;
     // Selection, or the cursor row when nothing is selected — the same set
     // Delete and the context menu act on.
-    const entries = writeTargets.value;
+    const entries = targets ?? writeTargets.value;
     if (!entries.length) return;
 
     // One item keeps the ordinary "ask where to save" policy: a directory
@@ -362,9 +368,9 @@ export function useObjectActions() {
     else toasts.error("The clipboard is not available.");
   }
 
-  async function copySelectionUris() {
+  async function copySelectionUris(targets?: ObjectEntry[]) {
     const connection = connections.active;
-    const entries = writeTargets.value;
+    const entries = targets ?? writeTargets.value;
     if (!connection || !entries.length || !sessionMatchesActive()) return;
     const text = entries.map((entry) => s3Uri(connection.bucket, entry.key)).join("\n");
     if (!(await copyText(text))) {
@@ -666,9 +672,9 @@ export function useObjectActions() {
 
   // ------------------------------------------------------------------ deletion
 
-  async function deleteSelection() {
+  async function deleteSelection(targets?: ObjectEntry[]) {
     const connection = connections.active;
-    const entries = writeTargets.value;
+    const entries = targets ?? writeTargets.value;
     if (!connection || !entries.length || !sessionMatchesActive() || !canWrite()) return;
 
     const folders = entries.filter((entry) => entry.isFolder);
@@ -763,8 +769,8 @@ export function useObjectActions() {
 
   // ----------------------------------------------------------------- copy/move
 
-  async function transferSelection(moveObjects: boolean) {
-    const entries = writeTargets.value;
+  async function transferSelection(moveObjects: boolean, targets?: ObjectEntry[]) {
+    const entries = targets ?? writeTargets.value;
     const source = connections.active;
     if (!entries.length || !source || !sessionMatchesActive() || !canWrite()) return;
     const target = captureTarget(source.id);

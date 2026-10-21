@@ -264,22 +264,50 @@ const SCENARIO: &str = r#"(async () => {
       ...init,
     }));
   const rowNames = () => $$('.object-row .row-label').map((n) => n.textContent);
-  /** Right-click a row and hand back the menu. Both steps are real user input. */
-  const rowMenu = async (label) => {
-    const index = window.__s3viewer.state.visible.findIndex((e) => e.name === label);
-    if (index >= 0) window.__s3viewer.scrollToRow(index);
-    await frame();
-    const row = $$('.object-row').find((r) => r.querySelector('.row-label').textContent === label);
-    if (!row) throw new Error('row not found for the menu: ' + label + ' :: ' + rowNames().join(','));
-    const box = row.getBoundingClientRect();
-    row.dispatchEvent(new MouseEvent('contextmenu', {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      clientX: Math.round(box.left + 40),
-      clientY: Math.round(box.top + 8),
-    }));
-    return wait('the context menu', () => $('[data-testid=context-menu]'), 8000);
+  /**
+   * Right-click a row and hand back its menu, retrying until both are real.
+   *
+   * A transfer that settles reloads its folder in the background, which empties
+   * the list and sets `loading` without any user action: a row found a moment
+   * ago can be gone by the time this runs. Dispatch only on a settled, rendered
+   * row, and treat a menu that never appears as a lost race, not a failure.
+   */
+  const rowMenu = async (label, timeout = 20000) => {
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      const objects = window.__s3viewer.state.objects;
+      const index = window.__s3viewer.state.visible.findIndex((e) => e.name === label);
+      if (!objects.loading && !objects.awaitingFirstPage && index >= 0) {
+        window.__s3viewer.scrollToRow(index);
+        await frame();
+        const row = $$('.object-row').find((r) => r.querySelector('.row-label').textContent === label);
+        if (row) {
+          const box = row.getBoundingClientRect();
+          row.dispatchEvent(new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: Math.round(box.left + 40),
+            clientY: Math.round(box.top + 8),
+          }));
+          try {
+            return await wait('the context menu', () => $('[data-testid=context-menu]'), 2000);
+          } catch {
+            // The reload won the race after the dispatch: retry the pair.
+          }
+        }
+      }
+      if (Date.now() > deadline) {
+        const objects = window.__s3viewer.state.objects;
+        throw new Error('row not found for the menu: ' + label
+          + ' :: ' + rowNames().join(',')
+          + ' loading=' + objects.loading
+          + ' awaiting=' + objects.awaitingFirstPage
+          + ' prefix=' + JSON.stringify(objects.prefix)
+          + ' listingLog=' + window.__s3viewer.logs.listing.slice(-6).join(' | '));
+      }
+      await sleep(120);
+    }
   };
 
   /** Put the address bar into editing mode, whichever state it is in. */
@@ -2369,17 +2397,18 @@ const SCENARIO: &str = r#"(async () => {
     });
 
     await check('transfer: Copy refuses the current folder and Move leaves no source', async () => {
-      // The previous copy reloads the listing in the background; queue nothing
-      // against a list that is still painting.
-      await wait('the listing to settle', async () => {
-        const objects = window.__s3viewer.state.objects;
-        if (objects.loading || objects.awaitingFirstPage) return null;
-        return rowNames().length >= 12 ? true : null;
-      }, 20000);
       if ($('[data-testid=modal]')) await closeModal();
+      // The previous copy reloads the listing in the background. Wait for the
+      // row itself, not for a row count: clickRowWhenReady and rowMenu retry
+      // until the row is rendered and its menu is attached.
       await clickRowWhenReady('sample.py');
       // A single row's actions live in its context menu, not in the toolbar.
       const copyMenu = await rowMenu('sample.py');
+      // A reload can land between the menu opening and the item click. The item
+      // acts on the rows the menu was opened for, not on a list a background
+      // refresh has just emptied — that is the bug this reproduces.
+      void window.__s3viewer.refresh();
+      await frame();
       menuClick(copyMenu, 'Copy to');
       const input = await wait('the copy dialog', () => $('[data-testid=transfer-prefix]'), 10000);
       if ($('[data-testid=transfer-confirm]').disabled) throw new Error('Copy starts disabled');
