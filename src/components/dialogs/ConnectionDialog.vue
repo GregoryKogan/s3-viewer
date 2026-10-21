@@ -434,7 +434,7 @@ function onEnter(event: KeyboardEvent) {
         >
           <div class="flex gap-1">
             <input
-                v-model="form.secretAccessKey"
+              v-model="form.secretAccessKey"
               :type="showingSecret ? 'text' : 'password'"
               :class="inputClass"
               data-testid="conn-secret-key"

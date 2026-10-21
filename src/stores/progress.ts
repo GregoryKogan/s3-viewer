@@ -28,15 +28,15 @@ export const useProgressStore = defineStore("transfers", () => {
   const retries = ref(new Map<string, () => Promise<void>>());
 
   /**
-   * Settled snapshots for transfers someone is still waiting on.
+   * Transfers someone is still waiting on, with the last settled view seen.
    *
    * `waitForAll` polls; if the user clears the panel between a transfer settling
-   * and the next poll, the id disappears from the list. Caching the last settled
-   * view for watched ids turns that race into the correct answer instead of a
-   * wait that never ends.
+   * and the next poll, the id disappears from the list. Keeping the last settled
+   * view under the same key as the wait turns that race into the correct answer
+   * instead of a wait that never ends. A key with no settled view yet maps to
+   * `null`.
    */
-  const watched = new Set<string>();
-  const settled = new Map<string, ProgressView>();
+  const waitingOn = new Map<string, ProgressView | null>();
 
   /**
    * Ids whose failed/cancelled row was already retried.
@@ -56,19 +56,6 @@ export const useProgressStore = defineStore("transfers", () => {
   const retrying = ref(new Set<string>());
 
   const running = computed(() => items.value.filter((item) => item.state === "running"));
-
-  /** Resolve an id that vanished from both the list and the cache. */
-  function clearedOutcome(id: string): ProgressView {
-    return {
-      id,
-      label: "cleared",
-      done: 0,
-      // Not success: a row that was cleared before its settle was observed is
-      // terminal but unknown, so batch summaries must not report it as done.
-      state: "cancelled",
-      error: "the transfer was cleared before it settled",
-    };
-  }
 
   /** Refresh the list; returns false when the backend could not be asked. */
   async function poll(): Promise<boolean> {
@@ -93,7 +80,7 @@ export const useProgressStore = defineStore("transfers", () => {
       }
       // Keep one copy for a waiter, even if the row is about to leave the local
       // list (Clear, linger).
-      if (watched.has(item.id)) settled.set(item.id, item);
+      if (waitingOn.has(item.id)) waitingOn.set(item.id, item);
     }
 
     items.value = snapshot
@@ -132,11 +119,11 @@ export const useProgressStore = defineStore("transfers", () => {
   }
 
   async function clear() {
-    // A waiter may be between polls when the user clears: snapshot every
-    // watched row the local list still considers terminal *before* the backend
-    // prunes it, or the id would disappear from both sides.
+    // A waiter may be between polls when the user clears: snapshot every row
+    // it is waiting on that the local list still considers terminal *before*
+    // the backend prunes it, or the id would disappear from both sides.
     for (const item of items.value) {
-      if (item.state !== "running" && watched.has(item.id)) settled.set(item.id, item);
+      if (item.state !== "running" && waitingOn.has(item.id)) waitingOn.set(item.id, item);
     }
 
     // The backend can only forget finished entries; the local list must do the
@@ -168,7 +155,7 @@ export const useProgressStore = defineStore("transfers", () => {
   async function waitForAll(ids: string[]): Promise<ProgressView[]> {
     const results = new Map<string, ProgressView>();
     const remaining = new Set(ids);
-    for (const id of ids) watched.add(id);
+    for (const id of ids) waitingOn.set(id, null);
     try {
       while (remaining.size > 0) {
         const fresh = await poll();
@@ -176,13 +163,22 @@ export const useProgressStore = defineStore("transfers", () => {
         // `find` per id per tick.
         const current = new Map(items.value.map((item) => [item.id, item]));
         for (const id of [...remaining]) {
-          const item = current.get(id) ?? settled.get(id);
+          const item = current.get(id) ?? waitingOn.get(id);
           if (!item) {
             // The backend answered and the id is gone, or the local list was
             // cleared after the transfer settled. Either way it is terminal and
             // must not keep the batch pending; only a failed poll is ignored.
             if (fresh) {
-              results.set(id, clearedOutcome(id));
+              results.set(id, {
+                id,
+                label: "cleared",
+                done: 0,
+                // Not success: a row that was cleared before its settle was
+                // observed is terminal but unknown, so batch summaries must not
+                // report it as done.
+                state: "cancelled",
+                error: "the transfer was cleared before it settled",
+              });
               remaining.delete(id);
             }
             continue;
@@ -194,10 +190,7 @@ export const useProgressStore = defineStore("transfers", () => {
         if (remaining.size > 0) await new Promise((resolve) => setTimeout(resolve, 250));
       }
     } finally {
-      for (const id of ids) {
-        watched.delete(id);
-        settled.delete(id);
-      }
+      for (const id of ids) waitingOn.delete(id);
     }
     return ids.map((id) => results.get(id)!);
   }

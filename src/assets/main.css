@@ -255,7 +255,8 @@
   min-width: 4rem !important;
 }
 
-[data-preview-hidden] #preview {
+[data-preview-hidden] #preview,
+[data-preview-hidden] [data-testid="resizer-preview"] {
   display: none !important;
 }
 

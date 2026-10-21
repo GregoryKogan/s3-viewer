@@ -1251,10 +1251,7 @@ function onDrop(paths: string[]) {
           <div
             v-if="hasConnection"
             class="relative flex min-h-0"
-            :class="[
-              ui.previewHidden ? 'hidden' : '',
-              previewExpanded ? 'min-w-0 flex-1' : 'shrink-0',
-            ]"
+            :class="previewExpanded ? 'min-w-0 flex-1' : 'shrink-0'"
           >
             <PreviewPanel ref="previewPanel" />
             <Resizer

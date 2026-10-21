@@ -29,9 +29,10 @@ export type ToastPauseReason = "hover" | "focus";
 
 interface TimerState {
   handle: ReturnType<typeof setTimeout> | null;
-  /** Milliseconds left when the timer is (re)started. */
-  remaining: number;
-  startedAt: number;
+  /** When the timer would fire, in `Date.now()` terms. */
+  deadline: number;
+  /** When the countdown was held, so `resume` can push the deadline out. */
+  pausedAt: number;
   /**
    * Why the countdown is currently held. Hover and keyboard focus are tracked
    * separately: leaving with the mouse must not restart a toast the reader is
@@ -44,7 +45,8 @@ interface TimerState {
  * Transient notifications. The store owns the timers so they survive re-renders.
  *
  * A hovered or focused toast must not disappear under the reader's cursor, so
- * `pause` banks the time left and `resume` starts a fresh timer from it (DLG-4).
+ * `pause` freezes the deadline and `resume` pushes it out by the time the
+ * countdown was held (DLG-4).
  */
 export const useToastsStore = defineStore("toasts", () => {
   const toasts = ref<Toast[]>([]);
@@ -54,15 +56,15 @@ export const useToastsStore = defineStore("toasts", () => {
   function schedule(id: number) {
     const state = timers.get(id);
     if (!state) return;
-    if (state.remaining <= 0) {
+    const left = state.deadline - Date.now();
+    if (left <= 0) {
       dismiss(id);
       return;
     }
-    state.startedAt = Date.now();
     state.handle = setTimeout(() => {
       state.handle = null;
       dismiss(id);
-    }, state.remaining);
+    }, left);
   }
 
   function push(toast: Omit<Toast, "id" | "actions"> & { actions?: ToastAction[] }): number {
@@ -75,8 +77,8 @@ export const useToastsStore = defineStore("toasts", () => {
     if (timeout > 0) {
       timers.set(id, {
         handle: null,
-        remaining: timeout,
-        startedAt: Date.now(),
+        deadline: Date.now() + timeout,
+        pausedAt: 0,
         pausedBy: new Set(),
       });
       schedule(id);
@@ -87,12 +89,14 @@ export const useToastsStore = defineStore("toasts", () => {
   function pause(id: number, reason: ToastPauseReason) {
     const state = timers.get(id);
     if (!state || state.pausedBy.has(reason)) return;
-    // Only bank the elapsed time on the first hold; a second reason must not
-    // subtract the paused interval twice.
-    if (state.pausedBy.size === 0 && state.handle) {
-      clearTimeout(state.handle);
-      state.handle = null;
-      state.remaining = Math.max(0, state.remaining - (Date.now() - state.startedAt));
+    // Only the first hold stops the clock; a second reason must not move the
+    // deadline twice.
+    if (state.pausedBy.size === 0) {
+      if (state.handle) {
+        clearTimeout(state.handle);
+        state.handle = null;
+      }
+      state.pausedAt = Date.now();
     }
     state.pausedBy.add(reason);
   }
@@ -101,7 +105,10 @@ export const useToastsStore = defineStore("toasts", () => {
     const state = timers.get(id);
     if (!state) return;
     state.pausedBy.delete(reason);
-    if (state.pausedBy.size === 0 && !state.handle) schedule(id);
+    if (state.pausedBy.size || state.handle) return;
+    // The reader gets the time the toast had left, not a fresh full timeout.
+    state.deadline += Date.now() - state.pausedAt;
+    schedule(id);
   }
 
   function dismiss(id: number) {

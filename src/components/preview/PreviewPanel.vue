@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch, watchEffect } from "vue";
+import { computed, defineAsyncComponent, nextTick, ref, watch } from "vue";
 import {
   Copy,
   Download,
@@ -52,20 +52,7 @@ const expanded = computed(
 );
 const panelWidth = computed(() => (expanded.value ? null : "var(--preview-width)"));
 
-/**
- * The aside owns its own visibility attribute.
- *
- * `v-if` alone left the element on screen during a re-render; writing the
- * attribute here means the DOM cannot outlive the store value.
- */
-const aside = ref<HTMLElement | null>(null);
 const body = ref<HTMLElement | null>(null);
-watchEffect(() => {
-  if (aside.value) aside.value.hidden = ui.previewHidden;
-});
-onMounted(() => {
-  if (aside.value) aside.value.hidden = ui.previewHidden;
-});
 
 /**
  * A hidden panel defers the fetch and keeps the key. Any route back to
