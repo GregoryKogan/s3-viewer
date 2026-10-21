@@ -233,6 +233,8 @@ export function writeFixtures({ bigBytes = 3 * 1024 * 1024 } = {}) {
 
   fs.writeFileSync(path.join(OUT, "image.png"), makePng());
   fs.writeFileSync(path.join(OUT, "tone.wav"), makeWav());
+  // Above the harness's 1 MiB preview limit: streamed media must play anyway.
+  fs.writeFileSync(path.join(OUT, "tone-big.wav"), makeWav({ seconds: 30 }));
   // WebKit cannot decode a synthetic MP4, so the video fixture is a shell
   // script with an .mp4 name: it proves classification, the element wiring and
   // ranged reads without depending on a decoder.
@@ -267,6 +269,7 @@ export function writeFixtures({ bigBytes = 3 * 1024 * 1024 } = {}) {
 export const SMALL_FILES = [
   "image.png",
   "tone.wav",
+  "tone-big.wav",
   "clip.mp4",
   "document.pdf",
   "vector.svg",

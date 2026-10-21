@@ -197,7 +197,7 @@ function onEnter(event: KeyboardEvent) {
       </legend>
       <AppField
         label="Maximum file size to preview"
-        hint="Larger files are listed and downloadable, but the preview panel explains the limit instead of loading them."
+        hint="Larger files are listed and downloadable, but the preview panel explains the limit instead of loading them. Audio and video stream from S3, so they ignore this limit."
         wide
       >
         <select v-model.number="form.previewMaxBytes" :class="selectClass" data-testid="settings-preview-limit" autofocus>

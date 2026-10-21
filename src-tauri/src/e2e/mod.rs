@@ -566,7 +566,7 @@ const SCENARIO: &str = r#"(async () => {
         throw new Error(error.message + ' :: ' + domDigest());
       }
       const names = rowNames();
-      const expected = ['image.png', 'tone.wav', 'clip.mp4', 'document.pdf', 'vector.svg', 'blob.bin',
+      const expected = ['image.png', 'tone.wav', 'tone-big.wav', 'clip.mp4', 'document.pdf', 'vector.svg', 'blob.bin',
                         'readme.md', 'notes.txt', 'sample.json', 'sample.py', 'table.csv', 'too-big.txt'];
       const missing = expected.filter((name) => !names.includes(name));
       if (missing.length) throw new Error('missing rows: ' + missing.join(', '));
@@ -1096,6 +1096,23 @@ const SCENARIO: &str = r#"(async () => {
       }, 30000);
       if (!(duration > 0.5)) throw new Error('suspicious duration: ' + duration);
       return duration.toFixed(2) + 's';
+    });
+
+    await check('preview: streamed media ignores the preview size limit', async () => {
+      // The harness caps previews at 1 MiB and this fixture is ~1.3 MB, so the
+      // check only passes when audio skips the limit instead of being refused.
+      clickRow('tone-big.wav');
+      const node = await wait('the oversized audio preview', () => {
+        return $('[data-testid=preview-unavailable]') || $('[data-testid=preview-audio]');
+      });
+      if (node.dataset.testid === 'preview-unavailable') {
+        throw new Error('the size limit refused streamed media: ' + node.textContent);
+      }
+      const duration = await wait('audio duration above the limit', async () => {
+        const value = node.duration;
+        return Number.isFinite(value) && value > 20 ? value : null;
+      }, 30000);
+      return duration.toFixed(1) + 's, over the 1 MiB preview limit';
     });
 
     await check('preview: video is wired to the ranged stream', async () => {

@@ -7,7 +7,8 @@
 //! Size policy: the app never pulls more than `head_limit` bytes to inspect an
 //! object, and never loads more than `inline_limit` bytes over IPC. Media is not
 //! inlined at all — the frontend streams it through the `s3stream://` protocol,
-//! which supports `Range`, so a 4 GB video previews without being downloaded.
+//! which supports `Range`, so a 4 GB video previews without being downloaded and
+//! is deliberately exempt from the preview size limit.
 
 use crate::error::{AppError, AppResult};
 use crate::model::{FileKind, PreviewData};
@@ -32,6 +33,16 @@ pub fn is_natively_renderable(kind: FileKind) -> bool {
         kind,
         FileKind::Image | FileKind::Audio | FileKind::Video | FileKind::Pdf
     )
+}
+
+/// Kinds the webview plays from `s3stream://` with ranged reads: only the bytes
+/// it is about to play are fetched, so the preview limit does not apply.
+///
+/// Images and PDFs are excluded on purpose — an `<img>` pulls the whole object
+/// and PDF.js keeps the document open — so the limit still bounds what the app
+/// loads for them.
+pub fn is_streamed(kind: FileKind) -> bool {
+    matches!(kind, FileKind::Audio | FileKind::Video)
 }
 
 /// Bytes read for a Parquet preview. The footer lives at the end, but the first
@@ -145,7 +156,9 @@ pub async fn build_preview(
         return Ok(data);
     }
 
-    if size > max_bytes as i64 {
+    // Streamed media is exempt: the panel asks the protocol handler only for the
+    // ranges it needs, so an hour-long video is never pulled whole.
+    if !is_streamed(kind) && size > max_bytes as i64 {
         data.unavailable_reason = Some(format!(
             "File is {} which exceeds the preview limit of {}. Increase it in Settings or download the file.",
             crate::objects::human_size(size),
@@ -290,6 +303,22 @@ mod tests {
             assert!(is_natively_renderable(kind), "{kind:?}");
         }
         assert!(!is_natively_renderable(FileKind::Code));
+    }
+
+    #[test]
+    fn only_played_media_ignores_the_size_limit() {
+        for kind in [FileKind::Audio, FileKind::Video] {
+            assert!(is_streamed(kind), "{kind:?}");
+        }
+        // Anything the app reads whole — images, PDFs, text — stays bounded.
+        for kind in [
+            FileKind::Image,
+            FileKind::Pdf,
+            FileKind::Text,
+            FileKind::Binary,
+        ] {
+            assert!(!is_streamed(kind), "{kind:?} must stay bounded");
+        }
     }
 
     #[test]

@@ -140,7 +140,9 @@ the whole object arrives.
 > [!NOTE]
 > The preview limit lives in Settings (25 MB by default; 2 MB to 1 GB). Files
 > above it stay listed and downloadable, but the preview panel explains the limit
-> instead of loading them. Parquet has an additional 64 MB read ceiling.
+> instead of loading them. Audio and video are exempt: they stream over ranged
+> reads, so even a multi-gigabyte file plays without being downloaded. Parquet has
+> an additional 64 MB read ceiling.
 
 Markdown is rendered through `marked` and then sanitised by a small allow-list
 walker in `src/lib/previewText.ts`: unknown tags are unwrapped,

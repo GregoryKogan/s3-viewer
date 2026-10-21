@@ -158,6 +158,7 @@ export interface ProgressView {
 }
 
 export interface AppSettings {
+  /** Bytes; files read into the app above it are refused. Audio/video stream and ignore it. */
   previewMaxBytes: number;
   listPageLimit: number;
   /** In-memory folder-listing cache budget in bytes; 0 disables it. */

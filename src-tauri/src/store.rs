@@ -51,7 +51,8 @@ impl Default for LayoutSettings {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    /// Preview is refused above this size (bytes). Default 25 MiB.
+    /// Preview is refused above this size (bytes) for files read into the app.
+    /// Streamed audio and video ignore it. Default 25 MiB.
     pub preview_max_bytes: u64,
     /// Maximum number of *objects* listed per folder (folders are always
     /// included, however many there are).
