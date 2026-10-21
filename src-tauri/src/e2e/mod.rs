@@ -1422,7 +1422,11 @@ const SCENARIO: &str = r#"(async () => {
     await check('ui: the layout can be collapsed and resized', async () => {
       const sidebar = $('#sidebar');
       const before = sidebar.getBoundingClientRect().width;
+      // The collapsed width is a Vue-bound inline style, so it lands on the
+      // microtask after the click, not in this task (see the harness rules in
+      // docs/e2e-gui-testing.md).
       $('[data-testid=collapse-sidebar]').click();
+      await frame();
       const collapsed = sidebar.getBoundingClientRect().width;
       if (!(collapsed < before)) {
         throw new Error('the sidebar did not collapse (' + before + ' -> ' + collapsed
@@ -1442,6 +1446,7 @@ const SCENARIO: &str = r#"(async () => {
         throw new Error('the collapsed rail avatar is off-centre by ' + offset.toFixed(1) + 'px');
       }
       $('[data-testid=collapse-sidebar]').click();
+      await frame();
       const restored = sidebar.getBoundingClientRect().width;
       if (Math.abs(restored - before) > 2) {
         throw new Error('the sidebar did not expand again (' + collapsed + ' -> ' + restored + ')');
