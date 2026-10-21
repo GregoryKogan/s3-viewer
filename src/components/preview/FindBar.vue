@@ -122,13 +122,14 @@ function onKeydown(event: KeyboardEvent) {
  * geometry still matches `AppButton`'s `sm` size (h-6, 14 px icon).
  *
  * The toggles and the counter also drop out as the panel narrows: Task 4 puts
- * `@container` on the column the bar sits in, so under 17rem the three options
- * go (their shortcuts still work through the keyboard handler) and under 21rem
- * the counter goes, which keeps the query usable down to the 260 px minimum.
+ * `@container` on the column the bar sits in, so under 22rem the three options
+ * go (their shortcuts still work through the keyboard handler) and under 26rem
+ * the counter goes. Each threshold is set where the newcomer still leaves the
+ * input usable; the 260 px minimum panel falls under both.
  */
 const TOGGLE_CLASS =
   "hidden h-6 shrink-0 place-items-center rounded-[4px] px-2 transition-colors " +
-  "@[17rem]:inline-grid " +
+  "@[22rem]:inline-grid " +
   "disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent";
 </script>
 
@@ -156,9 +157,8 @@ const TOGGLE_CLASS =
 
     <span
       v-if="counter"
-      class="tabular hidden shrink-0 px-1 whitespace-nowrap @[21rem]:block"
+      class="tabular hidden shrink-0 px-1 whitespace-nowrap @[26rem]:block"
       role="status"
-      aria-live="polite"
       :class="counter.danger ? 'text-danger' : 'text-muted'"
       data-testid="find-counter"
     >{{ counter.text }}</span>
