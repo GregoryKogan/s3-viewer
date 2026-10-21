@@ -77,6 +77,8 @@ function letterOf(event: KeyboardEvent): string {
  * object). Anything not handled here is left alone and bubbles normally.
  */
 function onKeydown(event: KeyboardEvent) {
+  // An Enter that commits an IME composition is not a "next hit" press.
+  if (event.isComposing) return;
   if (event.key === "Escape") {
     event.stopPropagation();
     emit("close");
@@ -84,7 +86,9 @@ function onKeydown(event: KeyboardEvent) {
   }
   if (event.key === "Enter") {
     event.stopPropagation();
-    find.step(event.shiftKey ? -1 : 1);
+    // A click never focuses a `<button>` here, but a keyboard user can tab to
+    // one: Enter there must press the control, not step through hits.
+    if (event.target === input.value) find.step(event.shiftKey ? -1 : 1);
     return;
   }
 
@@ -116,55 +120,74 @@ function onKeydown(event: KeyboardEvent) {
  * `bg-transparent text-content` is emitted after the active recipe in the
  * compiled stylesheet, so it would win the cascade and hide the state. The
  * geometry still matches `AppButton`'s `sm` size (h-6, 14 px icon).
+ *
+ * The toggles and the counter also drop out as the panel narrows: Task 4 puts
+ * `@container` on the column the bar sits in, so under 17rem the three options
+ * go (their shortcuts still work through the keyboard handler) and under 21rem
+ * the counter goes, which keeps the query usable down to the 260 px minimum.
  */
 const TOGGLE_CLASS =
-  "grid h-6 shrink-0 place-items-center rounded-[4px] px-2 transition-colors " +
+  "hidden h-6 shrink-0 place-items-center rounded-[4px] px-2 transition-colors " +
+  "@[17rem]:inline-grid " +
   "disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent";
 </script>
 
 <template>
+  <!-- `max-w` is what keeps the bar inside the panel: anchored right, it would
+       otherwise grow past the left edge of a narrow preview and clip the query. -->
   <div
-    class="absolute top-2 right-2 z-10 flex h-8 items-center gap-0.5 rounded-control border border-line-strong bg-elevated px-1 text-meta shadow-lg"
+    class="absolute top-2 right-2 z-10 flex h-8 max-w-[calc(100%-1rem)] items-center gap-0.5 rounded-control border border-line-strong bg-elevated px-1 text-meta shadow-lg"
     data-testid="find-bar"
     @keydown="onKeydown"
   >
     <input
       ref="input"
-      v-model="find.query"
+      :value="find.query"
       type="text"
-      class="w-52 bg-transparent px-1.5 text-content placeholder:text-subtle outline-none"
+      class="w-52 min-w-0 bg-transparent px-1.5 text-content placeholder:text-subtle outline-none"
       placeholder="Find"
       aria-label="Find in file"
+      :aria-invalid="Boolean(props.error)"
       autocomplete="off"
       spellcheck="false"
       data-testid="find-input"
+      @input="find.setQuery(($event.target as HTMLInputElement).value)"
     />
 
     <span
       v-if="counter"
-      class="tabular shrink-0 px-1 whitespace-nowrap"
+      class="tabular hidden shrink-0 px-1 whitespace-nowrap @[21rem]:block"
+      role="status"
+      aria-live="polite"
       :class="counter.danger ? 'text-danger' : 'text-muted'"
       data-testid="find-counter"
     >{{ counter.text }}</span>
 
+    <!-- Every control prevents the press default: a click on a button blurs the
+         input to the body in WKWebView, which would hand the keys back to the
+         shell. The click itself still fires, and the caret stays where it was. -->
     <AppButton
       size="sm"
       variant="ghost"
+      class="shrink-0"
       :icon="ChevronUp"
       :disabled="props.matchCount === 0"
       aria-label="Previous match"
       title="Previous match (⇧↩)"
       data-testid="find-prev"
+      @mousedown.prevent
       @click="find.step(-1)"
     />
     <AppButton
       size="sm"
       variant="ghost"
+      class="shrink-0"
       :icon="ChevronDown"
       :disabled="props.matchCount === 0"
       aria-label="Next match"
       title="Next match (↩)"
       data-testid="find-next"
+      @mousedown.prevent
       @click="find.step(1)"
     />
 
@@ -178,6 +201,7 @@ const TOGGLE_CLASS =
       aria-label="Match case"
       title="Match Case (⌥⌘C)"
       data-testid="find-case"
+      @mousedown.prevent
       @click="find.toggleCase()"
     >
       <CaseSensitive class="size-3.5" />
@@ -193,6 +217,7 @@ const TOGGLE_CLASS =
       aria-label="Match whole word"
       title="Match Whole Word (⌥⌘W)"
       data-testid="find-whole-word"
+      @mousedown.prevent
       @click="find.toggleWholeWord()"
     >
       <WholeWord class="size-3.5" />
@@ -207,6 +232,7 @@ const TOGGLE_CLASS =
       aria-label="Use regular expression"
       title="Use Regular Expression (⌥⌘R)"
       data-testid="find-regex"
+      @mousedown.prevent
       @click="find.toggleRegex()"
     >
       <Regex class="size-3.5" />
@@ -215,10 +241,12 @@ const TOGGLE_CLASS =
     <AppButton
       size="sm"
       variant="ghost"
+      class="shrink-0"
       :icon="X"
       aria-label="Close find"
       title="Close (Esc)"
       data-testid="find-close"
+      @mousedown.prevent
       @click="emit('close')"
     />
   </div>
