@@ -105,7 +105,7 @@ test("empty and whitespace queries follow the literal contract", () => {
   assert.deepEqual(find("a b", " ").matches, [{ start: 1, end: 2 }]);
 });
 
-test("zero-width regex matches are skipped without looping", () => {
+test("zero-width regex matches are skipped without looping", { timeout: 5000 }, () => {
   assert.deepEqual(find("abc", "^", { regex: true }), { matches: [], error: null, capped: false });
   assert.deepEqual(find("a b", "\\b", { regex: true }), { matches: [], error: null, capped: false });
   // Advancing into a surrogate pair would round `lastIndex` back down and repeat
@@ -114,16 +114,26 @@ test("zero-width regex matches are skipped without looping", () => {
 });
 
 test("MAX_MATCHES caps a long literal match list", () => {
-  const result = find("a".repeat(MAX_MATCHES + 10), "a");
-  assert.equal(result.error, null);
-  assert.equal(result.capped, true);
-  assert.equal(result.matches.length, MAX_MATCHES);
-  assert.deepEqual(result.matches[0], { start: 0, end: 1 });
-  assert.deepEqual(result.matches.at(-1), { start: MAX_MATCHES - 1, end: MAX_MATCHES });
+  assert.equal(MAX_MATCHES, 2000);
+
+  // Exactly at the limit, the result is complete: no hit was cut off.
+  const exactly = find("a".repeat(MAX_MATCHES), "a");
+  assert.equal(exactly.matches.length, MAX_MATCHES);
+  assert.equal(exactly.capped, false);
+
+  const longer = find("a".repeat(MAX_MATCHES + 10), "a");
+  assert.equal(longer.error, null);
+  assert.equal(longer.capped, true);
+  assert.equal(longer.matches.length, MAX_MATCHES);
+  assert.deepEqual(longer.matches[0], { start: 0, end: 1 });
+  assert.deepEqual(longer.matches.at(-1), { start: MAX_MATCHES - 1, end: MAX_MATCHES });
 
   const short = find("aaa", "a");
   assert.equal(short.capped, false);
   assert.equal(short.matches.length, 3);
+
+  // Whole-word filtering runs before the cap, so the flag tracks valid hits.
+  assert.equal(find("a ".repeat(MAX_MATCHES + 1), "a", { wholeWord: true }).capped, true);
 });
 
 test("the Unicode flag powers \\p{L} and keeps astral words intact", () => {

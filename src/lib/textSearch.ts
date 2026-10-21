@@ -13,7 +13,7 @@ export interface MatchRange {
 
 export interface FindResult {
   matches: MatchRange[];
-  /** Non-null when `regex` is on and the query does not compile. */
+  /** Non-null when the query does not compile: an invalid regex, or a literal the engine rejects under `u`. */
   error: string | null;
   /** True when `MAX_MATCHES` cut the list short. */
   capped: boolean;
@@ -41,6 +41,7 @@ export function findMatches(text: string, query: string, options: FindOptions): 
   }
 
   const matches: MatchRange[] = [];
+  let capped = false;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
     const start = match.index;
@@ -58,11 +59,16 @@ export function findMatches(text: string, query: string, options: FindOptions): 
     // Whole-word is a literal-mode convenience; a regex query is taken as written.
     if (options.wholeWord && !options.regex && !isWholeWord(text, start, end)) continue;
 
+    // Keep scanning past the cap so `capped` means "there are more hits", not
+    // "the list happens to be full". A further valid match proves extra hits.
+    if (matches.length === MAX_MATCHES) {
+      capped = true;
+      break;
+    }
     matches.push({ start, end });
-    if (matches.length === MAX_MATCHES) return { matches, error: null, capped: true };
   }
 
-  return { matches, error: null, capped: false };
+  return { matches, error: null, capped };
 }
 
 /** A word character for the whole-word check: Unicode letters, digits and `_`. */
