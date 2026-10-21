@@ -265,6 +265,33 @@ const SCENARIO: &str = r#"(async () => {
     }));
   const rowNames = () => $$('.object-row .row-label').map((n) => n.textContent);
   /**
+   * Why a key press that should have opened the address editor did nothing.
+   *
+   * "timeout waiting for the address editor" names the symptom, not the cause.
+   * A modal in the stack swallows every shell shortcut, a missing pencil means
+   * the bar is already editing or the connection is gone, and a listing still
+   * reloading can hold the layout mid-flight. Report all of it at once, so the
+   * next failure explains itself without a rerun.
+   */
+  const addressBarState = () => {
+    const focus = document.activeElement;
+    const titles = $$('dialog[open]').map((d) => {
+      const title = d.querySelector('[data-testid=modal-title], h2, h3');
+      return title ? title.textContent.trim() : '(untitled)';
+    });
+    return ' :: dialogs=' + JSON.stringify(titles)
+      + ' modalRoot=' + Boolean($('[data-testid=modal-root]'))
+      + ' editButton=' + Boolean($('[data-testid=address-edit]'))
+      + ' input=' + Boolean($('[data-testid=address-input]'))
+      + ' focus=' + (focus instanceof HTMLElement ? focus.dataset.testid ?? focus.tagName : null)
+      + ' active=' + JSON.stringify(window.__s3viewer.state.connections.active?.id ?? null)
+      + ' prefix=' + JSON.stringify(window.__s3viewer.state.objects.prefix)
+      + ' loading=' + window.__s3viewer.state.objects.loading
+      + ' awaiting=' + window.__s3viewer.state.objects.awaitingFirstPage
+      + ' listingLog=' + window.__s3viewer.logs.listing.slice(-6).join(' | ')
+      + ' errors=' + JSON.stringify(window.__s3viewerErrors.slice(-2));
+  };
+  /**
    * Right-click a row and hand back its menu, retrying until both are real.
    *
    * A transfer that settles reloads its folder in the background, which empties
@@ -1950,7 +1977,8 @@ const SCENARIO: &str = r#"(async () => {
       // stale error goes with it (NAV-7). This is the frozen-editor case: the
       // error kept the editor open while the folder changed underneath it.
       press(document.body, 'l', { metaKey: true });
-      const address = await wait('the address editor', () => $('[data-testid=address-input]'), 5000);
+      const address = await wait('the address editor', () => $('[data-testid=address-input]'), 5000)
+        .catch((error) => { throw new Error(error.message + addressBarState()); });
       address.value = 's3://' + window.__s3viewer.state.connections.active.bucket + '/'
         + __PREFIX__ + 'does-not-exist-' + Date.now();
       fire(address, 'input');

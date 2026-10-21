@@ -546,8 +546,15 @@ async function onFind(open: boolean) {
   if (open && entry.isFolder) await objects.navigate(entry.key);
   else await objects.previewEntry(entry, { force: open, reveal: open });
   // Opening a folder collapses an expanded preview and brings the list back;
-  // the first focus call happened while that list could still be hidden.
-  objectList.value?.focusList();
+  // the first focus call happened while that list could still be hidden. The
+  // load can outlive the gesture, so only take the keyboard back if nothing
+  // else claimed it: a superseded folder stream resolves late, and stealing
+  // focus there blurred an address editor opened with ⌘L while it ran — the
+  // blur closes the editor, so the shortcut did nothing at all.
+  const active = document.activeElement;
+  if (!active || active === document.body || active.closest("#object-list")) {
+    objectList.value?.focusList();
+  }
 }
 
 /** Escape in the field clears the filter and leaves the list owning the keys. */
