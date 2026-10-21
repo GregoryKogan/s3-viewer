@@ -35,7 +35,7 @@
 </p>
 
 <p align="center">
-  <sub>macOS 11+ · Apple Silicon and Intel · about 12 MB · Linux <code>.deb</code> and AppImage in the same release</sub>
+  <sub>macOS 12.3+ · Apple Silicon and Intel · about 12 MB · Linux <code>.deb</code> and AppImage in the same release</sub>
 </p>
 
 <p align="center">
@@ -211,7 +211,7 @@ or directly under [Releases](https://github.com/GregoryKogan/s3-viewer/releases/
 
 | Asset | Platform |
 | --- | --- |
-| [`S3-Viewer.dmg`](https://github.com/GregoryKogan/s3-viewer/releases/latest/download/S3-Viewer.dmg) | macOS 11+, universal (Apple Silicon and Intel) |
+| [`S3-Viewer.dmg`](https://github.com/GregoryKogan/s3-viewer/releases/latest/download/S3-Viewer.dmg) | macOS 12.3+, universal (Apple Silicon and Intel) |
 | [`S3-Viewer.AppImage`](https://github.com/GregoryKogan/s3-viewer/releases/latest/download/S3-Viewer.AppImage) | Linux, portable |
 | [`S3-Viewer-amd64.deb`](https://github.com/GregoryKogan/s3-viewer/releases/latest/download/S3-Viewer-amd64.deb) | Linux, Debian/Ubuntu |
 | [`SHA256SUMS.txt`](https://github.com/GregoryKogan/s3-viewer/releases/latest/download/SHA256SUMS.txt) | checksums for the three above |

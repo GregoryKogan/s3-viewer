@@ -7,7 +7,10 @@ reach installed users or offers the same update on every launch.
 ## What the app is
 
 A Tauri 2 desktop S3 browser: Rust backend in `src-tauri/`, Vue 3 + Pinia
-frontend in `src/`. macOS and Linux only.
+frontend in `src/`. macOS 12.3+ and Linux only: the UI uses the native
+`<dialog>` element (Safari 15.4), and `minimumSystemVersion` in
+`src-tauri/tauri.conf.json` must stay at 12.3 or the installer promises a
+macOS the dialogs cannot run on.
 
 ## Build and test
 
