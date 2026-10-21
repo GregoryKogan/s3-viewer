@@ -96,6 +96,9 @@ pub fn run() {
             ping,
         ])
         .setup(|app| {
+            // Release builds carry no harness, so the handle has no reader there.
+            #[cfg(not(debug_assertions))]
+            let _ = app;
             // The self-hosted end-to-end harness is a debug-only build product:
             // it starts only when the runner asks for it (S3VIEWER_E2E=1).
             #[cfg(debug_assertions)]
