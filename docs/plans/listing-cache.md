@@ -269,6 +269,11 @@ Inside the store setup, after the listing state (`staged`, `listingRequest`, ...
   const refreshing = ref(false);
   /** The request id of that background refresh, or null. */
   let revalidating: string | null = null;
+  /**
+   * A background refresh whose invoke already rejected. Its `listing://error`
+   * can still arrive afterwards; that event must not blank the cached list.
+   */
+  let failedRevalidation: string | null = null;
 ```
 
 Constants at module scope (above `useObjectsStore`, with a comment):
@@ -305,6 +310,7 @@ Then keep the existing preview/selection logic, but:
 ```ts
     refreshing.value = false;
     revalidating = null;
+    failedRevalidation = null;
 ```
 
 - immediately after that, the cache-hit branch, **before** the 120 s guard is created:
@@ -322,6 +328,9 @@ Then keep the existing preview/selection logic, but:
         .catch((failure) => {
           if (revalidating === requestId) {
             revalidating = null;
+            // The error event may follow this rejection; remember the id so
+            // `onListingError` can drop it instead of showing an error.
+            failedRevalidation = requestId;
             refreshing.value = false;
           }
           note(listingLog, `revalidate-failed#${requestId} ${(failure as Error)?.message ?? ""}`);
@@ -335,8 +344,9 @@ The existing guard, invoke, catch and `finally` stay as they are and now run onl
 `onListingDone`, at the very top (before the stale check):
 
 ```ts
-    if (event.requestId === revalidating) {
+    if (event.requestId === revalidating || event.requestId === failedRevalidation) {
       revalidating = null;
+      failedRevalidation = null;
       refreshing.value = false;
     }
 ```
@@ -361,8 +371,9 @@ After `prefix.value = event.prefix ?? prefix.value;`, write the cache:
 ```ts
     // A failed background refresh keeps the cached list: silence here also
     // keeps App.vue from marking the connection unhealthy for it.
-    if (event.requestId === revalidating) {
+    if (event.requestId === revalidating || event.requestId === failedRevalidation) {
       revalidating = null;
+      failedRevalidation = null;
       refreshing.value = false;
       note(listingLog, `revalidate-failed#${event.requestId} ${event.error?.message ?? ""}`);
       return false;
@@ -383,7 +394,7 @@ After `prefix.value = event.prefix ?? prefix.value;`, write the cache:
   }
 ```
 
-`close()` additionally sets `refreshing.value = false;` and `revalidating = null;`.
+`close()` additionally sets `refreshing.value = false;`, `revalidating = null;` and `failedRevalidation = null;`.
 
 Add, next to `close()`:
 
@@ -489,7 +500,7 @@ Tests (names and what each must prove):
 1. `"a cached folder is shown without another listing call"` — list `"big/"` with entries; `cacheFolders === 1` and `cacheBytes > 0`; then `loadFolder("")`, then `loadFolder("big/")`; the third call uses the cache: `calls.length` stays at 2, `entries` are restored synchronously (assert immediately after calling, before awaiting), `loading` is false, `refreshing` is false.
 2. `"reload bypasses the cache and drops the entry"` — after caching, `objects.reload()` starts a new call (`calls.length` + 1) and `cacheFolders` drops to 0 before that call completes.
 3. `"a stale cached folder is painted, then replaced by the background refresh"` — `t.mock.timers.enable({ apis: ["Date"], now: Date.now() })`, cache a folder, `t.mock.timers.tick(31_000)`, then load it with a manual listing: entries are painted synchronously, `refreshing` is true, one call started; emit `onListingPage` + `onListingDone` with a renamed entry; entries are replaced, `refreshing` is false, and a later cached visit paints the new entry without a call.
-4. `"a failed background refresh keeps the cached list and stays quiet"` — stale hit; emit `onListingError` for that request (and also reject the invoke); entries unchanged, `error` is null, no error toast, `refreshing` is false.
+4. `"a failed background refresh keeps the cached list and stays quiet"` — stale hit; cover BOTH arrival orders in one test or two: (a) emit `onListingError` for that request, then reject the invoke; (b) reject the invoke first, `await` a microtask so the rejection settles, then emit `onListingError`. In both, entries are unchanged, `error` is null, no error toast, `refreshing` is false.
 5. `"clearListingCache empties the cache"` — cache a folder, `clearListingCache()`, `cacheFolders === 0`, `cacheBytes === 0`, and the next visit starts a call.
 6. `"the cache is scoped to the connection"` — cache `"big/"` on connection `a`, `connections.setActive("b")`, load the same prefix: a new call starts and the old entries are not painted.
 
