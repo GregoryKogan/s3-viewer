@@ -45,7 +45,7 @@ import { useDialogsStore } from "@/stores/dialogs";
 import { useToastsStore } from "@/stores/toasts";
 import { useUpdatesStore } from "@/stores/updates";
 import { useObjectActions } from "@/composables/useObjectActions";
-import { useDialogs } from "@/composables/useDialogs";
+import { useConnectionActions } from "@/composables/useConnectionActions";
 import type {
   AppSettings,
   Connection,
@@ -62,7 +62,7 @@ const dialogs = useDialogsStore();
 const toasts = useToastsStore();
 const updates = useUpdatesStore();
 const actions = useObjectActions();
-const confirmations = useDialogs();
+const connectionActions = useConnectionActions();
 
 const objectList = ref<InstanceType<typeof ObjectList> | null>(null);
 const sidebar = ref<InstanceType<typeof AppSidebar> | null>(null);
@@ -374,30 +374,17 @@ async function copyBucketUri(connection: Connection) {
 }
 
 async function removeConnection(connection: Connection) {
-  const confirmed = await confirmations.confirm({
-    title: `Remove “${connection.name}”?`,
-    message:
-      "This removes the connection and its saved credentials from this computer. Objects in the bucket are unaffected.",
-    confirmLabel: "Remove",
-    danger: true,
-  });
-  if (!confirmed) return;
-  try {
-    // The store clears the open objects session when the removed connection is
-    // the active one, so the main area falls back to its empty state.
-    await connections.remove(connection.id);
-    toasts.ok(`Connection “${connection.name}” removed.`);
-    await nextTick();
-    // The card is gone. Land the keyboard on the remaining open card, or on the
-    // New button when that was the last connection.
-    if (!document.activeElement?.closest("[data-connection-card]")) {
-      const target = connections.activeId
-        ? document.querySelector<HTMLElement>(`[data-testid=connection-${connections.activeId}]`)
-        : null;
-      (target ?? document.getElementById("new-connection"))?.focus();
-    }
-  } catch (error) {
-    toasts.apiError(error, "Cannot remove connection");
+  // The store clears the open objects session when the removed connection is
+  // the active one, so the main area falls back to its empty state.
+  if (!(await connectionActions.remove(connection))) return;
+  await nextTick();
+  // The card is gone. Land the keyboard on the remaining open card, or on the
+  // New button when that was the last connection.
+  if (!document.activeElement?.closest("[data-connection-card]")) {
+    const target = connections.activeId
+      ? document.querySelector<HTMLElement>(`[data-testid=connection-${connections.activeId}]`)
+      : null;
+    (target ?? document.getElementById("new-connection"))?.focus();
   }
 }
 

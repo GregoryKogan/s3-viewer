@@ -7,7 +7,9 @@ import { useObjectsStore } from "@/stores/objects";
 import { useToastsStore } from "@/stores/toasts";
 import { useProgressStore } from "@/stores/progress";
 import { useUiStore } from "@/stores/ui";
-import { useDialogs } from "@/composables/useDialogs";
+import { useDialogsStore } from "@/stores/dialogs";
+import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
+import PromptDialog from "@/components/ui/PromptDialog.vue";
 import CopyMoveDialog, { type CopyMoveResult } from "@/components/dialogs/CopyMoveDialog.vue";
 import CreateFileDialog, { type CreateFileResult } from "@/components/dialogs/CreateFileDialog.vue";
 import UploadConflictDialog, {
@@ -69,7 +71,7 @@ export function useObjectActions() {
   const transfers = useProgressStore();
   const ui = useUiStore();
   const toasts = useToastsStore();
-  const dialogs = useDialogs();
+  const dialogs = useDialogsStore();
 
   const targets = computed<ObjectEntry[]>(() =>
     objects.selected.size ? objects.selectedEntries : [],
@@ -398,7 +400,7 @@ export function useObjectActions() {
       }
 
       if (conflicts.length) {
-        const choice = await dialogs.store.open<UploadConflictChoice | null>(
+        const choice = await dialogs.open<UploadConflictChoice | null>(
           UploadConflictDialog,
           (settle) => ({ conflicts, prefix: target.prefix, resolve: settle }),
           "narrow",
@@ -557,13 +559,18 @@ export function useObjectActions() {
   async function createFolder() {
     const connection = connections.active;
     if (!connection || !sessionMatchesActive() || !canWrite()) return;
-    const name = await dialogs.prompt({
-      title: "New folder",
-      label: "Folder name",
-      confirmLabel: "Create folder",
-      hint: "S3 has no real folders — this creates a zero-byte marker key ending in “/”.",
-      validate: (value) => (value.includes("/") ? "The name must not contain “/”." : null),
-    });
+    const name = await dialogs.open<string | null>(
+      PromptDialog,
+      (settle) => ({
+        title: "New folder",
+        label: "Folder name",
+        confirmLabel: "Create folder",
+        hint: "S3 has no real folders — this creates a zero-byte marker key ending in “/”.",
+        validate: (value: string) => (value.includes("/") ? "The name must not contain “/”." : null),
+        resolve: settle,
+      }),
+      "narrow",
+    );
     if (!name) return;
     try {
       await api.createFolder({ connectionId: connection.id, prefix: objects.prefix, name });
@@ -580,7 +587,7 @@ export function useObjectActions() {
     const target = captureTarget(connection.id);
     if (!target) return;
 
-    const result = await dialogs.store.open<CreateFileResult | null>(
+    const result = await dialogs.open<CreateFileResult | null>(
       CreateFileDialog,
       (settle) => ({ prefix: target.prefix, resolve: settle }),
       "normal",
@@ -640,13 +647,18 @@ export function useObjectActions() {
     details.push("This cannot be undone.");
 
     if (connection.security.confirmDelete) {
-      const confirmed = await dialogs.confirm({
-        title: "Delete objects",
-        message: `Permanently delete ${entries.length} selected item(s) from “${connection.name}”?`,
-        details,
-        confirmLabel: "Delete",
-        danger: true,
-      });
+      const confirmed = await dialogs.open<boolean>(
+        ConfirmDialog,
+        (settle) => ({
+          title: "Delete objects",
+          message: `Permanently delete ${entries.length} selected item(s) from “${connection.name}”?`,
+          details,
+          confirmLabel: "Delete",
+          danger: true,
+          resolve: settle,
+        }),
+        "narrow",
+      );
       if (!confirmed) return;
     }
 
@@ -719,7 +731,7 @@ export function useObjectActions() {
     const target = captureTarget(source.id);
     if (!target) return;
 
-    const result = await dialogs.store.open<CopyMoveResult | null>(
+    const result = await dialogs.open<CopyMoveResult | null>(
       CopyMoveDialog,
       (settle) => ({
         moveObjects,

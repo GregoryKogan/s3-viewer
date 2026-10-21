@@ -24,7 +24,7 @@ import { ApiError, copyText } from "@/lib/ipc";
 import { submitOnEnter } from "@/lib/keyboard";
 import { useConnectionsStore } from "@/stores/connections";
 import { useToastsStore } from "@/stores/toasts";
-import { useDialogs } from "@/composables/useDialogs";
+import { useConnectionActions } from "@/composables/useConnectionActions";
 import type {
   AddressingStyle,
   Capabilities,
@@ -44,7 +44,7 @@ const props = defineProps<{
 
 const connections = useConnectionsStore();
 const toasts = useToastsStore();
-const confirmations = useDialogs();
+const actions = useConnectionActions();
 
 const isEdit = computed(() => Boolean(props.connection?.id));
 
@@ -53,7 +53,7 @@ const form = ref({
   // Initialised here rather than in `onMounted`, which used to render an empty
   // Endpoint for one frame in the edit dialog (CON-3).
   endpointUrl: props.connection?.endpointUrl ?? "",
-  // Blank on purpose: the presets below fill it, and other providers do not
+  // Blank on purpose: the AWS defaults fill it, and other providers do not
   // necessarily use `us-east-1`.
   region: props.connection?.region ?? "",
   accessKeyId: props.connection?.accessKeyId ?? "",
@@ -85,47 +85,27 @@ const PLACEHOLDER = {
 };
 
 /**
- * Presets fill an empty form; they never touch a value the user typed. The
- * second preset is deliberately blank, so it hands the form back for any other
- * S3-compatible service.
+ * The one preset: AWS's public endpoint and its usual region. It fills only a
+ * blank field, so it never replaces an address the user typed.
  */
-const PRESETS = {
-  aws: { endpointUrl: "https://s3.amazonaws.com", region: "us-east-1" },
-  other: { endpointUrl: "", region: "" },
-};
-/** What the last preset put in the field, so "Other" can undo its own fill. */
-const presetFilled = { endpointUrl: "", region: "" };
+const AWS_DEFAULTS = { endpointUrl: "https://s3.amazonaws.com", region: "us-east-1" };
 
-function applyPreset(name: keyof typeof PRESETS) {
-  const values = PRESETS[name];
-  for (const key of ["endpointUrl", "region"] as const) {
-    const current = form.value[key];
-    if (!current.trim() || current === presetFilled[key]) {
-      form.value[key] = values[key];
-    }
-    presetFilled[key] = values[key];
-  }
+function useAwsDefaults() {
+  if (!form.value.endpointUrl.trim()) form.value.endpointUrl = AWS_DEFAULTS.endpointUrl;
+  if (!form.value.region.trim()) form.value.region = AWS_DEFAULTS.region;
 }
 
-const nameInput = ref<HTMLInputElement | null>(null);
-const endpointInput = ref<HTMLInputElement | null>(null);
-const regionInput = ref<HTMLInputElement | null>(null);
-const bucketInput = ref<HTMLInputElement | null>(null);
-const accessKeyInput = ref<HTMLInputElement | null>(null);
-const secretInput = ref<HTMLInputElement | null>(null);
-
-/** The order the fields are drawn in, so the first error is the first one seen. */
-const FIELD_ORDER = ["name", "bucket", "endpoint", "region", "accessKey", "secret"] as const;
-
-function inputFor(key: (typeof FIELD_ORDER)[number]): HTMLInputElement | null {
-  return {
-    name: nameInput.value,
-    endpoint: endpointInput.value,
-    region: regionInput.value,
-    bucket: bucketInput.value,
-    accessKey: accessKeyInput.value,
-    secret: secretInput.value,
-  }[key];
+/**
+ * Take the keyboard to the first field whose error is on screen.
+ *
+ * AppField writes `aria-invalid` on its control, so the field order is the DOM
+ * order and does not need a second list to drift out of step with the markup.
+ */
+async function focusFirstInvalid(scroll: boolean) {
+  await nextTick();
+  const input = document.querySelector<HTMLElement>('[data-modal-body] [aria-invalid="true"]');
+  if (scroll) input?.scrollIntoView({ block: "center", behavior: "smooth" });
+  input?.focus({ preventScroll: true });
 }
 
 const showingSecret = ref(false);
@@ -215,13 +195,8 @@ async function validate(): Promise<boolean> {
     next.secret = "The secret access key is required.";
   }
   errors.value = next;
-
-  const first = FIELD_ORDER.find((key) => next[key]);
-  if (!first) return true;
-  await nextTick();
-  const input = inputFor(first);
-  input?.scrollIntoView({ block: "center", behavior: "smooth" });
-  input?.focus({ preventScroll: true });
+  if (!Object.keys(next).length) return true;
+  await focusFirstInvalid(true);
   return false;
 }
 
@@ -240,9 +215,7 @@ async function testConnection() {
   }
   if (Object.keys(missing).length) {
     errors.value = missing;
-    await nextTick();
-    const first = FIELD_ORDER.find((key) => missing[key]);
-    if (first) inputFor(first)?.focus({ preventScroll: true });
+    await focusFirstInvalid(false);
     return;
   }
   probing.value = true;
@@ -310,23 +283,7 @@ async function duplicate() {
 async function removeConnection() {
   const connection = props.connection;
   if (!connection) return;
-  // Removing a connection is a destructive, irreversible action and deserves
-  // the same explicit confirmation as deleting objects (CON-7).
-  const confirmed = await confirmations.confirm({
-    title: `Remove “${connection.name}”?`,
-    message:
-      "This removes the connection and its saved credentials from this computer. Objects in the bucket are unaffected.",
-    confirmLabel: "Remove",
-    danger: true,
-  });
-  if (!confirmed) return;
-  try {
-    await connections.remove(connection.id);
-    toasts.ok(`Connection “${connection.name}” removed.`);
-    props.resolve(null);
-  } catch (error) {
-    toasts.apiError(error, "Cannot remove connection");
-  }
+  if (await actions.remove(connection)) props.resolve(null);
 }
 
 /**
@@ -376,11 +333,8 @@ function onEnter(event: KeyboardEvent) {
 
     <div class="flex flex-wrap items-center gap-1.5" data-testid="conn-presets">
       <span class="text-meta text-subtle">Start from a preset:</span>
-      <AppButton size="sm" data-testid="conn-preset-aws" @click="applyPreset('aws')">
-        AWS S3
-      </AppButton>
-      <AppButton size="sm" data-testid="conn-preset-other" @click="applyPreset('other')">
-        Other S3-compatible
+      <AppButton size="sm" data-testid="conn-preset-aws" @click="useAwsDefaults">
+        Use AWS S3
       </AppButton>
     </div>
 
@@ -396,13 +350,11 @@ function onEnter(event: KeyboardEvent) {
           hint="What this connection is called in the sidebar."
         >
           <input
-            ref="nameInput"
             v-model="form.name"
             :class="inputClass"
             data-testid="conn-name"
             placeholder="Dev bucket"
             autofocus
-            :aria-invalid="errors.name ? 'true' : undefined"
           />
         </AppField>
 
@@ -413,12 +365,10 @@ function onEnter(event: KeyboardEvent) {
           hint="The bucket this connection is scoped to."
         >
           <input
-            ref="bucketInput"
             v-model="form.bucket"
             :class="inputClass"
             data-testid="conn-bucket"
             :placeholder="PLACEHOLDER.bucket"
-            :aria-invalid="errors.bucket ? 'true' : undefined"
           />
         </AppField>
 
@@ -430,13 +380,11 @@ function onEnter(event: KeyboardEvent) {
           hint="The S3 endpoint, starting with https://"
         >
           <input
-            ref="endpointInput"
             v-model="form.endpointUrl"
             :class="inputClass"
             data-testid="conn-endpoint"
             :placeholder="PLACEHOLDER.endpoint"
             spellcheck="false"
-            :aria-invalid="errors.endpoint ? 'true' : undefined"
           />
         </AppField>
 
@@ -447,12 +395,10 @@ function onEnter(event: KeyboardEvent) {
           hint="Usually dictated by the provider."
         >
           <input
-            ref="regionInput"
             v-model="form.region"
             :class="inputClass"
             data-testid="conn-region"
             :placeholder="PLACEHOLDER.region"
-            :aria-invalid="errors.region ? 'true' : undefined"
           />
         </AppField>
 
@@ -467,14 +413,12 @@ function onEnter(event: KeyboardEvent) {
 
         <AppField label="Access key" required :error="errors.accessKey" hint="The key ID, not the secret.">
           <input
-            ref="accessKeyInput"
             v-model="form.accessKeyId"
             :class="inputClass"
             data-testid="conn-access-key"
             :placeholder="PLACEHOLDER.accessKey"
             spellcheck="false"
             autocomplete="off"
-            :aria-invalid="errors.accessKey ? 'true' : undefined"
           />
         </AppField>
 
@@ -490,14 +434,12 @@ function onEnter(event: KeyboardEvent) {
         >
           <div class="flex gap-1">
             <input
-              ref="secretInput"
-              v-model="form.secretAccessKey"
+                v-model="form.secretAccessKey"
               :type="showingSecret ? 'text' : 'password'"
               :class="inputClass"
               data-testid="conn-secret-key"
               :placeholder="isEdit ? '•••••••• (stored)' : ''"
               autocomplete="off"
-              :aria-invalid="errors.secret ? 'true' : undefined"
             />
             <button
               type="button"
