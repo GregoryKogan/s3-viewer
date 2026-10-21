@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { computed, ref, shallowRef, watch } from "vue";
-import { api, ApiError } from "@/lib/ipc";
+import { api, ApiError, detailFrom } from "@/lib/ipc";
 import { asFolderPrefix } from "@/lib/keys";
 import { ListingCache, listingCacheKey } from "@/lib/listingCache";
 import { useConnectionsStore } from "@/stores/connections";
@@ -258,11 +258,7 @@ export const useObjectsStore = defineStore("objects", () => {
         if (failure instanceof ApiError) {
           // The event often arrives before the rejected invoke and already knows
           // the S3 request id; a throw without one must not erase it.
-          errorDetail.value = {
-            hints: failure.hints,
-            code: failure.code,
-            requestId: failure.requestId ?? recordedRequestId(),
-          };
+          errorDetail.value = detailFrom(failure, recordedRequestId());
         }
         // One failure, one toast: the event is authoritative, and a failure
         // that never emits an event (raised before the stream starts) is
@@ -370,13 +366,9 @@ export const useObjectsStore = defineStore("objects", () => {
     loading.value = false;
     awaitingFirstPage.value = false;
     error.value = event.error?.message ?? "listing failed";
-    errorDetail.value = {
-      hints: event.error?.hints ?? [],
-      code: event.error?.code ?? null,
-      // The top-level requestId is the internal listing counter; the S3 id lives
-      // inside the payload.
-      requestId: event.error?.requestId ?? null,
-    };
+    // The top-level requestId is the internal listing counter; the S3 id lives
+    // inside the payload.
+    errorDetail.value = detailFrom(event.error ?? {});
     // Raise the event as an ApiError so the toast keeps the same hints and code
     // the inline error state shows; a staged listing has no inline notice. The
     // rejected invoke may already have announced this request when the event
@@ -620,11 +612,7 @@ export const useObjectsStore = defineStore("objects", () => {
       previewUnavailable.value = null;
       previewError.value = message;
       if (failure instanceof ApiError) {
-        previewErrorDetail.value = {
-          hints: failure.hints,
-          code: failure.code,
-          requestId: failure.requestId,
-        };
+        previewErrorDetail.value = detailFrom(failure);
       }
       return;
     }
@@ -694,11 +682,6 @@ export const useObjectsStore = defineStore("objects", () => {
     await fetchPreview(key, { keepPayload: true });
   }
 
-  /** Re-render the current preview with a different view (Markdown raw/rendered). */
-  function setPreviewView(view: "rendered" | "raw") {
-    previewView.value = view;
-  }
-
   // A new limit applies in place: drop the least recently used folders until
   // the cache fits again, so lowering it is visible immediately.
   watch(
@@ -761,6 +744,5 @@ export const useObjectsStore = defineStore("objects", () => {
     clearPreview,
     previewEntry,
     refreshPreview,
-    setPreviewView,
   };
 });

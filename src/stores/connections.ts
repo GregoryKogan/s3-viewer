@@ -67,8 +67,6 @@ export const useConnectionsStore = defineStore("connections", () => {
     () => views.value.find((view) => view.connection.id === activeId.value)?.capabilities,
   );
 
-  const activeSummary = computed(() => describeCapabilities(activeCapabilities.value));
-
   /**
    * Whether the open connection may be written to.
    *
@@ -234,8 +232,6 @@ export const useConnectionsStore = defineStore("connections", () => {
     activeId,
     all,
     active,
-    activeCapabilities,
-    activeSummary,
     canWriteActive,
     load,
     find,

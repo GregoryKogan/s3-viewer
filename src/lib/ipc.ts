@@ -13,10 +13,13 @@ import type {
   ConnectionProbeDraft,
   ConnectionView,
   CopyInput,
+  CopyOutcome,
   DeleteInput,
+  DeleteOutcome,
   DownloadFolderInput,
   DownloadInput,
   ErrorPayload,
+  ListErrorDetail,
   ListResult,
   PreviewData,
   ProbeOutcome,
@@ -84,6 +87,21 @@ function toError(raw: unknown): ApiError {
     });
   }
   return new ApiError(typeof raw === "string" ? raw : JSON.stringify(raw));
+}
+
+/**
+ * The detail half of a failure, for the error notices. `fallbackRequestId`
+ * covers a throw that beat the listing event and lost the S3 request id.
+ */
+export function detailFrom(
+  error: Pick<ErrorPayload, "hints" | "code" | "requestId">,
+  fallbackRequestId: string | null = null,
+): ListErrorDetail {
+  return {
+    hints: error.hints ?? [],
+    code: error.code ?? null,
+    requestId: error.requestId ?? fallbackRequestId ?? null,
+  };
 }
 
 /**
@@ -201,10 +219,8 @@ export const api = {
     invoke<string>("create_folder", { input }),
   createFile: (input: { connectionId: string; prefix: string; name: string; content?: string }) =>
     invoke<string>("create_file", { input }),
-  deleteObjects: (input: DeleteInput) =>
-    invoke<{ deleted: number; summary: string; id: string }>("delete_objects", { input }),
-  copyObjects: (input: CopyInput) =>
-    invoke<{ copied: number; summary: string; id: string }>("copy_objects", { input }),
+  deleteObjects: (input: DeleteInput) => invoke<DeleteOutcome>("delete_objects", { input }),
+  copyObjects: (input: CopyInput) => invoke<CopyOutcome>("copy_objects", { input }),
 
   // filesystem
   revealInFileManager: (path: string) => invoke<void>("reveal_in_file_manager", { path }),

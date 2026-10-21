@@ -142,7 +142,7 @@ function openFolder() {
 }
 
 function onToggleView(view: "rendered" | "raw") {
-  objects.setPreviewView(view);
+  objects.previewView = view;
 }
 
 /** Closing the column puts the keyboard back on the list it was hiding. */

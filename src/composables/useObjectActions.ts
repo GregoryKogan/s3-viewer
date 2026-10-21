@@ -15,7 +15,14 @@ import CreateFileDialog, { type CreateFileResult } from "@/components/dialogs/Cr
 import UploadConflictDialog, {
   type UploadConflictChoice,
 } from "@/components/dialogs/UploadConflictDialog.vue";
-import type { ObjectEntry, ProgressView, TransferResult, UploadPlanItem } from "@/types";
+import type {
+  CopyOutcome,
+  DeleteOutcome,
+  ObjectEntry,
+  ProgressView,
+  TransferResult,
+  UploadPlanItem,
+} from "@/types";
 
 /** How an upload treats keys that already exist. */
 export interface UploadPolicy {
@@ -35,18 +42,6 @@ export interface UploadTarget {
   connectionId: string;
   prefix: string;
   sessionConnectionId: string | null;
-}
-
-interface DeleteOutcome {
-  deleted: number;
-  summary: string;
-  id: string;
-}
-
-interface CopyOutcome {
-  copied: number;
-  summary: string;
-  id: string;
 }
 
 /** One copy/move request, kept whole so Retry can repeat it verbatim. */

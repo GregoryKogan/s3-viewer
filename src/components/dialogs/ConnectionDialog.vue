@@ -20,7 +20,7 @@ import { inputClass, selectClass, codeClass, checkboxClass } from "@/components/
 import type { ModalSize } from "@/components/ui/types";
 import { boto3Snippet } from "@/lib/boto3";
 import { highlight } from "@/lib/highlight";
-import { ApiError, copyText } from "@/lib/ipc";
+import { ApiError, copyText, detailFrom } from "@/lib/ipc";
 import { submitOnEnter } from "@/lib/keyboard";
 import { useConnectionsStore } from "@/stores/connections";
 import { useToastsStore } from "@/stores/toasts";
@@ -241,10 +241,7 @@ async function testConnection() {
   } catch (error) {
     capabilities.value = null;
     probeError.value = error instanceof Error ? error.message : String(error);
-    probeDetail.value =
-      error instanceof ApiError
-        ? { hints: error.hints, code: error.code, requestId: error.requestId }
-        : null;
+    probeDetail.value = error instanceof ApiError ? detailFrom(error) : null;
   } finally {
     probing.value = false;
   }

@@ -9,9 +9,10 @@ import { usePreviewFindStore } from "@/stores/previewFind";
  *
  * The bar keeps no search state of its own: the query and the three options live
  * in the store, while the match list, its error and the active hit come down as
- * props from the body that computed them. In return the bar writes only through
- * the store's actions (`step`, `toggleCase`, ...) and reports `close`; hiding the
- * bar and handing the keyboard back to the scroller belong to the parent.
+ * props from the body that computed them. In return the bar writes the query
+ * straight back and the rest through the store's actions (`step`, `toggleCase`,
+ * ...) and reports `close`; hiding the bar and handing the keyboard back to the
+ * scroller belong to the parent.
  */
 const props = defineProps<{
   matchCount: number;
@@ -154,7 +155,7 @@ const TOGGLE_CLASS =
       autocomplete="off"
       spellcheck="false"
       data-testid="find-input"
-      @input="find.setQuery(($event.target as HTMLInputElement).value)"
+      @input="find.query = ($event.target as HTMLInputElement).value; find.activeIndex = -1"
     />
 
     <span

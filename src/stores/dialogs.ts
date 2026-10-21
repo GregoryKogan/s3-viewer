@@ -16,8 +16,6 @@ export interface DialogRequest<P = Record<string, unknown>> {
    * button still work.
    */
   dismissible: boolean;
-  /** Reject-free cancellation: everything resolves, `null` means "cancelled". */
-  onCancel?: () => void;
 }
 
 export interface DialogOpenOptions {

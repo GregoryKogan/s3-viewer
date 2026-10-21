@@ -36,7 +36,7 @@ import UpdateDialog from "@/components/dialogs/UpdateDialog.vue";
 import ImportDialog from "@/components/dialogs/ImportDialog.vue";
 import { copyText, listen } from "@/lib/ipc";
 import { clamp, s3Uri } from "@/lib/format";
-import { IS_MAC, isEditableTarget, modLabel, shortcutLabel } from "@/lib/keyboard";
+import { deleteShortcut, IS_MAC, isEditableTarget, modLabel, shortcutLabel } from "@/lib/keyboard";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
 import { useProgressStore } from "@/stores/progress";
@@ -80,9 +80,6 @@ const bootError = ref<string | null>(null);
 
 /** Right-click menu: either on one row, or on the empty background. */
 const menu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null);
-
-/** macOS deletes with ⌘⌫; Linux deletes with the forward-delete key. */
-const deleteShortcut = IS_MAC ? shortcutLabel("Backspace") : "Del";
 
 async function copyNames(names: string[]) {
   if (!names.length) return;

@@ -68,6 +68,9 @@ export function shortcutLabel(key: string, mac = IS_MAC): string {
   return `${modLabel(mac)}${keyLabel(key.trim(), mac)}`;
 }
 
+/** The row menu and toolbar delete hint: macOS deletes with ⌘⌫, Linux with Del. */
+export const deleteShortcut = IS_MAC ? shortcutLabel("Backspace") : "Del";
+
 /**
  * Whether a keydown target is a text field the app must not hijack.
  *

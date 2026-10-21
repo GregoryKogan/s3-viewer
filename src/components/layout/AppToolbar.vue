@@ -5,7 +5,7 @@ import AppButton from "@/components/ui/AppButton.vue";
 import { useConnectionsStore } from "@/stores/connections";
 import { useObjectsStore } from "@/stores/objects";
 import { humanSize } from "@/lib/format";
-import { IS_MAC, shortcutLabel } from "@/lib/keyboard";
+import { deleteShortcut, shortcutLabel } from "@/lib/keyboard";
 import { useObjectActions } from "@/composables/useObjectActions";
 
 const objects = useObjectsStore();
@@ -19,8 +19,6 @@ const emit = defineEmits<{
 
 const selectionCount = computed(() => objects.selected.size);
 const canWrite = computed(() => connections.canWriteActive && Boolean(connections.active));
-/** macOS deletes with ⌘⌫; Linux deletes with the forward-delete key. */
-const deleteShortcut = IS_MAC ? shortcutLabel("Backspace") : "Del";
 
 /**
  * The Upload button offers both pickers.

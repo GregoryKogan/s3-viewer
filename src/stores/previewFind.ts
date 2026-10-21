@@ -43,19 +43,6 @@ export const usePreviewFindStore = defineStore("previewFind", () => {
     activeIndex.value = -1;
   }
 
-  function setQuery(value: string) {
-    query.value = value;
-    activeIndex.value = -1;
-  }
-
-  function setActive(index: number) {
-    activeIndex.value = index;
-  }
-
-  function setMatchCount(count: number) {
-    matchCount.value = count;
-  }
-
   /**
    * Move the active hit by `delta`, wrapping at both ends; a count of 0 is a
    * no-op.
@@ -101,9 +88,6 @@ export const usePreviewFindStore = defineStore("previewFind", () => {
     show,
     hide,
     resetQuery,
-    setQuery,
-    setActive,
-    setMatchCount,
     step,
     toggleCase,
     toggleWholeWord,

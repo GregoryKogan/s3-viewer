@@ -118,7 +118,6 @@ export const useToastsStore = defineStore("toasts", () => {
     toasts.value = toasts.value.filter((toast) => toast.id !== id);
   }
 
-  const info = (message: string, title?: string) => push({ level: "info", message, title });
   const ok = (message: string, title?: string) => push({ level: "ok", message, title });
   const warn = (message: string, title?: string) => push({ level: "warn", message, title });
   const error = (message: string, title?: string) => push({ level: "error", message, title });
@@ -144,5 +143,5 @@ export const useToastsStore = defineStore("toasts", () => {
     toasts.value = [];
   }
 
-  return { toasts, push, dismiss, pause, resume, info, ok, warn, error, apiError, clear };
+  return { toasts, push, dismiss, pause, resume, ok, warn, error, apiError, clear };
 });

@@ -86,16 +86,16 @@ async function repaint() {
   clearMarks(root);
 
   const { matches, error } = result.value;
-  find.setMatchCount(matches.length);
+  find.matchCount = matches.length;
 
   // The counter reads `activeIndex + 1`, so an index left over from a longer
   // previous list would show "8 of 2". A repaint replaces the marks anyway, so
   // it starts over at the first hit, or at none.
   if (!find.open || !find.query || error) {
-    find.setActive(-1);
+    find.activeIndex = -1;
   } else {
     markMatches(root, matches);
-    find.setActive(matches.length ? 0 : -1);
+    find.activeIndex = matches.length ? 0 : -1;
   }
   paintActive();
 }

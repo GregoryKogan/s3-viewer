@@ -243,15 +243,10 @@ export interface ListingErrorEvent {
 }
 
 /**
- * Structured detail behind the last listing failure. The list itself still
- * shows the plain message; this is what the error state expands into hints and
- * a request id.
+ * The detail half of a failure, as the error notices render it: hints, the
+ * service code and the S3 request id.
  */
-export interface ListErrorDetail {
-  hints: string[];
-  code: string | null;
-  requestId: string | null;
-}
+export type ListErrorDetail = Pick<ErrorPayload, "hints" | "code" | "requestId">;
 
 // ---------------------------------------------------------------------- errors
 
@@ -307,4 +302,16 @@ export interface CopyInput {
   keys: string[];
   destPrefix: string;
   moveObjects: boolean;
+}
+
+export interface DeleteOutcome {
+  id: string;
+  deleted: number;
+  summary: string;
+}
+
+export interface CopyOutcome {
+  id: string;
+  copied: number;
+  summary: string;
 }
