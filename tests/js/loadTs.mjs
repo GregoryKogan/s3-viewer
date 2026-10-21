@@ -14,7 +14,7 @@ const root = path.resolve(import.meta.dirname, "../..");
 
 /** The file a bundler would pick for an extensionless path. */
 function resolveFile(base) {
-  for (const candidate of [base, `${base}.ts`, path.join(base, "index.ts")]) {
+  for (const candidate of [`${base}.ts`, path.join(base, "index.ts"), base]) {
     if (existsSync(candidate)) return pathToFileURL(candidate).href;
   }
   return pathToFileURL(base).href;

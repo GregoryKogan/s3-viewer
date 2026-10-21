@@ -5,6 +5,9 @@
   "description": "Minimal, fast S3 browser with rich in-app preview. macOS + Linux.",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "build:frontend": "vite build",
     "dev": "pnpm build:frontend && pnpm tauri dev",

@@ -76,7 +76,7 @@ features for storage backends they will never use.
 **Everything you would otherwise download to check.** Most S3 tools show you a
 file name and a size. This one shows you the file.
 
-The full feature tour, with the same cards, is on the
+The full feature tour is on the
 [landing page](https://gregorykogan.github.io/s3-viewer/).
 
 ## Browsing and operations
