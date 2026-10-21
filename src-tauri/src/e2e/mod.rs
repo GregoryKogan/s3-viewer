@@ -2673,12 +2673,21 @@ const SCENARIO: &str = r#"(async () => {
       const modal = await wait('the settings dialog', () => $('[data-testid=modal]'), 10000);
       const title = $('[data-testid=modal-title]').textContent.trim();
       if (title !== 'Settings') throw new Error('unexpected dialog: ' + title);
-      const shell = $('[data-app-shell]');
-      if (!shell || !shell.hasAttribute('inert')) {
-        throw new Error('the shell behind the modal is not inert');
+      const native = modal.closest('dialog');
+      if (!native || !native.open) {
+        throw new Error('the modal is not a native <dialog> opened with showModal');
       }
+      // Inert means no control behind the dialog can take focus. Asserting the
+      // effect keeps this honest now that the top layer provides it natively.
+      const behind = $('[data-testid=object-list]');
+      const inside = document.activeElement;
+      behind.focus();
+      if (document.activeElement === behind) {
+        throw new Error('the shell behind the modal can still take focus');
+      }
+      if (inside instanceof HTMLElement) inside.focus();
       if ($('[data-testid=modal-root]').parentElement !== document.body) {
-        throw new Error('the modal is rendered inside the inert shell');
+        throw new Error('the modal is not a direct child of body');
       }
       const limit = await wait('the autofocused field', () => $('[data-testid=settings-preview-limit]'), 5000);
       if (document.activeElement !== limit) {
@@ -2715,9 +2724,12 @@ const SCENARIO: &str = r#"(async () => {
 
       $('[data-testid=modal-close]').click();
       await wait('the dialog to close', async () => ($('[data-testid=modal]') ? null : true), 8000);
-      if (shell.hasAttribute('inert')) throw new Error('the shell stayed inert after closing');
       await wait('focus to return', async () =>
         (document.activeElement === $('[data-testid=open-settings]') ? true : null), 5000);
+      // The shell is interactive again, so it takes focus again.
+      behind.focus();
+      if (document.activeElement !== behind) throw new Error('the shell stayed inert after closing');
+      trigger.focus();
       return 'inert shell, focus trap both ways, ⌘N/⌘R blocked, focus restored';
     });
 

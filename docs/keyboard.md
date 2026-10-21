@@ -167,6 +167,9 @@ button and is navigated like any other menu; `⌘U` and `⌘⇧U` skip it.
 - Closing restores focus to the opener, or to the list when the opener was
   removed with the dialog.
 
+The dialog is a native `<dialog>` opened with `showModal()`: the top layer, the
+inert background, the `Tab` trap and `Escape` are the platform's, not ours.
+
 ## Focus scopes
 
 A `[data-keyscope]` region owns its keys before the shell sees them:
@@ -211,7 +214,7 @@ These actions move focus deliberately, because their trigger disappears:
 | Editable-target rules | `src/lib/keyboard.ts` (`isEditableTarget`) |
 | Cursor marker and list focus ring | `src/assets/main.css` |
 | Menu keys and type-ahead | `src/components/ui/ContextMenu.vue` |
-| Dialog focus trap, `Enter` conventions | `src/composables/useFocusTrap.ts`, `src/components/dialogs/*` |
+| Dialog modality, `Enter` conventions | `src/components/ui/ModalFrame.vue` (native `<dialog>`), `src/components/dialogs/*` |
 
 ## E2E coverage
 
