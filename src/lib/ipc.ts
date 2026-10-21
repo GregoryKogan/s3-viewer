@@ -1,10 +1,8 @@
 /**
  * Typed bridge to the Rust backend.
  *
- * The app is built with `withGlobalTauri`, so `window.__TAURI__` is available and
- * the core `invoke` needs no bundler. The dialog plugin is imported lazily and
- * only when present, which keeps the window usable in a plain browser during
- * development.
+ * The app is built with `withGlobalTauri`, so every plugin reaches the page
+ * through `window.__TAURI__` and nothing here needs a dynamic import.
  */
 
 import type {
@@ -33,7 +31,6 @@ type InvokeFn = <T>(command: string, args?: Record<string, unknown>) => Promise<
 
 interface TauriGlobal {
   core?: { invoke?: InvokeFn };
-  invoke?: InvokeFn;
   dialog?: {
     open?: (options: Record<string, unknown>) => Promise<unknown>;
     save?: (options: Record<string, unknown>) => Promise<unknown>;
@@ -41,9 +38,10 @@ interface TauriGlobal {
   event?: {
     listen?: <T>(event: string, handler: (event: { payload: T }) => void) => Promise<() => void>;
   };
+  clipboardManager?: { writeText?: (text: string) => Promise<void> };
 }
 
-const globalTauri = (globalThis as { __TAURI__?: TauriGlobal }).__TAURI__ ?? null;
+const tauri = (globalThis as { __TAURI__?: TauriGlobal }).__TAURI__;
 
 /** A failure from the backend, keeping the structured detail the UI shows. */
 export class ApiError extends Error {
@@ -105,29 +103,14 @@ export function isNotFound(error: unknown): boolean {
   return code === "404" || code === "http404" || code === "notfound" || code.startsWith("nosuch");
 }
 
-let cachedInvoke: InvokeFn | null = null;
-
-async function resolveInvoke(): Promise<InvokeFn> {
-  if (cachedInvoke) return cachedInvoke;
-  const direct = globalTauri?.core?.invoke ?? globalTauri?.invoke;
-  if (direct) {
-    cachedInvoke = direct;
-    return direct;
-  }
-  try {
-    const module = (await import("@tauri-apps/api/core")) as { invoke: InvokeFn };
-    cachedInvoke = module.invoke;
-    return module.invoke;
-  } catch {
+export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const call = tauri?.core?.invoke;
+  if (!call) {
     throw new ApiError({
       message:
         "Tauri IPC bridge is unavailable. This UI must run inside the app window (or a host that injects window.__TAURI__).",
     });
   }
-}
-
-export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  const call = await resolveInvoke();
   try {
     return await call<T>(command, args);
   } catch (raw) {
@@ -148,34 +131,17 @@ export async function pickFiles({
   directory = false,
 }: { multiple?: boolean; directory?: boolean } = {}): Promise<string[]> {
   const title = directory ? "Choose a folder" : "Choose files";
-  if (globalTauri?.dialog?.open) {
-    return normalizePicked(await globalTauri.dialog.open({ multiple, directory, title }));
-  }
-  try {
-    const module = (await import("@tauri-apps/plugin-dialog")) as {
-      open: (options: Record<string, unknown>) => Promise<unknown>;
-    };
-    return normalizePicked(await module.open({ multiple, directory, title }));
-  } catch (error) {
-    throw new ApiError(`File dialog is unavailable: ${(error as Error)?.message ?? error}`);
-  }
+  const open = tauri?.dialog?.open;
+  if (!open) throw new ApiError("File dialog is unavailable outside the app window.");
+  return normalizePicked(await open({ multiple, directory, title }));
 }
 
 /** Native save dialog; `null` when cancelled. */
 export async function pickSavePath(defaultName: string): Promise<string | null> {
-  if (globalTauri?.dialog?.save) {
-    const result = await globalTauri.dialog.save({ defaultPath: defaultName });
-    return result ? String(result) : null;
-  }
-  try {
-    const module = (await import("@tauri-apps/plugin-dialog")) as {
-      save: (options: Record<string, unknown>) => Promise<unknown>;
-    };
-    const result = await module.save({ defaultPath: defaultName });
-    return result ? String(result) : null;
-  } catch {
-    return null;
-  }
+  const save = tauri?.dialog?.save;
+  if (!save) return null;
+  const result = await save({ defaultPath: defaultName });
+  return result ? String(result) : null;
 }
 
 /** Subscribe to a backend event. Returns an unsubscribe function. */
@@ -183,18 +149,8 @@ export async function listen<T>(
   event: string,
   handler: (payload: T) => void,
 ): Promise<() => void> {
-  const register = globalTauri?.event?.listen;
-  if (register) {
-    return register<T>(event, (message) => handler(message.payload));
-  }
-  try {
-    const module = (await import("@tauri-apps/api/event")) as {
-      listen: <P>(name: string, cb: (event: { payload: P }) => void) => Promise<() => void>;
-    };
-    return await module.listen<T>(event, (message) => handler(message.payload));
-  } catch {
-    return () => {};
-  }
+  const register = tauri?.event?.listen;
+  return register ? register<T>(event, (message) => handler(message.payload)) : () => {};
 }
 
 // ------------------------------------------------------------------ commands
@@ -207,7 +163,6 @@ export const api = {
 
   // connections
   listConnections: () => invoke<ConnectionView[]>("list_connections"),
-  getConnection: (id: string) => invoke<ConnectionView>("get_connection", { id }),
   saveConnection: (input: ConnectionDraft) => invoke<Connection>("save_connection", { input }),
   deleteConnection: (id: string) => invoke<void>("delete_connection", { id }),
   duplicateConnection: (id: string) => invoke<Connection>("duplicate_connection", { id }),
@@ -256,51 +211,25 @@ export const api = {
   openPath: (path: string) => invoke<void>("open_path", { path }),
   /** Open an http(s) link from rendered Markdown in the system browser. */
   openUrl: (url: string) => invoke<void>("open_url", { url }),
-  defaultUploadDir: () => invoke<string>("default_upload_dir"),
   /** Read a text file the user picked in the native dialog. */
   readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
-  ping: () => invoke<string>("ping"),
 };
 
 /** Copy text through the native clipboard, falling back to the browser API. */
 export async function copyText(text: string): Promise<boolean> {
-  const native = (globalThis as { __TAURI__?: { clipboardManager?: { writeText?: (t: string) => Promise<void> } } })
-    .__TAURI__?.clipboardManager?.writeText;
-  if (typeof native === "function") {
+  const writeText = tauri?.clipboardManager?.writeText;
+  if (typeof writeText === "function") {
     try {
-      await native(text);
+      await writeText(text);
       return true;
     } catch {
-      /* fall through */
+      /* fall through to the browser API */
     }
-  }
-  try {
-    const module = (await import("@tauri-apps/plugin-clipboard-manager")) as {
-      writeText: (value: string) => Promise<void>;
-    };
-    await module.writeText(text);
-    return true;
-  } catch {
-    /* fall through to the browser APIs */
   }
   try {
     await navigator.clipboard.writeText(text);
     return true;
   } catch {
-    const area = document.createElement("textarea");
-    area.value = text;
-    area.style.position = "fixed";
-    area.style.opacity = "0";
-    document.body.append(area);
-    area.focus();
-    area.select();
-    let ok = false;
-    try {
-      ok = document.execCommand("copy");
-    } catch {
-      ok = false;
-    }
-    area.remove();
-    return ok;
+    return false;
   }
 }

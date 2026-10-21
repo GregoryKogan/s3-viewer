@@ -8,7 +8,6 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -25,11 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' s3stream: data: blob:; media-src 'self' s3stream: blob:; frame-src 'self' s3stream: blob:; connect-src 'self' ipc: http://ipc.localhost s3stream:; font-src 'self' data:; object-src 'none'; base-uri 'self'",
-      "assetProtocol": {
-        "enable": true,
-        "scope": []
-      }
+      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' s3stream: data: blob:; media-src 'self' s3stream: blob:; frame-src 'self' s3stream: blob:; connect-src 'self' ipc: http://ipc.localhost s3stream:; font-src 'self' data:; object-src 'none'; base-uri 'self'"
     }
   },
   "bundle": {

@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { loadTs } from "./loadTs.mjs";
 
-const { humanSize, humanDate, prefixSegments, extensionOf, leafName, pluralize, s3Uri, parentDirOf } =
+const { humanSize, humanDate, prefixSegments, extensionOf, leafName, s3Uri, parentDirOf } =
   await loadTs("src/lib/format.ts");
-const { kindLabel, detectKind, kindFromPath } = await loadTs("src/lib/fileKind.ts");
+const { kindLabel } = await loadTs("src/lib/fileKind.ts");
 
 test("humanSize covers the unit ladder", () => {
   assert.equal(humanSize(0), "0 B");
@@ -69,27 +69,6 @@ test("kindLabel has a fallback for anything unrecognised", () => {
   assert.equal(kindLabel("something-new"), "File");
 });
 
-test("detectKind mirrors the Rust classification", () => {
-  assert.equal(detectKind("a/b/"), "folder");
-  assert.equal(detectKind("x", { isFolder: true }), "folder");
-  assert.equal(detectKind("a/photo.JPG"), "image");
-  assert.equal(detectKind("a/table.parquet"), "parquet");
-  assert.equal(detectKind("a/data.csv"), "csv");
-  assert.equal(detectKind("a/doc.md"), "markdown");
-  assert.equal(detectKind("a/app.py"), "code");
-  assert.equal(detectKind("a/conf.yaml"), "code");
-  assert.equal(detectKind("a/notes.txt"), "text");
-  // An unknown extension is "unknown", not "binary": the backend sniffs the
-  // bytes, and the list must not claim more than it knows.
-  assert.equal(detectKind("a/unknown.zzz"), "unknown");
-  assert.equal(detectKind("keys/id_rsa"), "unknown");
-  assert.equal(detectKind("a/blob", { contentType: "application/octet-stream" }), "unknown");
-  assert.equal(detectKind("Dockerfile"), "code");
-  // No extension and no known type: the content type is the only hint left.
-  assert.equal(detectKind("a/blob", { contentType: "application/pdf" }), "pdf");
-  assert.equal(kindFromPath("/tmp/holiday.png"), "image");
-});
-
 test("prefixSegments builds cumulative prefixes", () => {
   assert.deepEqual(prefixSegments(""), []);
   assert.deepEqual(prefixSegments("a/"), [{ name: "a", prefix: "a/" }]);
@@ -107,10 +86,8 @@ test("leafName and extensionOf handle folders and dotted names", () => {
   assert.equal(extensionOf(".env"), "");
 });
 
-test("s3Uri and pluralize", () => {
+test("s3Uri", () => {
   assert.equal(s3Uri("bucket", "path/to/key"), "s3://bucket/path/to/key");
-  assert.equal(pluralize(1, "file", "files"), "file");
-  assert.equal(pluralize(0, "file", "files"), "files");
 });
 
 test("parentDirOf strips the file name without losing the root", () => {

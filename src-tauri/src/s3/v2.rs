@@ -10,6 +10,13 @@
 use super::{kind::detect_kind, ByteRange, ObjectMeta, ObjectStore, ObjectStream, Page};
 use crate::error::{AppError, AppResult};
 use crate::model::{AddressingStyle, Connection, ObjectEntry, StaticCreds};
+
+/// IMF-fixdate for the `Date` header, e.g. `Tue, 21 Oct 2025 12:00:00 GMT`.
+fn http_date() -> String {
+    chrono::Utc::now()
+        .format("%a, %d %b %Y %H:%M:%S GMT")
+        .to_string()
+}
 use crate::sigv2::{encode_path, encode_query_value, V2Request};
 
 const XMLNS_S3: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
@@ -99,7 +106,7 @@ impl V2Store {
         body: Option<Vec<u8>>,
     ) -> AppResult<V2Response> {
         let url = self.url_for(key, query);
-        let date = httpdate::fmt_http_date(std::time::SystemTime::now());
+        let date = http_date();
         let mut amz_headers: Vec<(String, String)> = Vec::new();
         if let Some(token) = &self.session_token {
             amz_headers.push(("x-amz-security-token".to_string(), token.clone()));
@@ -297,7 +304,7 @@ impl ObjectStore for V2Store {
     ) -> AppResult<u64> {
         use tokio::io::AsyncWriteExt;
         let url = self.url_for(key, "");
-        let date = httpdate::fmt_http_date(std::time::SystemTime::now());
+        let date = http_date();
         let mut amz_headers: Vec<(String, String)> = Vec::new();
         if let Some(token) = &self.session_token {
             amz_headers.push(("x-amz-security-token".to_string(), token.clone()));
@@ -390,7 +397,7 @@ impl ObjectStore for V2Store {
     async fn copy_object(&self, source_key: &str, dest_key: &str) -> AppResult<()> {
         let copy_source = format!("{}/{}", self.bucket, source_key);
         let headers = vec![("x-amz-copy-source".to_string(), copy_source)];
-        let date = httpdate::fmt_http_date(std::time::SystemTime::now());
+        let date = http_date();
         let path_for_sign = format!("/{dest_key}");
         let signer = V2Request {
             method: "PUT",

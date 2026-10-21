@@ -8,8 +8,7 @@
 //!    Service). If no keychain is reachable the key falls back to a `0600`
 //!    file inside the app config dir, and the app surfaces that degradation in
 //!    Settings instead of silently pretending to be secure.
-//!  * The app never logs secrets. `redact()` exists so diagnostics can be
-//!    shared safely.
+//!  * The app never logs secrets.
 //!  * `S3VIEWER_TEST_MASTER_KEY` allows deterministic tests; it is only read
 //!    when set, and setting it is what makes the fallback explicit.
 
@@ -161,15 +160,6 @@ pub fn restrict_dir_permissions(path: &Path) {
 #[cfg(not(unix))]
 pub fn restrict_dir_permissions(_path: &Path) {}
 
-/// Keep only the first 4 characters of an access key id for diagnostics.
-pub fn redact(value: &str) -> String {
-    if value.is_empty() {
-        return String::new();
-    }
-    let visible: String = value.chars().take(4).collect();
-    format!("{visible}…({} chars)", value.chars().count())
-}
-
 pub fn config_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("S3VIEWER_CONFIG_DIR") {
         return PathBuf::from(dir);
@@ -223,15 +213,6 @@ mod tests {
     #[test]
     fn plaintext_is_rejected() {
         assert!(test_cipher().open("plain").is_err());
-    }
-
-    #[test]
-    fn redact_hides_secret() {
-        // Placeholder only: real access key ids must never appear in the repo.
-        let r = redact("AKIAIOSFODNN7EXAMPLE");
-        assert!(r.starts_with("AKIA"));
-        assert!(!r.contains("IOSFODNN7EXAMPLE"));
-        assert!(r.contains("20 chars"));
     }
 
     #[test]

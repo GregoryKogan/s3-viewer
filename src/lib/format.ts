@@ -15,30 +15,16 @@ export function humanSize(bytes: number | null | undefined): string {
   return `${value.toFixed(value >= 100 ? 0 : 1)} ${SIZE_UNITS[unit]}`;
 }
 
-const SHORT_MONTHS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-] as const;
+const DAY_MONTH = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
+const DAY_MONTH_YEAR = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
 
 /** Midnight at the start of the local calendar day `date` falls in. */
 function startOfDay(date: Date): number {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-}
-
-function dayAndMonth(date: Date, withYear: boolean): string {
-  const day = date.getDate();
-  const month = SHORT_MONTHS[date.getMonth()];
-  return withYear ? `${day} ${month} ${date.getFullYear()}` : `${day} ${month}`;
 }
 
 /**
@@ -60,7 +46,8 @@ export function humanDate(value: string | null | undefined, now: Date = new Date
   if (day === startOfDay(now)) return `Today ${time}`;
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
   if (day === startOfDay(yesterday)) return `Yesterday ${time}`;
-  return dayAndMonth(date, date.getFullYear() !== now.getFullYear());
+  const sameYear = date.getFullYear() === now.getFullYear();
+  return (sameYear ? DAY_MONTH : DAY_MONTH_YEAR).format(date);
 }
 
 /** The trailing path segment of a prefix, with its trailing slash removed. */
@@ -101,10 +88,6 @@ export function debounce<A extends unknown[]>(fn: (...args: A) => void, delay = 
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => fn(...args), delay);
   };
-}
-
-export function pluralize(count: number, one: string, many: string): string {
-  return count === 1 ? one : many;
 }
 
 export function clamp(value: number, min: number, max: number): number {

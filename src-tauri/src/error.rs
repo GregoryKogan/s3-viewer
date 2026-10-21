@@ -26,9 +26,6 @@ pub enum AppError {
 
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
-
-    #[error("{0}")]
-    Other(#[from] anyhow::Error),
 }
 
 impl AppError {
@@ -144,14 +141,6 @@ impl From<&AppError> for ErrorPayload {
             AppError::Message(m) => ErrorPayload {
                 kind: "message",
                 message: m.clone(),
-                code: None,
-                request_id: None,
-                status: None,
-                hints: vec![],
-            },
-            AppError::Other(e) => ErrorPayload {
-                kind: "other",
-                message: e.to_string(),
                 code: None,
                 request_id: None,
                 status: None,

@@ -51,16 +51,14 @@ export function estimateListingBytes(entries: ObjectEntry[]): number {
 interface CachedEntry {
   listing: CachedListing;
   bytes: number;
-  recency: number;
 }
 
 /** A least-recently-used cache of listings, bounded by a live byte budget. */
 export class ListingCache {
   private readonly limitBytes: () => number;
+  /** Insertion order is the recency order: a hit re-inserts the entry at the end. */
   private readonly entries = new Map<string, CachedEntry>();
   private usedBytes = 0;
-  /** Monotonic access counter; recency order is all that matters, not wall time. */
-  private clock = 0;
 
   constructor(limitBytes: () => number) {
     this.limitBytes = limitBytes;
@@ -75,7 +73,8 @@ export class ListingCache {
     if (this.limit() === 0) return null;
     const entry = this.entries.get(key);
     if (!entry) return null;
-    entry.recency = ++this.clock;
+    this.entries.delete(key);
+    this.entries.set(key, entry);
     return entry.listing;
   }
 
@@ -88,10 +87,10 @@ export class ListingCache {
     if (limit === 0 || bytes > limit) return false;
 
     while (this.usedBytes + bytes > limit) {
-      if (!this.evictLeastRecentlyUsed()) break;
+      if (!this.evictOldest()) break;
     }
 
-    this.entries.set(key, { listing, bytes, recency: ++this.clock });
+    this.entries.set(key, { listing, bytes });
     this.usedBytes += bytes;
     return true;
   }
@@ -115,7 +114,7 @@ export class ListingCache {
       return;
     }
     while (this.usedBytes > limit) {
-      if (!this.evictLeastRecentlyUsed()) break;
+      if (!this.evictOldest()) break;
     }
   }
 
@@ -127,18 +126,11 @@ export class ListingCache {
     return this.entries.size;
   }
 
-  /** The entries are bounded by the budget, so a linear scan is the simplest eviction. */
-  private evictLeastRecentlyUsed(): boolean {
-    let victimKey: string | null = null;
-    let victimRecency = Infinity;
-    for (const [key, entry] of this.entries) {
-      if (entry.recency < victimRecency) {
-        victimRecency = entry.recency;
-        victimKey = key;
-      }
-    }
-    if (victimKey === null) return false;
-    this.delete(victimKey);
+  /** The first key of a Map is the least recently inserted or re-read one. */
+  private evictOldest(): boolean {
+    const oldest = this.entries.keys().next();
+    if (oldest.done) return false;
+    this.delete(oldest.value);
     return true;
   }
 }

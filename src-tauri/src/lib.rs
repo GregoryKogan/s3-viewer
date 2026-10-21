@@ -2,6 +2,7 @@
 
 pub mod commands;
 pub mod crypto;
+#[cfg(debug_assertions)]
 pub mod e2e;
 pub mod error;
 pub mod fsutil;
@@ -77,18 +78,27 @@ pub fn run() {
             commands::open_url,
             commands::default_upload_dir,
             commands::read_text_file,
+            #[cfg(debug_assertions)]
             e2e::desktop::e2e_setup,
+            #[cfg(debug_assertions)]
             e2e::desktop::e2e_transfer_check,
+            #[cfg(debug_assertions)]
             e2e::desktop::e2e_roundtrip_check,
+            #[cfg(debug_assertions)]
             e2e::desktop::e2e_delete_many_check,
+            #[cfg(debug_assertions)]
             e2e::desktop::e2e_config_audit,
+            #[cfg(debug_assertions)]
             e2e::desktop::e2e_readonly_check,
+            #[cfg(debug_assertions)]
             e2e::desktop::e2e_report,
+            #[cfg(debug_assertions)]
             ping,
         ])
         .setup(|app| {
-            // The self-hosted end-to-end harness only starts when the runner
-            // asks for it explicitly (S3VIEWER_E2E=1).
+            // The self-hosted end-to-end harness is a debug-only build product:
+            // it starts only when the runner asks for it (S3VIEWER_E2E=1).
+            #[cfg(debug_assertions)]
             if let Some(plan) = e2e::TestPlan::from_env() {
                 let handle = app.handle().clone();
                 let core = handle.state::<Arc<AppCore>>().inner().clone();
@@ -103,6 +113,7 @@ pub fn run() {
 }
 
 /// A trivial command the e2e suite uses to confirm the IPC bridge is alive.
+#[cfg(debug_assertions)]
 #[tauri::command]
 async fn ping() -> Result<String, crate::error::ErrorPayload> {
     Ok("pong".to_string())

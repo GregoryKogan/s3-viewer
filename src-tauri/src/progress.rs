@@ -148,60 +148,9 @@ fn finish_entry(entry: &mut ProgressEntry, result_path: Option<String>) {
     entry.result_path = result_path;
 }
 
-/// An `AsyncWrite` adapter that ticks progress as bytes flow through.
-pub struct ProgressWriter<'a, W> {
-    inner: W,
-    tracker: ProgressTracker,
-    id: String,
-    lifetime: std::marker::PhantomData<&'a ()>,
-}
-
-impl<'a, W> ProgressWriter<'a, W> {
-    pub fn new(inner: W, tracker: ProgressTracker, id: impl Into<String>) -> Self {
-        ProgressWriter {
-            inner,
-            tracker,
-            id: id.into(),
-            lifetime: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<W: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for ProgressWriter<'_, W> {
-    fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let this = &mut *self;
-        match std::pin::Pin::new(&mut this.inner).poll_write(cx, buf) {
-            std::task::Poll::Ready(Ok(n)) => {
-                this.tracker.advance(&this.id, n as u64);
-                std::task::Poll::Ready(Ok(n))
-            }
-            other => other,
-        }
-    }
-
-    fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::AsyncWriteExt;
 
     #[test]
     fn tracks_start_advance_finish() {
@@ -271,20 +220,6 @@ mod tests {
         let tracker = ProgressTracker::new();
         assert!(!tracker.finish_if_running("missing", None));
         assert!(!tracker.fail_if_running("missing", "error"));
-    }
-
-    #[tokio::test]
-    async fn writer_counts_bytes() {
-        let tracker = ProgressTracker::new();
-        let id = tracker.start("copy", None);
-        let mut buffer = Vec::new();
-        {
-            let mut writer = ProgressWriter::new(&mut buffer, tracker.clone(), id.clone());
-            writer.write_all(b"hello world").await.unwrap();
-            writer.flush().await.unwrap();
-        }
-        assert_eq!(tracker.get(&id).unwrap().done, 11);
-        assert_eq!(buffer, b"hello world");
     }
 
     #[test]

@@ -42,12 +42,6 @@ pub enum AddressingStyle {
     Auto,
 }
 
-impl AddressingStyle {
-    pub fn force_path_style(self) -> bool {
-        matches!(self, AddressingStyle::Path)
-    }
-}
-
 fn default_true() -> bool {
     true
 }

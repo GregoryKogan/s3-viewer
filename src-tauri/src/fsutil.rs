@@ -126,13 +126,8 @@ pub async fn reserve_unique_dir(dir: &Path, name: &str) -> AppResult<PathBuf> {
 
 /// Open a file with the OS default application.
 pub fn open(path: &Path) -> AppResult<()> {
-    let opener = opener_command();
-    std::process::Command::new(opener.0)
-        .args(opener.1)
-        .arg(path)
-        .spawn()
-        .map_err(|e| AppError::msg(format!("cannot open {}: {e}", path.display())))?;
-    Ok(())
+    tauri_plugin_opener::open_path(path, None::<&str>)
+        .map_err(|e| AppError::msg(format!("cannot open {}: {e}", path.display())))
 }
 
 /// Is this a URL the system opener may be handed?
@@ -160,6 +155,21 @@ pub fn is_allowed_url(url: &str) -> bool {
     !host.is_empty()
 }
 
+/// Reveal a file in Finder / the Linux file manager.
+pub fn reveal(path: &Path) -> AppResult<()> {
+    tauri_plugin_opener::reveal_item_in_dir(path).or_else(|e| {
+        // A Linux session without a FileManager1 DBus service cannot select a
+        // file; opening the containing folder is the closest portable fallback.
+        match path.parent() {
+            Some(dir) => open(dir),
+            None => Err(AppError::msg(format!(
+                "cannot reveal {}: {e}",
+                path.display()
+            ))),
+        }
+    })
+}
+
 /// Open an http(s) URL in the user's browser.
 pub fn open_url(url: &str) -> AppResult<()> {
     if !is_allowed_url(url) {
@@ -167,55 +177,8 @@ pub fn open_url(url: &str) -> AppResult<()> {
             "Only http and https links can be opened.",
         ));
     }
-    let opener = opener_command();
-    std::process::Command::new(opener.0)
-        .args(opener.1)
-        .arg(url)
-        .spawn()
-        .map_err(|e| AppError::msg(format!("cannot open {url}: {e}")))?;
-    Ok(())
-}
-
-/// Reveal a file in Finder / the Linux file manager.
-#[cfg(target_os = "macos")]
-pub fn reveal(path: &Path) -> AppResult<()> {
-    std::process::Command::new("open")
-        .arg("-R")
-        .arg(path)
-        .spawn()
-        .map_err(|e| AppError::msg(format!("cannot reveal {}: {e}", path.display())))?;
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn reveal(path: &Path) -> AppResult<()> {
-    // No portable "reveal"; open the containing directory instead.
-    let dir = path.parent().unwrap_or(path);
-    open(dir)
-}
-
-#[cfg(target_os = "macos")]
-fn opener_command() -> (&'static str, &'static [&'static str]) {
-    ("open", &[])
-}
-
-#[cfg(not(target_os = "macos"))]
-fn opener_command() -> (&'static str, &'static [&'static str]) {
-    if which("xdg-open") {
-        ("xdg-open", &[])
-    } else if which("gio") {
-        ("gio", &["open"])
-    } else {
-        ("kde-open", &[])
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn which(binary: &str) -> bool {
-    std::env::var("PATH")
-        .unwrap_or_default()
-        .split(':')
-        .any(|dir| Path::new(dir).join(binary).is_file())
+    tauri_plugin_opener::open_url(url, None::<&str>)
+        .map_err(|e| AppError::msg(format!("cannot open {url}: {e}")))
 }
 
 #[cfg(test)]
