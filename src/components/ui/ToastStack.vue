@@ -1,8 +1,31 @@
 <script setup lang="ts">
+import { nextTick, ref, watch } from "vue";
 import { X } from "@lucide/vue";
+import { useDialogsStore } from "@/stores/dialogs";
 import { useToastsStore, type Toast } from "@/stores/toasts";
 
 const toasts = useToastsStore();
+const dialogs = useDialogsStore();
+
+/**
+ * Where the toasts paint.
+ *
+ * A dialog's `::backdrop` belongs to the top layer, which no `z-index` in the
+ * document can climb over, so a toast left in `body` is dimmed to unreadable.
+ * The top dialog itself is above its own backdrop: moving the toasts inside it
+ * keeps them legible, clickable and announced by a screen reader (a top-layer
+ * popover outside the dialog is still inert while the dialog is modal).
+ */
+const target = ref<HTMLElement | "body">("body");
+
+/** The dialogs open and close in the update this watcher runs after. */
+async function followTopDialog() {
+  await nextTick();
+  const open = document.querySelectorAll<HTMLDialogElement>("dialog[open]");
+  target.value = open[open.length - 1] ?? "body";
+}
+
+watch(() => dialogs.stack.length, followTopDialog, { flush: "post" });
 
 const TONES: Record<Toast["level"], string> = {
   info: "border-l-accent",
@@ -21,7 +44,7 @@ function onFocusOut(event: FocusEvent, id: number) {
 </script>
 
 <template>
-  <Teleport to="body">
+  <Teleport :to="target">
     <div
       class="pointer-events-none fixed bottom-4 left-1/2 z-[80] flex w-max max-w-[min(40rem,80vw)] -translate-x-1/2 flex-col gap-2"
       aria-live="polite"
@@ -49,6 +72,7 @@ function onFocusOut(event: FocusEvent, id: number) {
               :key="action.label"
               type="button"
               class="rounded-[4px] border border-line-strong px-1.5 py-0.5 text-meta transition-colors hover:bg-hover"
+              :tabindex="dialogs.isOpen() ? -1 : undefined"
               @click="
                 action.run();
                 toasts.dismiss(toast.id);
@@ -62,6 +86,7 @@ function onFocusOut(event: FocusEvent, id: number) {
           type="button"
           class="grid size-4 shrink-0 place-items-center rounded-[3px] text-subtle transition-colors hover:bg-hover hover:text-content"
           aria-label="Dismiss"
+          :tabindex="dialogs.isOpen() ? -1 : undefined"
           @click="toasts.dismiss(toast.id)"
         >
           <X class="size-3" />

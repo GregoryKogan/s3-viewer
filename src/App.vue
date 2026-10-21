@@ -1080,6 +1080,8 @@ function publishHarness() {
     objects,
     connections,
     toasts,
+    // The suite fakes "an update is available" here instead of reaching GitHub.
+    updates,
     logs: objects.logging,
     copySnippet: async () => {
       // Used by the suite to prove the clipboard path works end to end.

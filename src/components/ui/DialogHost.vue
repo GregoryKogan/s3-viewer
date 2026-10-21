@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useDialogsStore } from "@/stores/dialogs";
 
 const dialogs = useDialogsStore();
 const root = ref<HTMLElement | null>(null);
+/** The one dialog that is allowed to stand in the top layer. */
+const topId = computed(() => dialogs.stack[dialogs.stack.length - 1]?.id);
 
 /**
  * A backdrop click only closes a dialog that opted into it (DLG-2). The click
@@ -26,6 +28,7 @@ function onBackdropClick(event: MouseEvent) {
         :key="dialog.id"
         v-bind="dialog.props"
         :size="dialog.size"
+        :active="dialog.id === topId"
       />
     </div>
   </Teleport>

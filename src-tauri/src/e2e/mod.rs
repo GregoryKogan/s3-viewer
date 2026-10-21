@@ -2733,6 +2733,69 @@ const SCENARIO: &str = r#"(async () => {
       return 'inert shell, focus trap both ways, ⌘N/⌘R blocked, focus restored';
     });
 
+    await check('dialogs: only the top of the stack is open', async () => {
+      // No release is newer than a local build and the suite must not touch
+      // GitHub, so the check result is faked here; the prompt it opens is the
+      // same one a real release produces.
+      const harness = window.__s3viewer;
+      harness.updates.phase = 'available';
+      harness.updates.nextVersion = '99.0.0';
+      $('[data-testid=open-settings]').click();
+      const settings = await wait('the settings dialog', () => $('[data-testid=modal]'), 10000);
+      const lower = settings.closest('dialog');
+      if (!lower || !lower.open) throw new Error('Settings did not open as a modal <dialog>');
+      const checkNow = await wait('the update check button', () => $('[data-testid=settings-check-updates]'), 5000);
+      // The button disables itself while the prompt is open, so it cannot hold
+      // focus across the trip; the theme picker can.
+      const anchor = await wait('the theme picker', () => $('[data-testid=settings-theme]'), 5000);
+      anchor.focus();
+      checkNow.click();
+      const top = await wait('the update prompt over the settings dialog', () => {
+        const dialogs = Array.from(document.querySelectorAll('dialog[open]'));
+        return dialogs.length === 1 && dialogs[0] !== lower ? dialogs[0] : null;
+      }, 10000);
+      if (!top.textContent.includes('99.0.0')) {
+        throw new Error('the top dialog is not the update prompt: ' + top.textContent.slice(0, 80));
+      }
+      // The regression: both panels used to be painted, one dimmed behind the other.
+      const panels = Array.from(top.querySelectorAll('[data-testid=modal]'));
+      if (panels.length !== 1 || panels[0].offsetParent === null) {
+        throw new Error('the visible dialog renders ' + panels.length + ' panels');
+      }
+      if (lower.getClientRects().length !== 0) {
+        throw new Error('the dialog under the top one is still painted');
+      }
+      await wait('focus inside the top dialog', async () =>
+        (top.contains(document.activeElement) ? true : null), 5000);
+      if (top !== $('[data-testid=modal-root]').lastElementChild) {
+        throw new Error('the backdrop would target the wrong dialog');
+      }
+
+      // The backdrop belongs to the top dialog: clicking it pops only that one.
+      top.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await wait('the settings dialog back', async () => (lower.open ? true : null), 10000);
+      const reopened = $$('[data-testid=modal]').filter((node) => node.offsetParent !== null);
+      if (reopened.length !== 1) throw new Error('the stack shows ' + reopened.length + ' panels');
+      if (Array.from(document.querySelectorAll('dialog[open]')).length !== 1) {
+        throw new Error('two dialogs are open after popping the top one');
+      }
+      const title = $('[data-testid=modal-title]').textContent.trim();
+      if (title !== 'Settings') throw new Error('the wrong dialog came back: ' + title);
+      await wait('focus back on the theme picker', async () =>
+        (document.activeElement === $('[data-testid=settings-theme]') ? true : null), 5000);
+      if (harness.updates.phase !== 'idle') {
+        throw new Error('closing the update prompt left the store armed: ' + harness.updates.phase);
+      }
+
+      $('[data-testid=modal-close]').click();
+      await wait('the dialog to close', async () => ($('[data-testid=modal]') ? null : true), 8000);
+      // The shell is interactive again; leave the keyboard on the trigger.
+      const trigger = $('[data-testid=open-settings]');
+      trigger.focus();
+      if (document.activeElement !== trigger) throw new Error('the shell stayed inert after the stack closed');
+      return 'one open dialog, focus and backdrop on the top one, lower dialog closed and restored';
+    });
+
     await check('ui: toasts are announced and keep line breaks', async () => {
       window.__s3viewer.toasts.error('first line\nsecond line', 'E2E toast');
       const toast = await wait('the error toast', () => $('[data-testid=toast-error]'), 8000);
@@ -2751,7 +2814,39 @@ const SCENARIO: &str = r#"(async () => {
       if (getComputedStyle(message).whiteSpace !== 'pre-line') {
         throw new Error('the message does not preserve line breaks visually');
       }
-      return 'role=alert, aria-live=polite, pre-line';
+
+      // A dialog's backdrop belongs to the top layer, out of z-index's reach:
+      // the toast stack has to follow the top dialog to stay legible and in the
+      // screen reader's tree.
+      $('[data-testid=open-settings]').click();
+      const dialog = await wait('the settings dialog over the toast stack', () => {
+        const node = $('[data-testid=toasts]');
+        return node === null ? null : node.closest('dialog[open]');
+      }, 10000);
+      if (!dialog) throw new Error('the toast stack stayed behind the dialog backdrop');
+      const before = document.activeElement;
+      window.__s3viewer.toasts.error('raised over a dialog', 'Dialog toast');
+      const raised = await wait('the toast raised over the dialog', () =>
+        (Array.from(document.querySelectorAll('[data-testid=toast-error]'))
+          .find((node) => node.textContent.includes('raised over a dialog')) || null), 8000);
+      if (!dialog.contains(raised)) throw new Error('a toast raised over a dialog left it');
+      if (document.activeElement !== before) throw new Error('raising a toast stole focus');
+      const box = raised.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.bottom - 4);
+      if (!hit || !raised.contains(hit)) {
+        throw new Error('the toast is painted under the dialog backdrop');
+      }
+      const dismiss = raised.querySelector('button[aria-label="Dismiss"]');
+      if (!dismiss) throw new Error('the toast has no dismiss button');
+      dismiss.click();
+      await wait('the dismissed toast to go', async () => (raised.isConnected ? null : true), 5000);
+      $('[data-testid=modal-close]').click();
+      await wait('the dialog to close', async () => ($('[data-testid=modal]') ? null : true), 8000);
+      await wait('the stack back in the page', async () =>
+        ($('[data-testid=toasts]').parentElement === document.body ? true : null), 5000);
+      await wait('focus to return', async () =>
+        (document.activeElement === $('[data-testid=open-settings]') ? true : null), 5000);
+      return 'role=alert, aria-live=polite, pre-line, legible and dismissible over a dialog';
     });
 
     await check('settings: the theme follows the system and persists', async () => {
