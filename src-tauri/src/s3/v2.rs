@@ -94,6 +94,42 @@ impl V2Store {
         }
     }
 
+    /// `Date` and `Authorization` for one request, both derived from the same
+    /// canonical string. Every SigV2 path signs through here so the canonical
+    /// inputs — method, path, query, content type, date, `x-amz` headers and
+    /// bucket — are assembled in exactly one place.
+    fn sign(
+        &self,
+        method: &str,
+        key: &str,
+        query: &str,
+        content_type: &str,
+        amz_headers: &[(String, String)],
+    ) -> AppResult<(String, String)> {
+        let date = http_date();
+        let path_for_sign = format!("/{key}");
+        let signer = V2Request {
+            method,
+            path: &path_for_sign,
+            query: if query.is_empty() {
+                None
+            } else {
+                Some(query.to_string())
+            },
+            // An empty content type is absent, not an empty string.
+            content_type: if content_type.is_empty() {
+                None
+            } else {
+                Some(content_type)
+            },
+            date: &date,
+            extra_amz_headers: amz_headers,
+            bucket: &self.bucket,
+        };
+        let authorization = signer.authorization(&self.access_key_id, &self.secret_access_key)?;
+        Ok((date, authorization))
+    }
+
     /// Sign and send one request.
     #[allow(clippy::too_many_arguments)]
     pub async fn send(
@@ -106,34 +142,16 @@ impl V2Store {
         body: Option<Vec<u8>>,
     ) -> AppResult<V2Response> {
         let url = self.url_for(key, query);
-        let date = http_date();
         let mut amz_headers: Vec<(String, String)> = Vec::new();
         if let Some(token) = &self.session_token {
             amz_headers.push(("x-amz-security-token".to_string(), token.clone()));
         }
-        let path_for_sign = format!("/{key}");
 
         // Content-Type participates in the V2 string-to-sign, so it must be the
         // exact value that goes on the wire.
         let sign_content_type = content_type.unwrap_or("");
-        let signer = V2Request {
-            method: method.as_str(),
-            path: &path_for_sign,
-            query: if query.is_empty() {
-                None
-            } else {
-                Some(query.to_string())
-            },
-            content_type: if sign_content_type.is_empty() {
-                None
-            } else {
-                Some(sign_content_type)
-            },
-            date: &date,
-            extra_amz_headers: &amz_headers,
-            bucket: &self.bucket,
-        };
-        let authorization = signer.authorization(&self.access_key_id, &self.secret_access_key)?;
+        let (date, authorization) =
+            self.sign(method.as_str(), key, query, sign_content_type, &amz_headers)?;
 
         let mut req = self
             .http
@@ -303,22 +321,11 @@ impl ObjectStore for V2Store {
     ) -> AppResult<u64> {
         use tokio::io::AsyncWriteExt;
         let url = self.url_for(key, "");
-        let date = http_date();
         let mut amz_headers: Vec<(String, String)> = Vec::new();
         if let Some(token) = &self.session_token {
             amz_headers.push(("x-amz-security-token".to_string(), token.clone()));
         }
-        let path_for_sign = format!("/{key}");
-        let signer = V2Request {
-            method: "GET",
-            path: &path_for_sign,
-            query: None,
-            content_type: None,
-            date: &date,
-            extra_amz_headers: &amz_headers,
-            bucket: &self.bucket,
-        };
-        let authorization = signer.authorization(&self.access_key_id, &self.secret_access_key)?;
+        let (date, authorization) = self.sign("GET", key, "", "", &amz_headers)?;
         let mut req = self
             .http
             .get(&url)
@@ -387,26 +394,15 @@ impl ObjectStore for V2Store {
 
     async fn copy_object(&self, source_key: &str, dest_key: &str) -> AppResult<()> {
         let copy_source = format!("{}/{}", self.bucket, source_key);
-        let headers = vec![("x-amz-copy-source".to_string(), copy_source)];
-        let date = http_date();
-        let path_for_sign = format!("/{dest_key}");
-        let signer = V2Request {
-            method: "PUT",
-            path: &path_for_sign,
-            query: None,
-            content_type: None,
-            date: &date,
-            extra_amz_headers: &headers,
-            bucket: &self.bucket,
-        };
-        let authorization = signer.authorization(&self.access_key_id, &self.secret_access_key)?;
+        let amz_headers = vec![("x-amz-copy-source".to_string(), copy_source)];
+        let (date, authorization) = self.sign("PUT", dest_key, "", "", &amz_headers)?;
         let url = self.url_for(dest_key, "");
         let resp = self
             .http
             .put(&url)
             .header("Date", &date)
             .header("Authorization", authorization)
-            .header("x-amz-copy-source", &headers[0].1)
+            .header("x-amz-copy-source", &amz_headers[0].1)
             .body(Vec::new())
             .send()
             .await

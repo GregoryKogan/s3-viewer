@@ -25,20 +25,11 @@ fn err(e: AppError) -> ErrorPayload {
     e.into()
 }
 
-/// Access the shared core from a command.
-struct Ctx<'a>(&'a State<'a, Arc<AppCore>>);
-
-impl Ctx<'_> {
-    fn core(&self) -> &AppCore {
-        self.0.inner()
-    }
-}
-
 // ------------------------------------------------------------------ settings
 
 #[tauri::command]
 pub async fn get_settings(app: State<'_, Arc<AppCore>>) -> CmdResult<AppSettings> {
-    Ok(Ctx(&app).core().settings())
+    Ok(app.inner().settings())
 }
 
 #[tauri::command]
@@ -46,8 +37,7 @@ pub async fn update_settings(
     app: State<'_, Arc<AppCore>>,
     settings: AppSettings,
 ) -> CmdResult<AppSettings> {
-    let ctx = Ctx(&app);
-    ctx.core()
+    app.inner()
         .with_store(|store| {
             store.update_settings(settings.clone())?;
             Ok(settings)
@@ -69,8 +59,7 @@ pub struct SecurityStatus {
 
 #[tauri::command]
 pub async fn security_status(app: State<'_, Arc<AppCore>>) -> CmdResult<SecurityStatus> {
-    let ctx = Ctx(&app);
-    Ok(ctx.core().read(|store| SecurityStatus {
+    Ok(app.inner().read(|store| SecurityStatus {
         master_key_in_keychain: store.master_key_in_keychain(),
         config_path: store.path.display().to_string(),
         config_version: store.config.version,
@@ -84,13 +73,12 @@ pub async fn security_status(app: State<'_, Arc<AppCore>>) -> CmdResult<Security
 
 #[tauri::command]
 pub async fn list_connections(app: State<'_, Arc<AppCore>>) -> CmdResult<Vec<ConnectionView>> {
-    Ok(Ctx(&app).core().connection_views())
+    Ok(app.inner().connection_views())
 }
 
 #[tauri::command]
 pub async fn get_connection(app: State<'_, Arc<AppCore>>, id: String) -> CmdResult<ConnectionView> {
-    let ctx = Ctx(&app);
-    let core = ctx.core();
+    let core = app.inner();
     let conn = core.connection(&id).map_err(err)?;
     Ok(core.read(|store| ConnectionView {
         has_secret: store.has_secret(&id),
@@ -105,12 +93,12 @@ pub async fn save_connection(
     input: ConnectionInput,
 ) -> CmdResult<Connection> {
     // Moving or renaming invalidates the cached capabilities of the old id too.
-    let ctx = Ctx(&app);
+    let core = app.inner();
     let old_id = input.id.clone();
-    let conn = ctx.core().upsert_connection(input).map_err(err)?;
+    let conn = core.upsert_connection(input).map_err(err)?;
     if let Some(old) = old_id {
         if old != conn.id {
-            ctx.core().invalidate(&old);
+            core.invalidate(&old);
         }
     }
     Ok(conn)
@@ -118,7 +106,7 @@ pub async fn save_connection(
 
 #[tauri::command]
 pub async fn delete_connection(app: State<'_, Arc<AppCore>>, id: String) -> CmdResult<()> {
-    Ctx(&app).core().delete_connection(&id).map_err(err)
+    app.inner().delete_connection(&id).map_err(err)
 }
 
 #[tauri::command]
@@ -126,8 +114,7 @@ pub async fn duplicate_connection(
     app: State<'_, Arc<AppCore>>,
     id: String,
 ) -> CmdResult<Connection> {
-    let ctx = Ctx(&app);
-    let core = ctx.core();
+    let core = app.inner();
     let conn = core.connection(&id).map_err(err)?;
     let creds = core.read(|store| store.creds(&id)).map_err(err)?;
     let input = ConnectionInput {
@@ -205,88 +192,85 @@ pub struct ProbeOutcome {
     pub addressing_style: String,
 }
 
-impl Ctx<'_> {
-    /// Resolve a probe input into a live store plus the connection it describes.
-    fn resolve_probe(&self, input: &ProbeInput) -> Result<(AnyStore, Connection), AppError> {
-        let core = self.core();
-        if let Some(draft) = &input.connection {
-            let id = input.id.clone().unwrap_or_else(|| "draft".to_string());
-            let existing = input.id.as_ref().and_then(|id| core.connection(id).ok());
-            let secret = match draft.secret_access_key.clone() {
-                Some(s) if !s.is_empty() => Some(s),
-                _ => input
-                    .id
-                    .as_ref()
-                    .and_then(|id| core.read(|store| store.creds(id)).ok())
-                    .map(|c| c.secret_access_key),
-            };
-            let secret = secret.ok_or_else(|| {
-                AppError::invalid("secret access key is required to test this connection")
-            })?;
-            let session_token = draft.session_token.clone().or_else(|| {
-                input
-                    .id
-                    .as_ref()
-                    .and_then(|id| core.read(|store| store.creds(id)).ok())
-                    .and_then(|c| c.session_token)
-            });
-            let conn = Connection {
-                id,
-                name: "draft".into(),
-                endpoint_url: draft.endpoint_url.trim().trim_end_matches('/').to_string(),
-                region: draft
-                    .region
-                    .clone()
-                    .filter(|r| !r.trim().is_empty())
-                    .or_else(|| existing.as_ref().map(|c| c.region.clone()))
-                    .unwrap_or_else(|| "us-east-1".to_string()),
-                access_key_id: draft.access_key_id.trim().to_string(),
-                session_token_present: session_token.is_some(),
-                bucket: draft.bucket.trim().to_string(),
-                prefix: draft.prefix.clone().unwrap_or_default(),
-                addressing_style: draft
-                    .addressing_style
-                    .or_else(|| existing.as_ref().map(|c| c.addressing_style))
-                    .unwrap_or_default(),
-                signature_version: draft
-                    .signature_version
-                    .or_else(|| existing.as_ref().map(|c| c.signature_version))
-                    .unwrap_or_default(),
-                payload_signing_enabled: false,
-                request_checksum_calculation: draft
-                    .request_checksum_calculation
-                    .or_else(|| existing.as_ref().map(|c| c.request_checksum_calculation))
-                    .unwrap_or_default(),
-                response_checksum_validation: draft
-                    .response_checksum_validation
-                    .or_else(|| existing.as_ref().map(|c| c.response_checksum_validation))
-                    .unwrap_or_default(),
-                security: Default::default(),
-                last_used_at: None,
-                created_at: chrono::Utc::now().to_rfc3339(),
-            };
-            if conn.endpoint_url.is_empty() {
-                return Err(AppError::invalid("endpoint URL is required"));
-            }
-            if conn.bucket.is_empty() {
-                return Err(AppError::invalid("bucket is required"));
-            }
-            let creds = StaticCreds {
-                access_key_id: conn.access_key_id.clone(),
-                secret_access_key: secret,
-                session_token,
-            };
-            let store = core.build_client(&conn, &creds)?;
-            return Ok((store, conn));
-        }
-
-        let id = input.id.clone().ok_or_else(|| {
-            AppError::invalid("either a connection id or a connection draft is required")
+/// Resolve a probe input into a live store plus the connection it describes.
+fn resolve_probe(core: &AppCore, input: &ProbeInput) -> Result<(AnyStore, Connection), AppError> {
+    if let Some(draft) = &input.connection {
+        let id = input.id.clone().unwrap_or_else(|| "draft".to_string());
+        let existing = input.id.as_ref().and_then(|id| core.connection(id).ok());
+        let secret = match draft.secret_access_key.clone() {
+            Some(s) if !s.is_empty() => Some(s),
+            _ => input
+                .id
+                .as_ref()
+                .and_then(|id| core.read(|store| store.creds(id)).ok())
+                .map(|c| c.secret_access_key),
+        };
+        let secret = secret.ok_or_else(|| {
+            AppError::invalid("secret access key is required to test this connection")
         })?;
-        let conn = core.connection(&id)?;
-        let store = core.client(&id)?;
-        Ok((store, conn))
+        let session_token = draft.session_token.clone().or_else(|| {
+            input
+                .id
+                .as_ref()
+                .and_then(|id| core.read(|store| store.creds(id)).ok())
+                .and_then(|c| c.session_token)
+        });
+        let conn = Connection {
+            id,
+            name: "draft".into(),
+            endpoint_url: draft.endpoint_url.trim().trim_end_matches('/').to_string(),
+            region: draft
+                .region
+                .clone()
+                .filter(|r| !r.trim().is_empty())
+                .or_else(|| existing.as_ref().map(|c| c.region.clone()))
+                .unwrap_or_else(|| "us-east-1".to_string()),
+            access_key_id: draft.access_key_id.trim().to_string(),
+            session_token_present: session_token.is_some(),
+            bucket: draft.bucket.trim().to_string(),
+            prefix: draft.prefix.clone().unwrap_or_default(),
+            addressing_style: draft
+                .addressing_style
+                .or_else(|| existing.as_ref().map(|c| c.addressing_style))
+                .unwrap_or_default(),
+            signature_version: draft
+                .signature_version
+                .or_else(|| existing.as_ref().map(|c| c.signature_version))
+                .unwrap_or_default(),
+            payload_signing_enabled: false,
+            request_checksum_calculation: draft
+                .request_checksum_calculation
+                .or_else(|| existing.as_ref().map(|c| c.request_checksum_calculation))
+                .unwrap_or_default(),
+            response_checksum_validation: draft
+                .response_checksum_validation
+                .or_else(|| existing.as_ref().map(|c| c.response_checksum_validation))
+                .unwrap_or_default(),
+            security: Default::default(),
+            last_used_at: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        if conn.endpoint_url.is_empty() {
+            return Err(AppError::invalid("endpoint URL is required"));
+        }
+        if conn.bucket.is_empty() {
+            return Err(AppError::invalid("bucket is required"));
+        }
+        let creds = StaticCreds {
+            access_key_id: conn.access_key_id.clone(),
+            secret_access_key: secret,
+            session_token,
+        };
+        let store = core.build_client(&conn, &creds)?;
+        return Ok((store, conn));
     }
+
+    let id = input.id.clone().ok_or_else(|| {
+        AppError::invalid("either a connection id or a connection draft is required")
+    })?;
+    let conn = core.connection(&id)?;
+    let store = core.client(&id)?;
+    Ok((store, conn))
 }
 
 #[tauri::command]
@@ -294,8 +278,7 @@ pub async fn test_connection(
     app: State<'_, Arc<AppCore>>,
     input: ProbeInput,
 ) -> CmdResult<ProbeOutcome> {
-    let ctx = Ctx(&app);
-    let (store, conn) = ctx.resolve_probe(&input).map_err(err)?;
+    let (store, conn) = resolve_probe(app.inner(), &input).map_err(err)?;
     let prefix = as_folder_prefix(&conn.prefix);
     let list = objects::list_folder(&store, &prefix, 25).await?;
     let sample_keys = list
@@ -325,8 +308,7 @@ pub async fn detect_capabilities(
     app: State<'_, Arc<AppCore>>,
     id: String,
 ) -> CmdResult<Capabilities> {
-    let ctx = Ctx(&app);
-    let core = ctx.core();
+    let core = app.inner();
     let conn = core.connection(&id).map_err(err)?;
     let store = core.client(&id).map_err(err)?;
     let detect = conn.security.detect_permissions;
@@ -358,8 +340,7 @@ pub struct ListInput {
 
 #[tauri::command]
 pub async fn list_objects(app: State<'_, Arc<AppCore>>, input: ListInput) -> CmdResult<ListResult> {
-    let ctx = Ctx(&app);
-    let core = ctx.core();
+    let core = app.inner();
     let conn = core.connection(&input.connection_id).map_err(err)?;
     let limit = core.settings().list_page_limit as usize;
     let show_system = core.settings().show_system_objects;
@@ -393,8 +374,7 @@ pub async fn list_objects_stream(
     app_state: State<'_, Arc<AppCore>>,
     input: ListStreamInput,
 ) -> CmdResult<()> {
-    let ctx = Ctx(&app_state);
-    let core = ctx.core();
+    let core = app_state.inner();
     let conn = core.connection(&input.connection_id).map_err(err)?;
     let limit = core.settings().list_page_limit as usize;
     let show_system = core.settings().show_system_objects;
@@ -500,8 +480,7 @@ pub async fn get_preview(
     app: State<'_, Arc<AppCore>>,
     input: PreviewInput,
 ) -> CmdResult<PreviewData> {
-    let ctx = Ctx(&app);
-    let core = ctx.core();
+    let core = app.inner();
     let max = core.settings().preview_max_bytes;
     let store = core.client(&input.connection_id).map_err(err)?;
     let mut data: PreviewData =
@@ -531,8 +510,7 @@ pub async fn object_meta(
     connection_id: String,
     key: String,
 ) -> CmdResult<StreamMeta> {
-    let ctx = Ctx(&app);
-    let store = ctx.core().client(&connection_id).map_err(err)?;
+    let store = app.inner().client(&connection_id).map_err(err)?;
     let meta = store.stat(&key).await?;
     Ok(StreamMeta {
         size: meta.size.unwrap_or(0),
@@ -570,9 +548,9 @@ pub async fn download_object(
     app: State<'_, Arc<AppCore>>,
     input: DownloadInput,
 ) -> CmdResult<TransferResult> {
-    let ctx = Ctx(&app);
-    let core = ctx.core();
-    let conn = core.connection(&input.connection_id).map_err(err)?;
+    let core = app.inner();
+    // The connection must exist even when a client for it is already cached.
+    core.connection(&input.connection_id).map_err(err)?;
     let store = core.client(&input.connection_id).map_err(err)?;
     // Reserve the destination before spawning. `unique_path` only checks that a
     // name is free; two concurrent downloads with the same basename could both
@@ -612,7 +590,6 @@ pub async fn download_object(
     let store = store.clone();
     let key = input.key.clone();
     let dest_task = dest.clone();
-    let conn_name = conn.name.clone();
 
     let reserved = reserved_file.is_some();
     tauri::async_runtime::spawn(async move {
@@ -635,10 +612,7 @@ pub async fn download_object(
                     tokio::fs::File::create(&dest_task).await?
                 }
             };
-            // Size is best-effort: a failed HEAD must not block the download.
-            let total = store.stat(&key).await.ok().and_then(|m| m.size);
             let written = store.get_to(&key, &mut file).await?;
-            let _ = total;
             Ok::<u64, AppError>(written)
         }
         .await;
@@ -663,7 +637,6 @@ pub async fn download_object(
             }
         }
     });
-    let _ = conn_name;
 
     Ok(TransferResult {
         id: progress_id,
@@ -752,8 +725,7 @@ pub async fn download_folder(
     app: State<'_, Arc<AppCore>>,
     input: DownloadFolderInput,
 ) -> CmdResult<TransferResult> {
-    let ctx = Ctx(&app);
-    download_folder_impl(ctx.core(), input).await.map_err(err)
+    download_folder_impl(app.inner(), input).await.map_err(err)
 }
 
 /// Download every object under a prefix into a new directory of its own.
@@ -1213,8 +1185,7 @@ pub async fn upload_files(
     app: State<'_, Arc<AppCore>>,
     input: UploadInput,
 ) -> CmdResult<Vec<UploadPlanItem>> {
-    let ctx = Ctx(&app);
-    upload_files_impl(ctx.core(), input).await.map_err(err)
+    upload_files_impl(app.inner(), input).await.map_err(err)
 }
 
 /// Implementation shared by the command and the e2e hooks: validates the
@@ -1385,8 +1356,7 @@ pub async fn upload_conflicts(
     app: State<'_, Arc<AppCore>>,
     input: UploadInput,
 ) -> CmdResult<Vec<String>> {
-    let ctx = Ctx(&app);
-    upload_conflicts_impl(ctx.core(), input).await.map_err(err)
+    upload_conflicts_impl(app.inner(), input).await.map_err(err)
 }
 
 pub async fn upload_conflicts_impl(
@@ -1418,8 +1388,7 @@ pub async fn upload_conflicts_impl(
 /// an error so the UI can say why the click did nothing.
 #[tauri::command]
 pub async fn cancel_transfer(app: State<'_, Arc<AppCore>>, id: String) -> CmdResult<()> {
-    let ctx = Ctx(&app);
-    cancel_transfer_impl(&ctx.core().progress, &id).map_err(err)
+    cancel_transfer_impl(&app.inner().progress, &id).map_err(err)
 }
 
 pub fn cancel_transfer_impl(tracker: &ProgressTracker, id: &str) -> crate::error::AppResult<()> {
@@ -1447,8 +1416,7 @@ pub struct SaveTextInput {
 
 #[tauri::command]
 pub async fn save_text_object(app: State<'_, Arc<AppCore>>, input: SaveTextInput) -> CmdResult<()> {
-    let ctx = Ctx(&app);
-    let core = ctx.core();
+    let core = app.inner();
     ensure_writable(core, &input.connection_id)?;
     let store = core.client(&input.connection_id).map_err(err)?;
     store
@@ -1483,19 +1451,18 @@ fn ensure_writable(core: &AppCore, connection_id: &str) -> CmdResult<()> {
 
 #[tauri::command]
 pub async fn transfer_progress(app: State<'_, Arc<AppCore>>) -> CmdResult<Vec<ProgressView>> {
-    let ctx = Ctx(&app);
     // Finished entries are kept until the user clears them (or the app exits):
     // pruning here would race with a poll that is waiting for a result.
-    Ok(ctx.core().progress.all())
+    Ok(app.inner().progress.all())
 }
 
 /// Drops every finished transfer from the tracker and reports how many went.
 #[tauri::command]
 pub async fn clear_transfers(app: State<'_, Arc<AppCore>>) -> CmdResult<usize> {
-    let ctx = Ctx(&app);
-    let before = ctx.core().progress.all().len();
-    ctx.core().progress.prune_finished();
-    Ok(before - ctx.core().progress.all().len())
+    let core = app.inner();
+    let before = core.progress.all().len();
+    core.progress.prune_finished();
+    Ok(before - core.progress.all().len())
 }
 
 // ------------------------------------------------------------------- mutation
@@ -1513,8 +1480,7 @@ pub async fn create_folder(
     app: State<'_, Arc<AppCore>>,
     input: CreateFolderInput,
 ) -> CmdResult<String> {
-    let ctx = Ctx(&app);
-    let core = ctx.core();
+    let core = app.inner();
     ensure_writable(core, &input.connection_id)?;
     let name = input.name.trim().trim_matches('/');
     if name.is_empty() {
@@ -1548,8 +1514,7 @@ pub async fn create_file(
     app: State<'_, Arc<AppCore>>,
     input: CreateFileInput,
 ) -> CmdResult<String> {
-    let ctx = Ctx(&app);
-    let core = ctx.core();
+    let core = app.inner();
     ensure_writable(core, &input.connection_id)?;
     let name = input.name.trim().trim_matches('/');
     if name.is_empty() {
@@ -1588,8 +1553,7 @@ pub async fn delete_objects(
     app: State<'_, Arc<AppCore>>,
     input: DeleteInput,
 ) -> CmdResult<DeleteOutcome> {
-    let ctx = Ctx(&app);
-    let core = ctx.core();
+    let core = app.inner();
     ensure_writable(core, &input.connection_id)?;
     if input.keys.is_empty() {
         return Ok(DeleteOutcome {
@@ -1673,8 +1637,7 @@ pub async fn copy_objects(
     app: State<'_, Arc<AppCore>>,
     input: CopyInput,
 ) -> CmdResult<CopyOutcome> {
-    let ctx = Ctx(&app);
-    let core = ctx.core();
+    let core = app.inner();
     ensure_writable(core, &input.dest_connection_id)?;
     if input.move_objects {
         ensure_writable(core, &input.source_connection_id)?;
@@ -1731,7 +1694,6 @@ pub async fn copy_objects(
     let copied = pairs.len();
     let progress_id_task = progress_id.clone();
     tauri::async_runtime::spawn(async move {
-        let mut done = 0u64;
         for (from, to) in &pairs_task {
             if let Err(e) = dst_task.copy_object(from, to).await {
                 tracker.fail_if_running(
@@ -1749,10 +1711,8 @@ pub async fn copy_objects(
                     return;
                 }
             }
-            done += 1;
             tracker.advance(&progress_id_task, 1);
         }
-        let _ = done;
         tracker.finish_if_running(&progress_id_task, None);
     });
 

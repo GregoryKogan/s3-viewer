@@ -224,13 +224,16 @@ pub async fn list_all_keys(store: &AnyStore, prefix: &str) -> AppResult<Vec<Stri
 
 /// Human summary used in confirmation prompts, e.g. `12 files (3.4 GB)`.
 pub fn describe_objects(entries: &[ObjectEntry]) -> String {
-    let files = entries.iter().filter(|e| !e.is_folder).count();
-    let folders = entries.iter().filter(|e| e.is_folder).count();
-    let bytes: i64 = entries
-        .iter()
-        .filter(|e| !e.is_folder)
-        .map(|e| e.size)
-        .sum();
+    let (files, folders, bytes) =
+        entries
+            .iter()
+            .fold((0usize, 0usize, 0i64), |(files, folders, bytes), e| {
+                if e.is_folder {
+                    (files, folders + 1, bytes)
+                } else {
+                    (files + 1, folders, bytes + e.size)
+                }
+            });
     let mut parts = Vec::new();
     if files > 0 {
         parts.push(format!("{files} file(s), {}", human_size(bytes)));
