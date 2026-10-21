@@ -614,8 +614,8 @@ async function onKeydown(event: KeyboardEvent) {
 
   // A modal owns every key: a global shortcut must not act on the inert shell
   // behind it (⌘N stacking a form on Settings, ⌘R reloading a hidden list, ⌘L
-  // focusing the address bar behind the dialog). Escape stays with the dialog
-  // host, which handles it in a capture listener.
+  // focusing the address bar behind the dialog). Escape never reaches here: it
+  // is the top `<dialog>`'s native `cancel` event.
   if (dialogs.isOpen()) return;
 
   /*

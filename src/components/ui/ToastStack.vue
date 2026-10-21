@@ -25,7 +25,9 @@ async function followTopDialog() {
   target.value = open[open.length - 1] ?? "body";
 }
 
-watch(() => dialogs.stack.length, followTopDialog, { flush: "post" });
+// Keyed on the top dialog's identity, not the stack length: a close and an open
+// in one tick is 1 → 0 → 1, which a length watcher never sees.
+watch(() => dialogs.stack.at(-1)?.id ?? null, followTopDialog, { flush: "post" });
 
 const TONES: Record<Toast["level"], string> = {
   info: "border-l-accent",

@@ -31,7 +31,11 @@ function rememberFocus(event: FocusEvent) {
 // inert and hands the platform the focus trap, Escape and the backdrop.
 // Until it opens, the closed `<dialog>` is `display: none`, so the panel's
 // `autofocus` cannot grab focus before the opener is remembered.
-onMounted(() => dialog.value?.showModal());
+// Only the top dialog opens: one mounted underneath stays closed until its
+// `active` watcher runs, so two dialogs opened in one tick cannot both show.
+onMounted(() => {
+  if (props.active) dialog.value?.showModal();
+});
 
 // Only the top dialog of the stack is open: a dialog under another one closes,
 // and a closed `<dialog>` keeps its DOM, form state and opener for the trip

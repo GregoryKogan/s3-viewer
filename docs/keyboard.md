@@ -158,7 +158,8 @@ button and is navigated like any other menu; `⌘U` and `⌘⇧U` skip it.
 
 - Opening from the keyboard is always possible (`⌘N`, `⌘I`, the sidebar, the
   toolbar, a row action).
-- The first sensible control takes focus; destructive confirmations focus the
+- Every dialog puts `autofocus` on its first control — the native `showModal()`
+  focuses that, not a guessed body field; destructive confirmations focus the
   safe choice.
 - `Tab`/`Shift+Tab` stay inside the dialog.
 - `Escape` closes it; `Enter` submits the form unless the focused control has

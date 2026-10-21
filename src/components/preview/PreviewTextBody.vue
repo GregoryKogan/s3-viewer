@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import FindBar from "./FindBar.vue";
 import { clearHighlights, paintMatches, setActiveHighlight } from "@/lib/searchMarks";
 import { findMatches } from "@/lib/textSearch";
@@ -69,7 +69,23 @@ function paintActive() {
   // scroller's own box, and nudge horizontally only when the hit is clipped.
   const box = scroller.value;
   if (!range || !box) return;
-  const rect = range.getBoundingClientRect();
+  let rect = range.getBoundingClientRect();
+  // A regex hit on a newline is a real match with an empty box. Measure the
+  // character before it — the line the match ends — then the element it starts
+  // in, so Enter still brings the line into view instead of doing nothing.
+  if (!rect.width && !rect.height) {
+    const start = range.startContainer;
+    if (start.nodeType === Node.TEXT_NODE && start.textContent) {
+      const glyph = document.createRange();
+      const from = Math.max(0, range.startOffset - 1);
+      glyph.setStart(start, from);
+      glyph.setEnd(start, Math.min(start.textContent.length, from + 1));
+      rect = glyph.getBoundingClientRect();
+    }
+    if (!rect.width && !rect.height && start.parentElement) {
+      rect = start.parentElement.getBoundingClientRect();
+    }
+  }
   // A range left over from a replaced subtree has no box; scrolling to it would
   // jump the view to the top.
   if (!rect.width && !rect.height) return;
@@ -87,10 +103,12 @@ function paintActive() {
  */
 async function repaint() {
   await nextTick();
-  const root = code.value;
-  if (!root) return;
+  // Clear before the null check: an unmounted body has no root to paint into,
+  // but the registry can still hold ranges into the subtree it just dropped.
   clearHighlights();
   ranges = [];
+  const root = code.value;
+  if (!root) return;
 
   const { matches, error } = result.value;
   find.matchCount = matches.length;
@@ -113,6 +131,10 @@ function closeFind() {
   clearHighlights();
   scroller.value?.focus();
 }
+
+// The unmount path never repaints, so the last file's ranges would stay
+// registered against a detached subtree.
+onBeforeUnmount(() => clearHighlights());
 
 watch(() => find.activeIndex, paintActive);
 

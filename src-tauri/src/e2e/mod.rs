@@ -1341,6 +1341,13 @@ const SCENARIO: &str = r#"(async () => {
       }
       const scroller = $('[data-preview-scroll]');
       if (document.activeElement !== scroller) throw new Error('closing did not return focus to the text');
+      // The close path is the one clear that the no-hit and invalid-pattern
+      // branches do not cover: both registrations have to go with the bar.
+      await wait('the highlights to clear with the bar', () => {
+        const hits = CSS.highlights.get('preview-find-hit');
+        const active = CSS.highlights.get('preview-find-active');
+        return (!hits || !hits.size) && (!active || !active.size) ? true : null;
+      });
       press(scroller, 'Escape');
       await wait('the next Escape to collapse the preview', async () =>
         (list.offsetParent !== null && $('[data-testid=preview-expand]').getAttribute('aria-pressed') === 'false'
@@ -1353,7 +1360,31 @@ const SCENARIO: &str = r#"(async () => {
       if (input.value !== 'Line') throw new Error('the header button changed the query: ' + input.value);
       press(input, 'Escape');
       await wait('the bar to close again', () => ($('[data-testid=find-bar]') ? null : true));
-      return 'bar closed before the expansion, focus returned, header button reopened with the query';
+
+      // A match over highlighted code crosses text nodes on purpose: "class
+      // Greeter" runs over the keyword span, the space between them and the
+      // title span, so the range must start and end in different containers.
+      clickRow('sample.py');
+      const highlighted = await wait('the highlighted preview', () => $('[data-testid=preview-code]'), 20000);
+      press(highlighted, 'f', { metaKey: true });
+      await wait('the find bar over the highlighted code', () => $('[data-testid=find-bar]'));
+      setInput('[data-testid=find-input]', 'class Greeter');
+      await wait('the straddling hit', () => {
+        const node = $('[data-testid=find-counter]');
+        return node && node.textContent.trim() === '1 of 1' ? node : null;
+      });
+      const hit = Array.from(CSS.highlights.get('preview-find-hit') || [])[0];
+      if (!hit) throw new Error('no range for a hit over highlighted code');
+      if (hit.toString() !== 'class Greeter') {
+        throw new Error('the straddling range covers "' + hit.toString() + '"');
+      }
+      if (hit.startContainer === hit.endContainer) {
+        throw new Error('the match did not cross a highlight.js text-node boundary');
+      }
+      press($('[data-testid=find-input]'), 'Escape');
+      await wait('the bar to close after the straddle check', () => ($('[data-testid=find-bar]') ? null : true));
+      return 'bar closed before the expansion, focus returned, header button reopened with the query, '
+        + 'a match over three token nodes is one range covering "class Greeter"';
     });
 
     await check('preview find: only text views offer it, and they close it when they stop being text', async () => {
@@ -2792,9 +2823,19 @@ const SCENARIO: &str = r#"(async () => {
       const settings = await wait('the settings dialog', () => $('[data-testid=modal]'), 10000);
       const lower = settings.closest('dialog');
       if (!lower || !lower.open) throw new Error('Settings did not open as a modal <dialog>');
+      // Settings opted out of backdrop dismissal (`dismissible: false`): a
+      // backdrop click must not throw the form away, and a click inside the
+      // panel must never close the top dialog either.
+      lower.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      settings.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await frame();
+      if (!lower.open || !settings.isConnected) {
+        throw new Error('a click dismissed the non-dismissible settings dialog');
+      }
       const checkNow = await wait('the update check button', () => $('[data-testid=settings-check-updates]'), 5000);
-      // The button disables itself while the prompt is open, so it cannot hold
-      // focus across the trip; the theme picker can.
+      // The button only spins while checking (`:busy`, not `:disabled`), and
+      // clicking a button does not move focus in this webview, so the theme
+      // picker is still what held focus when the prompt opened.
       const anchor = await wait('the theme picker', () => $('[data-testid=settings-theme]'), 5000);
       anchor.focus();
       checkNow.click();
