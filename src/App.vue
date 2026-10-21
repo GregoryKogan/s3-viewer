@@ -1099,7 +1099,6 @@ function publishHarness() {
     logs: objects.logging,
     copySnippet: async () => {
       // Used by the suite to prove the clipboard path works end to end.
-      const { copyText } = await import("@/lib/ipc");
       const snippet = document.querySelector('[data-testid=boto3-snippet]');
       return snippet ? copyText(snippet.textContent ?? "") : false;
     },
