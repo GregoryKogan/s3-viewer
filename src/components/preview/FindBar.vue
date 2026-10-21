@@ -31,7 +31,9 @@ const input = ref<HTMLInputElement | null>(null);
  *
  * `activeIndex` stays -1 until the body marks the first hit, and the bar shows
  * `0 of N` in that moment instead of hiding the count: how many hits a query has
- * is worth knowing before one of them is picked.
+ * is worth knowing before one of them is picked. That moment is one frame on
+ * reopen — the previous count is kept (D13) so the bar does not flash "No
+ * results" over hits that are about to be marked.
  */
 const counter = computed<{ text: string; danger: boolean } | null>(() => {
   if (props.error) return { text: "Invalid regex", danger: true };
@@ -44,7 +46,7 @@ const counter = computed<{ text: string; danger: boolean } | null>(() => {
 /**
  * Focus and select the whole query when the bar opens or `show` bumps the nonce.
  *
- * Deliberately not an unconditional `@focus` handler (D7): the ⌘F gesture
+ * Deliberately not an unconditional `@focus` handler (D3): the ⌘F gesture
  * re-selects the old query the way VS Code does, but a plain click inside the
  * field has to keep the caret where the user just put it.
  */

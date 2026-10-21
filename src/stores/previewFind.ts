@@ -28,10 +28,13 @@ export const usePreviewFindStore = defineStore("previewFind", () => {
     focusNonce.value += 1;
   }
 
+  /**
+   * Closing the bar is not a new search: the count stays so reopening a retained
+   * query does not flash "No results" before the body repaints.
+   */
   function hide() {
     open.value = false;
     activeIndex.value = -1;
-    matchCount.value = 0;
   }
 
   /** A new file starts with an empty query but keeps the options (D6). */
@@ -80,10 +83,10 @@ export const usePreviewFindStore = defineStore("previewFind", () => {
     wholeWord.value = !wholeWord.value;
   }
 
-  /** Turning regex on clears whole word for the same reason (D4). */
+  /** Turning regex on leaves whole word as it was: disabled, and ignored by the
+   * matcher (D4), so switching regex off restores the user's setting untouched. */
   function toggleRegex() {
     regex.value = !regex.value;
-    if (regex.value) wholeWord.value = false;
   }
 
   return {

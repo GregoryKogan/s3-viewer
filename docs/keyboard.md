@@ -125,12 +125,20 @@ rendered-Markdown preview falls through to the filter too. The magnifier button
 | Match Whole Word | `⌥⌘W` |
 | Use Regular Expression | `⌥⌘R` |
 
+`Esc` in the preview column backs out one step at a time: it closes the find bar
+first, then collapses an expanded preview, then hands the keyboard back to the
+list.
+
 The search starts case-insensitive. `⌘F` while the bar's field has the keyboard
 re-selects the old query; it never moves to the filter. Match Case, Whole Word
 and Regular Expression survive closing the bar and opening another file, while
 the query is cleared when the preview moves to a different object. Whole word is
-unavailable in regular-expression mode, and switching a Markdown preview between
-Rendered and Raw closes the bar.
+disabled and ignored in regular-expression mode — the setting is kept, so
+switching regex off brings it back. Switching a Markdown preview between Rendered
+and Raw closes the bar.
+
+The search covers the text the preview loaded; a truncated file keeps its
+truncation warning below the text in every view, rendered Markdown included.
 
 ### Menus
 

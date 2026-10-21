@@ -86,9 +86,7 @@ async function repaint() {
   clearMarks(root);
 
   const { matches, error } = result.value;
-  // A closed bar shows no count, and `hide()` promises zero: a retained query
-  // must not leave `matchCount` at the old list length.
-  find.setMatchCount(find.open ? matches.length : 0);
+  find.setMatchCount(matches.length);
 
   // The counter reads `activeIndex + 1`, so an index left over from a longer
   // previous list would show "8 of 2". A repaint replaces the marks anyway, so
@@ -113,6 +111,19 @@ function closeFind() {
 watch(() => find.activeIndex, paintActive);
 
 /**
+ * Reopening the bar is a new look at the file even when the query and the active
+ * hit are the same as before: the user may have scrolled away, so the first hit
+ * has to be brought back into view. Keeping the index guard for every other
+ * repaint is what stops typing from recentring the view on each keystroke.
+ */
+watch(
+  () => find.open,
+  (open) => {
+    if (open) painted = -1;
+  },
+);
+
+/**
  * `immediate`: a body that mounts while the bar is already open (a raw Markdown
  * view, a re-keyed renderer) has marks to paint but no prop change to wake it.
  * `find.open` is watched too, or reopening the bar on a kept query would show a
@@ -131,8 +142,6 @@ watch(
   repaint,
   { immediate: true },
 );
-
-defineExpose({ closeFind });
 </script>
 
 <template>
