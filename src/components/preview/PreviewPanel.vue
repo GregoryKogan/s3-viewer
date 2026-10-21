@@ -71,11 +71,18 @@ onMounted(() => {
  * A hidden panel defers the fetch and keeps the key. Any route back to
  * visibility must fetch it: the header button, but also the automatic reveal
  * when a narrow window widens again, which nobody clicked (PRV-4).
+ *
+ * The find bar is transient UI over the text, so hiding the column closes it;
+ * the query and the options survive, so ⌘F restores the search in one step.
  */
 watch(
   () => ui.previewHidden,
   (hidden) => {
-    if (!hidden) void objects.refreshPreview();
+    if (hidden) {
+      find.hide();
+      return;
+    }
+    void objects.refreshPreview();
   },
 );
 
@@ -85,7 +92,11 @@ const isMarkdown = computed(() => data.value?.kind === "markdown");
 const folderEntry = computed(() => objects.folderMeta);
 
 const kind = computed(() => data.value?.kind ?? (isFolder.value ? "folder" : "unknown"));
-const canFind = computed(() => isPreviewSearchable(kind.value, objects.previewView));
+// An unavailable preview has no body at all, so there is nothing to search and
+// `⌘F` must fall through to the folder filter instead of opening a bar nowhere.
+const canFind = computed(
+  () => !objects.previewUnavailable && isPreviewSearchable(kind.value, objects.previewView),
+);
 
 /** One line for every kind: size · kind · last modified. No truncated ETag (PRV-10). */
 const meta = computed(() => {
@@ -175,8 +186,10 @@ function showFind() {
 }
 
 /**
- * Escape and the bar's close button both land here: hiding is the panel's
- * decision, while the text body's `find.open` watcher repaints away the marks.
+ * Escape in the preview column and the header's ⌘F both land here: hiding is
+ * the panel's decision, while the text body's `find.open` watcher repaints away
+ * the marks. The bar's own close button stays inside the body, which hides and
+ * focuses the scroller without asking the panel.
  */
 function closeFind() {
   if (!find.open) return false;
@@ -455,10 +468,14 @@ defineExpose({ focusPanel, showFind, closeFind });
           v-else :data="data" />
       </template>
 
-      <!-- One banner for every renderer: the switch above is exclusive, and the
-           flag is only set for text payloads. Rendered Markdown gets it here. -->
+      <!-- One banner for every renderer: the switch above is exclusive, so the
+           text payload is shown by exactly one of them. The payload check
+           matters: the backend also flags media over HEAD_LIMIT as truncated
+           while the renderer streams the whole object. An unavailable preview
+           shows its own reason instead. Rendered Markdown, which has no body of
+           its own, gets the warning here too. -->
       <p
-        v-if="objects.preview?.truncated"
+        v-if="objects.preview?.truncated && objects.preview?.text != null && !objects.previewUnavailable"
         class="shrink-0 border-t border-line bg-warn/10 px-3 py-1.5 text-meta text-warn"
         data-testid="preview-truncated"
       >

@@ -102,7 +102,8 @@ test("invalid JSON is not pretty-printed", async () => {
 
 test("find-in-file is offered only where the file's text is on screen", async () => {
   const { isPreviewSearchable } = await loadTs("src/lib/previewText.ts");
-  // Every FileKind is listed so a new one has to make a deliberate choice.
+  // Kept in sync by hand: there is no runtime list of kinds, so this table is
+  // the record of the decision for each of them.
   const expected = {
     text: true,
     code: true,

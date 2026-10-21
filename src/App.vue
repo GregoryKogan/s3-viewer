@@ -751,6 +751,14 @@ async function onKeydown(event: KeyboardEvent) {
   // the global Delete/⌘↑ bindings must not fire behind it.
   if (menu.value) return;
 
+  // Escape backs out one visible step, and an open find bar is the overlay on
+  // the text: it goes before the panel's own layout, or collapsing an expanded
+  // preview would leave the bar up and make Escape's answer depend on focus.
+  if (key === "Escape" && zone === "preview" && previewPanel.value?.closeFind()) {
+    event.preventDefault();
+    return;
+  }
+
   // Collapsing an expanded preview is global: the user just clicked its Expand
   // button, and Escape must not depend on where focus landed. It is also the
   // smaller, more reversible step, so only the next Escape clears the selection.
@@ -770,9 +778,6 @@ async function onKeydown(event: KeyboardEvent) {
     // preview cannot wipe a selection the user is not looking at.
     if (zone === "sidebar" || zone === "preview") {
       event.preventDefault();
-      // In the preview, an open find bar is the first thing Escape closes; the
-      // column is left only when there was no bar to close.
-      if (zone === "preview" && previewPanel.value?.closeFind()) return;
       focusMain();
       return;
     }

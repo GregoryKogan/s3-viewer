@@ -112,12 +112,12 @@ it. `Escape` clears the filter and returns to the list.
 `⌘F` inside the preview column opens find-in-file for the views that show the
 file's text: `text`, `code` and `json`, plus Markdown in the **Raw** view.
 Everywhere else it still focuses the filter, and an image, PDF, CSV, Parquet or
-rendered-Markdown preview falls through to the filter too. The **Search** button
-in the preview header is the mouse entry point.
+rendered-Markdown preview falls through to the filter too. The magnifier button
+(**Find in file**) in the preview header is the mouse entry point.
 
 | Action | Keys |
 | --- | --- |
-| Open find in the preview (header button: **Search**) | `⌘F` |
+| Open find in the preview (header button: **Find in file**) | `⌘F` |
 | Next match | `↩` |
 | Previous match | `⇧↩` |
 | Close and return to the text | `Esc` |
