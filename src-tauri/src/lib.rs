@@ -30,8 +30,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        // Remembers the window geometry between launches (PLT-1).
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Remembers the window geometry between launches (PLT-1). An e2e run
+        // starts from the size in `tauri.conf.json` instead (see
+        // `window_state_flags`): geometry checks may not depend on the host.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_state_flags())
+                .build(),
+        )
         // Self-updates. The webview drives the check (see `src/stores/updates.ts`),
         // this plugin downloads the signed bundle and swaps it on disk. Without the
         // signing key nothing is ever accepted, so the key lives only in CI secrets.
@@ -113,6 +119,18 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running s3viewer");
+}
+
+/// Full geometry persistence for a real launch, nothing under the e2e harness:
+/// a run starts from the size in `tauri.conf.json`, so checks that read the
+/// layout do not depend on the host, and the run leaves the geometry that the
+/// developer's own launches saved untouched.
+fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
+    #[cfg(debug_assertions)]
+    if std::env::var(e2e::ENV_RUN).ok().as_deref() == Some("1") {
+        return tauri_plugin_window_state::StateFlags::empty();
+    }
+    tauri_plugin_window_state::StateFlags::all()
 }
 
 /// A trivial command the e2e suite uses to confirm the IPC bridge is alive.

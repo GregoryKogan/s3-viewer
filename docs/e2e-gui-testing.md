@@ -186,6 +186,12 @@ Rules that the harness enforces or that have bitten before:
 - **Nothing may depend on window focus, screen position, or native dialogs.** The
   native file and save dialogs cannot be driven; go through the backend command
   instead (see `read_text_file`, and the `e2e_*` commands for transfers).
+- **Nothing may depend on the window size either.** Under `S3VIEWER_E2E=1` the
+  window-state plugin runs with empty flags, so the window opens at the size in
+  `tauri.conf.json` and a check that reads the layout sees the same geometry on
+  every host. The plugin neither restores nor saves geometry during an e2e run.
+  Do not reintroduce a dependence on a restored size; set the widths you need
+  through `window.__s3viewer.state.ui` instead.
 
 Available helpers inside the scenario (defined at the top of `SCENARIO`):
 
