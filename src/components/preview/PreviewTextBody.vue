@@ -65,6 +65,10 @@ function paintActive() {
       mark.classList.remove(ACTIVE_CLASS);
     }
   }
+  // A repaint resets the store to -1 just before it sets the first hit. That
+  // round trip is not a move, so leave `painted` alone: typing must not
+  // recentre the view on every keystroke.
+  if (index < 0) return;
   if (index === painted) return;
   painted = index;
   first?.scrollIntoView({ block: "center", inline: "nearest" });
@@ -83,7 +87,9 @@ async function repaint() {
   clearMarks(root);
 
   const { matches, error } = result.value;
-  find.setMatchCount(matches.length);
+  // A closed bar shows no count, and `hide()` promises zero: a retained query
+  // must not leave `matchCount` at the old list length.
+  find.setMatchCount(find.open ? matches.length : 0);
 
   // The counter reads `activeIndex + 1`, so an index left over from a longer
   // previous list would show "8 of 2". A repaint replaces the marks anyway, so

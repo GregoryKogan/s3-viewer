@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { marked } from "marked";
 import { sanitize } from "@/lib/previewText";
 import { api } from "@/lib/ipc";
@@ -42,11 +42,6 @@ function onContentClick(event: MouseEvent) {
     toasts.error(message, "Cannot open link");
   });
 }
-
-const body = ref<InstanceType<typeof PreviewTextBody> | null>(null);
-
-/** Only the raw view has a body to close; rendered Markdown has no find bar. */
-defineExpose({ closeFind: () => body.value?.closeFind() });
 </script>
 
 <template>
@@ -54,7 +49,6 @@ defineExpose({ closeFind: () => body.value?.closeFind() });
        the file's text, so it has no body for the bar to search. -->
   <PreviewTextBody
     v-if="props.view === 'raw'"
-    ref="body"
     :source="source"
     :markup="null"
     :truncated="props.data.truncated"

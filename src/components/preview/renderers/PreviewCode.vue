@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { highlight, highlightDetected } from "@/lib/highlight";
 import { DETECT_CANDIDATES, DETECT_MAX_BYTES, resolveLanguage, tryPrettyJson } from "@/lib/previewText";
 import PreviewTextBody from "@/components/preview/PreviewTextBody.vue";
@@ -24,13 +24,8 @@ const markup = computed(() => {
   if (text.length <= DETECT_MAX_BYTES) return highlightDetected(text, DETECT_CANDIDATES);
   return highlight(text, null);
 });
-
-const body = ref<InstanceType<typeof PreviewTextBody> | null>(null);
-
-/** The panel closes the bar through the renderer, so pass the body's close up. */
-defineExpose({ closeFind: () => body.value?.closeFind() });
 </script>
 
 <template>
-  <PreviewTextBody ref="body" :source="source" :markup="markup" :truncated="props.data.truncated" />
+  <PreviewTextBody :source="source" :markup="markup" :truncated="props.data.truncated" />
 </template>
