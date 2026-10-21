@@ -52,7 +52,7 @@ export const useDialogsStore = defineStore("dialogs", () => {
         {
           id,
           component: markRaw(component),
-          props: { ...buildProps(settle) },
+          props: buildProps(settle),
           size,
           dismissible: options.dismissible ?? true,
         },

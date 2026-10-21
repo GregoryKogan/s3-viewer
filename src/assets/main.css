@@ -247,9 +247,9 @@
 }
 
 /* ------------------------------------------------------------ shell layout
-   Collapsing and hiding are expressed on the root element, the way the shell is
-   actually laid out. Template branches are not involved, so these two cannot get
-   out of step with the store. */
+   Hiding is expressed on the root element, the way the shell is actually laid
+   out, so it cannot get out of step with the store. The collapsed width itself
+   is set inline by AppSidebar; only the rail's minimum width lives here. */
 
 [data-sidebar-collapsed] #sidebar {
   min-width: 4rem !important;
