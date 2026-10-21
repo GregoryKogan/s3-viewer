@@ -27,5 +27,5 @@ const markup = computed(() => {
 </script>
 
 <template>
-  <PreviewTextBody :source="source" :markup="markup" :truncated="props.data.truncated" />
+  <PreviewTextBody :source="source" :markup="markup" />
 </template>

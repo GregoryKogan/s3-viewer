@@ -65,7 +65,7 @@ the resizer, in the PDF viewer, on a native media element, or with `⌘`, `⌥` 
 | New folder | `⌘⇧N` |
 | Edit the focused connection | `⌘I` |
 | Address bar | `⌘L` |
-| Filter | `⌘F` |
+| Filter, or find in the preview | `⌘F` |
 | Toggle the sidebar | `⌘B` |
 | Select all visible | `⌘A` |
 | Download the selection or the cursor row | `⌘D` |
@@ -102,9 +102,35 @@ A cursor the filter hides is inert: `Space`, `Delete` and the menu ignore it.
 
 ### Filter
 
-`⌘F` focuses the filter field. `↓` and `Enter` flush the debounce, move the
+`⌘F` focuses the filter field — except in a searchable preview, where it opens
+find-in-file instead (see below). `↓` and `Enter` flush the debounce, move the
 cursor to the first match and hand the keyboard to the list; `Enter` also opens
 it. `Escape` clears the filter and returns to the list.
+
+### Find in file
+
+`⌘F` inside the preview column opens find-in-file for the views that show the
+file's text: `text`, `code` and `json`, plus Markdown in the **Raw** view.
+Everywhere else it still focuses the filter, and an image, PDF, CSV, Parquet or
+rendered-Markdown preview falls through to the filter too. The **Search** button
+in the preview header is the mouse entry point.
+
+| Action | Keys |
+| --- | --- |
+| Open find in the preview (header button: **Search**) | `⌘F` |
+| Next match | `↩` |
+| Previous match | `⇧↩` |
+| Close and return to the text | `Esc` |
+| Match Case | `⌥⌘C` |
+| Match Whole Word | `⌥⌘W` |
+| Use Regular Expression | `⌥⌘R` |
+
+The search starts case-insensitive. `⌘F` while the bar's field has the keyboard
+re-selects the old query; it never moves to the filter. Match Case, Whole Word
+and Regular Expression survive closing the bar and opening another file, while
+the query is cleared when the preview moves to a different object. Whole word is
+unavailable in regular-expression mode, and switching a Markdown preview between
+Rendered and Raw closes the bar.
 
 ### Menus
 

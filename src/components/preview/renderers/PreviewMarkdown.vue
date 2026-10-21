@@ -51,7 +51,6 @@ function onContentClick(event: MouseEvent) {
     v-if="props.view === 'raw'"
     :source="source"
     :markup="null"
-    :truncated="props.data.truncated"
   />
 
   <div v-else class="flex min-h-0 flex-1 flex-col">

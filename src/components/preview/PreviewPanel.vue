@@ -10,6 +10,7 @@ import {
   Maximize2,
   Minimize2,
   RefreshCw,
+  Search,
   X,
 } from "@lucide/vue";
 import AppButton from "@/components/ui/AppButton.vue";
@@ -17,11 +18,13 @@ import Spinner from "@/components/ui/Spinner.vue";
 import ErrorNotice from "@/components/ui/ErrorNotice.vue";
 import { useObjectsStore } from "@/stores/objects";
 import { useConnectionsStore } from "@/stores/connections";
+import { usePreviewFindStore } from "@/stores/previewFind";
 import { useUiStore } from "@/stores/ui";
 import { useToastsStore } from "@/stores/toasts";
 import { useObjectActions } from "@/composables/useObjectActions";
 import { humanDate, humanSize, leafName, s3Uri } from "@/lib/format";
 import { kindLabel } from "@/lib/fileKind";
+import { isPreviewSearchable } from "@/lib/previewText";
 import { copyText } from "@/lib/ipc";
 import { keyLabel, shortcutLabel } from "@/lib/keyboard";
 import PreviewImage from "./renderers/PreviewImage.vue";
@@ -34,6 +37,7 @@ import PreviewTable from "./renderers/PreviewTable.vue";
 
 const objects = useObjectsStore();
 const connections = useConnectionsStore();
+const find = usePreviewFindStore();
 const ui = useUiStore();
 const toasts = useToastsStore();
 const actions = useObjectActions();
@@ -81,6 +85,7 @@ const isMarkdown = computed(() => data.value?.kind === "markdown");
 const folderEntry = computed(() => objects.folderMeta);
 
 const kind = computed(() => data.value?.kind ?? (isFolder.value ? "folder" : "unknown"));
+const canFind = computed(() => isPreviewSearchable(kind.value, objects.previewView));
 
 /** One line for every kind: size · kind · last modified. No truncated ETag (PRV-10). */
 const meta = computed(() => {
@@ -159,7 +164,44 @@ function focusPanel() {
   target?.focus({ preventScroll: true });
 }
 
-defineExpose({ focusPanel });
+/**
+ * The two entry points into find-in-file: the header button and the preview's
+ * `⌘F`. The return value is what tells `⌘F` whether it owns the key.
+ */
+function showFind() {
+  if (!canFind.value) return false;
+  find.show();
+  return true;
+}
+
+/**
+ * Escape and the bar's close button both land here: hiding is the panel's
+ * decision, while the text body's `find.open` watcher repaints away the marks.
+ */
+function closeFind() {
+  if (!find.open) return false;
+  find.hide();
+  focusPanel();
+  return true;
+}
+
+/**
+ * A query belongs to the object it was typed on, and a bar left over from a
+ * closed preview or another view must not survive the switch. Switching
+ * Rendered ↔ Raw closes it and does not reopen it: `⌘F` is one keystroke away.
+ */
+watch(
+  () => objects.previewKey,
+  () => {
+    find.resetQuery();
+    find.hide();
+  },
+);
+watch(canFind, (searchable) => {
+  if (!searchable) find.hide();
+});
+
+defineExpose({ focusPanel, showFind, closeFind });
 </script>
 
 <template>
@@ -191,6 +233,16 @@ defineExpose({ focusPanel });
       </div>
 
       <div v-if="objects.previewKey" class="flex shrink-0 items-center gap-0.5">
+        <AppButton
+          v-if="!isFolder && canFind"
+          size="sm"
+          variant="ghost"
+          :icon="Search"
+          aria-label="Find in file"
+          title="Find in file (⌘F)"
+          data-testid="preview-find"
+          @click="showFind()"
+        />
         <div
           v-if="isMarkdown"
           class="mr-1 flex items-center rounded-control border border-line p-0.5"
@@ -402,6 +454,16 @@ defineExpose({ focusPanel });
           :key="objects.previewKey ?? 'none'"
           v-else :data="data" />
       </template>
+
+      <!-- One banner for every renderer: the switch above is exclusive, and the
+           flag is only set for text payloads. Rendered Markdown gets it here. -->
+      <p
+        v-if="objects.preview?.truncated"
+        class="shrink-0 border-t border-line bg-warn/10 px-3 py-1.5 text-meta text-warn"
+        data-testid="preview-truncated"
+      >
+        Showing only the beginning of the file.
+      </p>
     </div>
   </aside>
 </template>

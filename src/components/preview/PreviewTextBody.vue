@@ -15,7 +15,6 @@ import { usePreviewFindStore } from "@/stores/previewFind";
 const props = defineProps<{
   source: string;
   markup: string | null;
-  truncated: boolean;
 }>();
 
 const find = usePreviewFindStore();
@@ -161,13 +160,5 @@ defineExpose({ closeFind });
       :active-index="find.activeIndex"
       @close="closeFind()"
     />
-
-    <p
-      v-if="truncated"
-      class="shrink-0 border-t border-line bg-warn/10 px-3 py-1.5 text-meta text-warn"
-      data-testid="preview-truncated"
-    >
-      Showing only the beginning of the file.
-    </p>
   </div>
 </template>

@@ -99,3 +99,31 @@ test("invalid JSON is not pretty-printed", async () => {
   assert.equal(tryPrettyJson("{not json"), null);
   assert.equal(tryPrettyJson("plain text"), null);
 });
+
+test("find-in-file is offered only where the file's text is on screen", async () => {
+  const { isPreviewSearchable } = await loadTs("src/lib/previewText.ts");
+  // Every FileKind is listed so a new one has to make a deliberate choice.
+  const expected = {
+    text: true,
+    code: true,
+    json: true,
+    // Rendered Markdown shows markup, not the source; only Raw has text to find.
+    markdown: { rendered: false, raw: true },
+    image: false,
+    audio: false,
+    video: false,
+    pdf: false,
+    csv: false,
+    parquet: false,
+    archive: false,
+    binary: false,
+    folder: false,
+    unknown: false,
+  };
+  for (const [kind, value] of Object.entries(expected)) {
+    for (const view of ["rendered", "raw"]) {
+      const want = typeof value === "boolean" ? value : value[view];
+      assert.equal(isPreviewSearchable(kind, view), want, `${kind} in the ${view} view`);
+    }
+  }
+});

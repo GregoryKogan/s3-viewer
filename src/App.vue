@@ -694,6 +694,12 @@ async function onKeydown(event: KeyboardEvent) {
     return;
   }
   if (plain && lower === "f") {
+    // Two searches, one key: the preview owns ⌘F when it has the keyboard and
+    // can search; anywhere else ⌘F is the folder filter, as before.
+    if (zone === "preview" && previewPanel.value?.showFind()) {
+      event.preventDefault();
+      return;
+    }
     event.preventDefault();
     document.querySelector<HTMLInputElement>('[data-testid=filter-input]')?.focus();
     return;
@@ -764,6 +770,9 @@ async function onKeydown(event: KeyboardEvent) {
     // preview cannot wipe a selection the user is not looking at.
     if (zone === "sidebar" || zone === "preview") {
       event.preventDefault();
+      // In the preview, an open find bar is the first thing Escape closes; the
+      // column is left only when there was no bar to close.
+      if (zone === "preview" && previewPanel.value?.closeFind()) return;
       focusMain();
       return;
     }

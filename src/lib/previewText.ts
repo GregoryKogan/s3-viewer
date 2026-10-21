@@ -8,6 +8,7 @@
 
 import hljs from "highlight.js/lib/core";
 import { extensionOf } from "@/lib/format";
+import type { FileKind } from "@/types";
 
 export const EXTENSION_LANGUAGE = {
   py: "python",
@@ -238,6 +239,21 @@ export function parseDelimited(text: string, delimiter: string): string[][] {
     rows.push(row);
   }
   return rows;
+}
+
+/**
+ * Which preview views can host find-in-file.
+ *
+ * Rendered Markdown is markup, not the file's text, so it has no body the bar
+ * could search; the Raw view shows the source and can.
+ */
+export function isPreviewSearchable(kind: FileKind, view: "rendered" | "raw"): boolean {
+  return (
+    kind === "text" ||
+    kind === "code" ||
+    kind === "json" ||
+    (kind === "markdown" && view === "raw")
+  );
 }
 
 // ------------------------------------------------------------------- sanitizer
