@@ -53,6 +53,22 @@ interface CopyRequest {
   moveObjects: boolean;
 }
 
+/** One operation's transfer, as the shared runner sees it. */
+interface TransferJob<R> {
+  /** The backend call that creates the progress entry; a throw means nothing started. */
+  start: () => Promise<R>;
+  /** Arm Retry: once for the request, or once per entry an upload plan created. */
+  retry?: (result: R) => void;
+  /** Runs after the backend accepted the request — only delete drops rows here. */
+  accepted?: (result: R) => void;
+  /** Wait for the entry and report it; omitted when the transfers panel owns it. */
+  settle?: (result: R) => void | Promise<void>;
+  /** Leave the settle running: Retry resolves once the replacement exists. */
+  background?: boolean;
+  /** Toast title when the whole flow throws; omit so Retry surfaces the failure. */
+  failure?: string;
+}
+
 /**
  * Every mutating operation the browser offers.
  *
@@ -120,6 +136,36 @@ export function useObjectActions() {
     );
   }
 
+  // ---------------------------------------------------------------- transfers
+
+  async function runTransfer<R>(job: TransferJob<R> & { failure: string }): Promise<R | null>;
+  async function runTransfer<R>(job: TransferJob<R>): Promise<R>;
+  /**
+   * Start one transfer and run the lifecycle every operation shares: start the
+   * progress poll, arm Retry, run the accepted side effects, then settle.
+   *
+   * The operation still owns its request, its Retry target and its summary; this
+   * keeps their order — and the "toast, or let Retry see it" failure rule — in
+   * one place.
+   */
+  async function runTransfer<R>(job: TransferJob<R>): Promise<R | null> {
+    try {
+      const result = await job.start();
+      transfers.start();
+      job.retry?.(result);
+      job.accepted?.(result);
+      if (job.settle) {
+        if (job.background) void job.settle(result);
+        else await job.settle(result);
+      }
+      return result;
+    } catch (error) {
+      if (!job.failure) throw error;
+      toasts.apiError(error, job.failure);
+      return null;
+    }
+  }
+
   // ---------------------------------------------------------------- downloads
 
   /**
@@ -134,9 +180,6 @@ export function useObjectActions() {
     key: string,
     { destPath = null, destDir = null }: { destPath?: string | null; destDir?: string | null } = {},
   ): Promise<TransferResult> {
-    const result = await api.downloadObject({ connectionId, key, destPath, destDir });
-    transfers.start();
-
     // Cancellation is cooperative: a cancelled task can still be streaming and
     // later remove its file. Reusing an explicit `destPath` on retry would let
     // the old task delete the retry's bytes, so retry into the parent directory
@@ -145,10 +188,13 @@ export function useObjectActions() {
     const retryTarget = destPath
       ? { destPath: null, destDir: parentDirOf(destPath) || null }
       : { destPath: null, destDir };
-    transfers.registerRetry(result.id, async () => {
-      await startDownload(connectionId, key, retryTarget);
+    return runTransfer({
+      start: () => api.downloadObject({ connectionId, key, destPath, destDir }),
+      retry: (result) =>
+        transfers.registerRetry(result.id, async () => {
+          await startDownload(connectionId, key, retryTarget);
+        }),
     });
-    return result;
   }
 
   /**
@@ -198,9 +244,9 @@ export function useObjectActions() {
     key: string,
     destDir: string | null,
   ): Promise<TransferResult> {
-    const result = await api.downloadFolder({ connectionId, prefix: key, destDir });
-    transfers.start();
-    return result;
+    return runTransfer({
+      start: () => api.downloadFolder({ connectionId, prefix: key, destDir }),
+    });
   }
 
   /**
@@ -439,25 +485,23 @@ export function useObjectActions() {
     if (!captured || !paths.length) return;
     if (!target && (!connection || !sessionMatchesActive() || !canWrite())) return;
 
-    try {
-      const plan = await api.uploadFiles({
-        connectionId: captured.connectionId,
-        prefix: captured.prefix,
-        localPaths: paths,
-        overwrite: policy.overwrite,
-        skipExisting: policy.skipExisting ?? false,
-        skipKeys: policy.skipKeys ?? [],
-      });
-      transfers.start();
-      if (!plan.length) return;
-
+    await runTransfer({
+      start: () =>
+        api.uploadFiles({
+          connectionId: captured.connectionId,
+          prefix: captured.prefix,
+          localPaths: paths,
+          overwrite: policy.overwrite,
+          skipExisting: policy.skipExisting ?? false,
+          skipKeys: policy.skipKeys ?? [],
+        }),
       // Every transfer can be repeated on its own: a partially failed folder
       // upload is the case Retry exists for (IO-3).
-      registerUploadRetries(plan, captured);
-      await settleUpload(plan, captured);
-    } catch (error) {
-      toasts.apiError(error, "Cannot upload");
-    }
+      retry: (plan) => registerUploadRetries(plan, captured),
+      // An empty plan started nothing, so there is nothing to report or reload.
+      settle: (plan) => (plan.length ? settleUpload(plan, captured) : undefined),
+      failure: "Cannot upload",
+    });
   }
 
   /** Wait for a started upload and report its one summary. */
@@ -483,16 +527,21 @@ export function useObjectActions() {
    */
   async function retryUpload(item: UploadPlanItem, target: UploadTarget) {
     const prefix = uploadScopeFor(item.key, leafName(item.localPath));
-    const plan = await api.uploadFiles({
-      connectionId: target.connectionId,
-      prefix,
-      localPaths: [item.localPath],
-      overwrite: true,
+    const plan = await runTransfer({
+      start: () =>
+        api.uploadFiles({
+          connectionId: target.connectionId,
+          prefix,
+          localPaths: [item.localPath],
+          overwrite: true,
+        }),
+      retry: (started) => registerUploadRetries(started, target),
+      settle: (started) => (started.length ? settleUpload(started, target) : undefined),
+      background: true,
     });
-    transfers.start();
+    // Nothing was left to upload: reject so the progress store keeps the old
+    // Retry affordance instead of dropping it for a transfer that never started.
     if (!plan.length) throw new Error(`Nothing to upload for ${item.key}.`);
-    registerUploadRetries(plan, target);
-    void settleUpload(plan, target);
   }
 
   /**
@@ -665,24 +714,30 @@ export function useObjectActions() {
     );
   }
 
-  /** Start the delete request and register its retry. Throws if nothing starts. */
-  async function startDelete(target: UploadTarget, keys: string[]): Promise<DeleteOutcome> {
-    const result = await api.deleteObjects({ connectionId: target.connectionId, keys });
-    transfers.start();
-    transfers.registerRetry(result.id, () => retryDelete(target, keys));
-    // The request was accepted, so the rows are going away; a failed start
-    // leaves the selection intact.
+  /**
+   * Drop the rows a delete is removing, once the request was accepted — a failed
+   * start leaves the selection intact.
+   */
+  function deleteRows(keys: string[]) {
     objects.clearSelection();
     if (objects.previewKey && keys.some((key) => key === objects.previewKey)) {
       objects.clearPreview();
     }
-    return result;
+  }
+
+  /** One delete request: start, retry and settle, shared by the run and its Retry. */
+  function deleteJob(target: UploadTarget, keys: string[]): TransferJob<DeleteOutcome> {
+    return {
+      start: () => api.deleteObjects({ connectionId: target.connectionId, keys }),
+      retry: (result) => transfers.registerRetry(result.id, () => retryDelete(target, keys)),
+      accepted: () => deleteRows(keys),
+      settle: (result) => settleDelete(result, target),
+    };
   }
 
   /** Retry start: resolves once the replacement exists, settles in the background. */
   async function retryDelete(target: UploadTarget, keys: string[]) {
-    const result = await startDelete(target, keys);
-    void settleDelete(result, target);
+    await runTransfer({ ...deleteJob(target, keys), background: true });
   }
 
   async function settleDelete(result: DeleteOutcome, target: UploadTarget) {
@@ -709,12 +764,7 @@ export function useObjectActions() {
    * failure can safely run again.
    */
   async function executeDelete(target: UploadTarget, keys: string[]) {
-    try {
-      const result = await startDelete(target, keys);
-      await settleDelete(result, target);
-    } catch (error) {
-      toasts.apiError(error, "Cannot delete");
-    }
+    await runTransfer({ ...deleteJob(target, keys), failure: "Cannot delete" });
   }
 
   // ----------------------------------------------------------------- copy/move
@@ -753,18 +803,18 @@ export function useObjectActions() {
     );
   }
 
-  /** Start one copy/move request and register its retry. */
-  async function startCopy(request: CopyRequest, target: UploadTarget): Promise<CopyOutcome> {
-    const outcome = await api.copyObjects(request);
-    transfers.start();
-    transfers.registerRetry(outcome.id, () => retryCopy(request, target));
-    return outcome;
+  /** One copy/move request: start, retry and settle, shared by the run and its Retry. */
+  function copyJob(request: CopyRequest, target: UploadTarget): TransferJob<CopyOutcome> {
+    return {
+      start: () => api.copyObjects(request),
+      retry: (outcome) => transfers.registerRetry(outcome.id, () => retryCopy(request, target)),
+      settle: (outcome) => settleCopy(outcome, request, target),
+    };
   }
 
   /** Retry start: resolves once the replacement exists, settles in the background. */
   async function retryCopy(request: CopyRequest, target: UploadTarget) {
-    const outcome = await startCopy(request, target);
-    void settleCopy(outcome, request, target);
+    await runTransfer({ ...copyJob(request, target), background: true });
   }
 
   async function settleCopy(outcome: CopyOutcome, request: CopyRequest, target: UploadTarget) {
@@ -789,12 +839,10 @@ export function useObjectActions() {
 
   /** Run one copy/move request and wait for its single progress entry. */
   async function executeCopy(request: CopyRequest, target: UploadTarget) {
-    try {
-      const outcome = await startCopy(request, target);
-      await settleCopy(outcome, request, target);
-    } catch (error) {
-      toasts.apiError(error, request.moveObjects ? "Cannot move" : "Cannot copy");
-    }
+    await runTransfer({
+      ...copyJob(request, target),
+      failure: request.moveObjects ? "Cannot move" : "Cannot copy",
+    });
   }
 
   return {
