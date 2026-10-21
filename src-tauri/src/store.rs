@@ -56,6 +56,9 @@ pub struct AppSettings {
     /// Maximum number of *objects* listed per folder (folders are always
     /// included, however many there are).
     pub list_page_limit: u32,
+    /// Byte budget for the in-memory folder-listing cache. Zero turns it off.
+    #[serde(default = "default_listing_cache_max_bytes")]
+    pub listing_cache_max_bytes: u64,
     /// Where downloads land. `None` -> the OS download directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub download_dir: Option<String>,
@@ -82,6 +85,7 @@ impl Default for AppSettings {
         Self {
             preview_max_bytes: 25 * 1024 * 1024,
             list_page_limit: 20_000,
+            listing_cache_max_bytes: default_listing_cache_max_bytes(),
             download_dir: None,
             ask_download_location: false,
             show_system_objects: false,
@@ -89,6 +93,10 @@ impl Default for AppSettings {
             layout: LayoutSettings::default(),
         }
     }
+}
+
+fn default_listing_cache_max_bytes() -> u64 {
+    64 * 1024 * 1024
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -742,6 +750,25 @@ mod tests {
         // The wire name stays camelCase, matching the TypeScript type.
         let json = serde_json::to_value(LayoutSettings::default()).unwrap();
         assert_eq!(json["previewHidden"], false);
+    }
+
+    #[test]
+    fn listing_cache_limit_defaults_for_old_configs() {
+        // Config files written before the field existed must still load.
+        let settings: AppSettings = serde_json::from_str(
+            r#"{"previewMaxBytes":26214400,"listPageLimit":20000,"askDownloadLocation":false,
+                "showSystemObjects":false,"theme":"dark"}"#,
+        )
+        .unwrap();
+        assert_eq!(settings.listing_cache_max_bytes, 64 * 1024 * 1024);
+        assert_eq!(
+            AppSettings::default().listing_cache_max_bytes,
+            64 * 1024 * 1024
+        );
+
+        // The wire name stays camelCase, matching the TypeScript type.
+        let json = serde_json::to_value(AppSettings::default()).unwrap();
+        assert_eq!(json["listingCacheMaxBytes"], 67_108_864);
     }
 
     #[test]

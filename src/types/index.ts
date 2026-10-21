@@ -160,6 +160,8 @@ export interface ProgressView {
 export interface AppSettings {
   previewMaxBytes: number;
   listPageLimit: number;
+  /** In-memory folder-listing cache budget in bytes; 0 disables it. */
+  listingCacheMaxBytes: number;
   downloadDir?: string | null;
   /** Ask for a destination on every download instead of using `downloadDir`. */
   askDownloadLocation: boolean;

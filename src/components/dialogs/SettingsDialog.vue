@@ -40,6 +40,7 @@ const PRESETS = [
 const DEFAULTS = {
   previewMaxBytes: 25 * 1024 * 1024,
   listPageLimit: 20_000,
+  listingCacheMb: 64,
   theme: "dark" as Theme,
   downloadDir: "",
   askDownloadLocation: false,
@@ -49,6 +50,9 @@ const DEFAULTS = {
 const form = ref({
   previewMaxBytes: ui.settings?.previewMaxBytes ?? DEFAULTS.previewMaxBytes,
   listPageLimit: ui.settings?.listPageLimit ?? DEFAULTS.listPageLimit,
+  listingCacheMb: Math.round(
+    (ui.settings?.listingCacheMaxBytes ?? DEFAULTS.listingCacheMb * 1024 * 1024) / (1024 * 1024),
+  ),
   theme: (ui.settings?.theme ?? DEFAULTS.theme) as Theme,
   downloadDir: ui.settings?.downloadDir ?? DEFAULTS.downloadDir,
   askDownloadLocation: ui.settings?.askDownloadLocation ?? DEFAULTS.askDownloadLocation,
@@ -135,12 +139,22 @@ function cancel() {
   props.resolve(null);
 }
 
+/** The form edits MB; the stored setting is bytes. Garbage falls back to the default. */
+function cacheBytesFromForm(): number {
+  const mb = Number(form.value.listingCacheMb);
+  const clamped = Number.isFinite(mb)
+    ? Math.min(4096, Math.max(0, Math.round(mb)))
+    : DEFAULTS.listingCacheMb;
+  return clamped * 1024 * 1024;
+}
+
 async function save() {
   saving.value = true;
   try {
     const saved = await ui.saveSettings({
       previewMaxBytes: Number(form.value.previewMaxBytes),
       listPageLimit: Number(form.value.listPageLimit) || DEFAULTS.listPageLimit,
+      listingCacheMaxBytes: cacheBytesFromForm(),
       theme: form.value.theme,
       downloadDir: form.value.downloadDir.trim() || null,
       askDownloadLocation: form.value.askDownloadLocation,
@@ -212,6 +226,25 @@ function onEnter(event: KeyboardEvent) {
             <option value="light">Light</option>
             <option value="system">Follow the system</option>
           </select>
+        </AppField>
+
+        <AppField
+          class="col-span-full"
+          label="Folder listing cache"
+          hint="Folders you already opened stay in memory so going back is instant. 0 turns the cache off."
+        >
+          <div class="flex items-center gap-2">
+            <input
+              v-model.number="form.listingCacheMb"
+              type="number"
+              min="0"
+              max="4096"
+              step="1"
+              :class="[inputClass, 'w-28']"
+              data-testid="settings-listing-cache"
+            />
+            <span class="text-xs text-muted">MB</span>
+          </div>
         </AppField>
 
         <label class="col-span-full flex items-start gap-2 text-xs">

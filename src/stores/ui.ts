@@ -141,6 +141,7 @@ export const useUiStore = defineStore("ui", () => {
     const merged: AppSettings = {
       previewMaxBytes: settings.value?.previewMaxBytes ?? 25 * 1024 * 1024,
       listPageLimit: settings.value?.listPageLimit ?? 20_000,
+      listingCacheMaxBytes: settings.value?.listingCacheMaxBytes ?? 64 * 1024 * 1024,
       downloadDir: settings.value?.downloadDir ?? null,
       askDownloadLocation: settings.value?.askDownloadLocation ?? false,
       showSystemObjects: settings.value?.showSystemObjects ?? false,
