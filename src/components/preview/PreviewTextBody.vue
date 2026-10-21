@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import FindBar from "./FindBar.vue";
-import { ACTIVE_CLASS, HIT_CLASS, clearMarks, markMatches } from "@/lib/searchMarks";
+import { clearHighlights, paintMatches, setActiveHighlight } from "@/lib/searchMarks";
 import { findMatches } from "@/lib/textSearch";
 import { usePreviewFindStore } from "@/stores/previewFind";
 
@@ -9,8 +9,8 @@ import { usePreviewFindStore } from "@/stores/previewFind";
  * The scrollable text of a preview plus the find-in-file bar over it.
  *
  * Both text renderers (highlighted code and raw Markdown) mount this, so the
- * matcher, the marks and the bar have one home: the renderers only decide what
- * the text is and whether it arrives highlighted.
+ * the matcher, the highlights and the bar have one home: the renderers only
+ * decide what the text is and whether it arrives highlighted.
  */
 const props = defineProps<{
   source: string;
@@ -23,7 +23,7 @@ const scroller = ref<HTMLPreElement | null>(null);
 const code = ref<HTMLElement | null>(null);
 
 /**
- * The string the matcher and the marks agree on (D9).
+ * The string the matcher and the highlights agree on (D9).
  *
  * HTML parsing rewrites CRLF and CR to LF inside the `<pre>`, while `findMatches`
  * reports offsets into the string it was given. Running it on raw CRLF would
@@ -41,70 +41,76 @@ const result = computed(() =>
   }),
 );
 
-/** The index the marks were last painted with, so only a real move scrolls. */
+/** The ranges the hit highlight was built from, in match order. */
+let ranges: Range[] = [];
+
+/** The index the highlights were last painted with, so only a real move scrolls. */
 let painted = -1;
 
 /**
- * Give the active hit its class and bring it into view.
+ * Promote the active hit's range and bring it into view.
  *
- * A repaint replaces every mark, so the class has to be re-applied even when
- * `activeIndex` did not move. Scrolling is the part that waits for an actual
- * change: otherwise every keystroke would jump the viewport.
+ * A repaint replaces every range, so the active highlight is re-registered even
+ * when `activeIndex` did not move. Scrolling is the part that waits for an
+ * actual change: otherwise every keystroke would jump the viewport.
  */
 function paintActive() {
-  const root = code.value;
-  if (!root) return;
   const index = find.activeIndex;
-  let first: HTMLElement | null = null;
-  for (const mark of root.querySelectorAll<HTMLElement>(`mark.${HIT_CLASS}`)) {
-    if (mark.dataset.findIndex === String(index)) {
-      mark.classList.add(ACTIVE_CLASS);
-      first ??= mark;
-    } else {
-      mark.classList.remove(ACTIVE_CLASS);
-    }
-  }
+  const range = ranges[index] ?? null;
+  setActiveHighlight(range);
   // A repaint resets the store to -1 just before it sets the first hit. That
   // round trip is not a move, so leave `painted` alone: typing must not
   // recentre the view on every keystroke.
   if (index < 0) return;
   if (index === painted) return;
   painted = index;
-  first?.scrollIntoView({ block: "center", inline: "nearest" });
+
+  // `scrollIntoView` is gone with the marks: centre the range's box in the
+  // scroller's own box, and nudge horizontally only when the hit is clipped.
+  const box = scroller.value;
+  if (!range || !box) return;
+  const rect = range.getBoundingClientRect();
+  // A range left over from a replaced subtree has no box; scrolling to it would
+  // jump the view to the top.
+  if (!rect.width && !rect.height) return;
+  const view = box.getBoundingClientRect();
+  box.scrollTop += rect.top - view.top - (view.height - rect.height) / 2;
+  if (rect.left < view.left) box.scrollLeft += rect.left - view.left;
+  else if (rect.right > view.right) box.scrollLeft += rect.right - view.right;
 }
 
 /**
- * Repaint the marks after the rendered text or the search changed.
+ * Repaint the highlights after the rendered text or the search changed.
  *
- * `nextTick` comes first: `v-html` replaces the whole subtree, and marks built
- * before that replacement would be thrown away with the old content.
+ * `nextTick` comes first: `v-html` replaces the whole subtree, and ranges built
+ * before that replacement would point into detached nodes.
  */
 async function repaint() {
   await nextTick();
   const root = code.value;
   if (!root) return;
-  clearMarks(root);
+  clearHighlights();
+  ranges = [];
 
   const { matches, error } = result.value;
   find.matchCount = matches.length;
 
   // The counter reads `activeIndex + 1`, so an index left over from a longer
-  // previous list would show "8 of 2". A repaint replaces the marks anyway, so
+  // previous list would show "8 of 2". A repaint replaces the ranges anyway, so
   // it starts over at the first hit, or at none.
   if (!find.open || !find.query || error) {
     find.activeIndex = -1;
   } else {
-    markMatches(root, matches);
+    ranges = paintMatches(root, matches);
     find.activeIndex = matches.length ? 0 : -1;
   }
   paintActive();
 }
 
-/** Hiding the bar is the parent's decision; the marks and the keyboard are ours. */
+/** Hiding the bar is the parent's decision; the highlights and the keyboard are ours. */
 function closeFind() {
   find.hide();
-  const root = code.value;
-  if (root) clearMarks(root);
+  clearHighlights();
   scroller.value?.focus();
 }
 

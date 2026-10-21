@@ -1206,30 +1206,47 @@ const SCENARIO: &str = r#"(async () => {
     });
 
     await check('preview find: hits are counted, marked and stepped through', async () => {
+      if (!CSS.highlights) throw new Error('CSS.highlights is unavailable in this webview');
+      // The hits are ranges in the highlight registry now, not <mark> elements:
+      // the active one is a second highlight holding exactly the range the
+      // counter points at.
+      const hitRanges = () => Array.from(CSS.highlights.get('preview-find-hit') || []);
+      const activeRange = () => {
+        const active = CSS.highlights.get('preview-find-active');
+        return active ? Array.from(active)[0] || null : null;
+      };
+      const activeAt = () => hitRanges().indexOf(activeRange());
       setInput('[data-testid=find-input]', 'Line');
       await wait('the counter at 1 of 2', () => {
         const node = $('[data-testid=find-counter]');
         return node && node.textContent.trim() === '1 of 2' ? node : null;
       });
-      const marks = $$('mark.preview-find-hit');
-      if (marks.length !== 2) throw new Error('expected 2 marks for "Line", found ' + marks.length);
-      const active = $('mark.preview-find-active');
-      if (!active) throw new Error('the first hit was not made active');
-      if (active.dataset.findIndex !== '0') throw new Error('the active mark is #' + active.dataset.findIndex);
-      if (!active.closest('[data-testid=preview-code]')) throw new Error('the active mark is not inside the text preview');
+      const ranges = hitRanges();
+      if (ranges.length !== 2) throw new Error('expected 2 ranges for "Line", found ' + ranges.length);
+      const code = $('[data-testid=preview-code]');
+      for (const range of ranges) {
+        if (!code.contains(range.startContainer) || !code.contains(range.endContainer)) {
+          throw new Error('a "Line" range is outside the text preview');
+        }
+        if (range.toString() !== 'Line') {
+          throw new Error('a "Line" range covers "' + range.toString() + '" instead of "Line"');
+        }
+      }
+      if (!activeRange()) throw new Error('the first hit was not made active');
+      if (activeAt() !== 0) throw new Error('the active range is hit #' + activeAt());
       press($('[data-testid=find-input]'), 'Enter');
       await wait('Enter to move to 2 of 2', () => {
         const node = $('[data-testid=find-counter]');
         return node && node.textContent.trim() === '2 of 2' ? node : null;
       });
-      if ($('mark.preview-find-active').dataset.findIndex !== '1') throw new Error('Enter did not move the active mark');
+      if (activeAt() !== 1) throw new Error('Enter did not move the active range (at #' + activeAt() + ')');
       press($('[data-testid=find-input]'), 'Enter', { shiftKey: true });
       await wait('⇧Enter to move back to 1 of 2', () => {
         const node = $('[data-testid=find-counter]');
         return node && node.textContent.trim() === '1 of 2' ? node : null;
       });
-      if ($('mark.preview-find-active').dataset.findIndex !== '0') throw new Error('⇧Enter did not move back');
-      return '2 marks, Enter → 2 of 2, ⇧Enter → 1 of 2';
+      if (activeAt() !== 0) throw new Error('⇧Enter did not move back (at #' + activeAt() + ')');
+      return '2 ranges, active follows Enter → 2 of 2, ⇧Enter → 1 of 2';
     });
 
     await check('preview find: match case, whole word and regex do what their toggles say', async () => {
@@ -1242,7 +1259,8 @@ const SCENARIO: &str = r#"(async () => {
       await counterIs('1 of 2', 'the case-insensitive hits for LINE');
       $('[data-testid=find-case]').click();
       await counterIs('No results', 'Match Case to hide the lowercase hits');
-      if ($$('mark.preview-find-hit').length) throw new Error('marks survived a query with no hits');
+      const caseHits = CSS.highlights.get('preview-find-hit');
+      if (caseHits && caseHits.size) throw new Error('highlights survived a query with no hits');
       $('[data-testid=find-case]').click();
       await counterIs('1 of 2', 'Match Case off again');
 
@@ -1269,7 +1287,8 @@ const SCENARIO: &str = r#"(async () => {
       await counterIs('Invalid regex', 'the invalid-pattern message');
       const input = $('[data-testid=find-input]');
       if (input.getAttribute('aria-invalid') !== 'true') throw new Error('the invalid pattern was not marked on the input');
-      if ($$('mark.preview-find-hit').length) throw new Error('an invalid pattern left marks behind');
+      const invalidHits = CSS.highlights.get('preview-find-hit');
+      if (invalidHits && invalidHits.size) throw new Error('an invalid pattern left highlights behind');
       $('[data-testid=find-regex]').click();
       await counterIs('No results', 'the literal "[" once regex is off');
       if ($('[data-testid=find-whole-word]').getAttribute('aria-pressed') !== 'true') {

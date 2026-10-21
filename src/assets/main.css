@@ -434,16 +434,16 @@
 }
 
 /* Find-in-file hits: the accent tint keeps the syntax colours readable; the
-   active hit is inverted and must survive on top of any hljs token colour. */
-.preview-find-hit {
-  background: color-mix(in srgb, var(--c-accent) 32%, transparent);
+   active hit is inverted and must survive on top of any hljs token colour.
+   `::highlight()` paints over the text without touching the DOM, and it takes
+   background and colour only — no `border-radius`, no `outline`. */
+::highlight(preview-find-hit) {
+  background-color: color-mix(in srgb, var(--c-accent) 32%, transparent);
   color: inherit;
-  border-radius: 2px;
 }
-.preview-find-hit.preview-find-active {
-  background: var(--c-accent);
+::highlight(preview-find-active) {
+  background-color: var(--c-accent);
   color: #fff;
-  outline: 1px solid var(--c-accent-hover);
 }
 
 /* ------------------------------------------------- rendered markdown ----- */
