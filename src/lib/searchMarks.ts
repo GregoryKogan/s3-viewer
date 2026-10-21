@@ -99,8 +99,7 @@ export function markMatches(root: ParentNode, matches: MatchRange[]): HTMLElemen
   for (let index = matches.length - 1; index >= 0; index -= 1) {
     const matchRuns = runs[index];
     for (let run = matchRuns.length - 1; run >= 0; run -= 1) {
-      const mark = wrapRun(matchRuns[run], index);
-      if (mark) marks[index].push(mark);
+      marks[index].push(wrapRun(matchRuns[run], index));
     }
     marks[index].reverse();
   }
@@ -108,9 +107,10 @@ export function markMatches(root: ParentNode, matches: MatchRange[]): HTMLElemen
 }
 
 /** Wrap one run in a mark, splitting its text node so only the run moves. */
-function wrapRun(run: TextRun, index: number): HTMLElement | null {
-  const parent = run.node.parentNode;
-  if (!parent) return null;
+function wrapRun(run: TextRun, index: number): HTMLElement {
+  // The node was in the tree the walker just visited and wrapping only splits
+  // text nodes, so its parent is still there.
+  const parent = run.node.parentNode!;
 
   // End first, then start: the second split is local to the node that now ends
   // at the run's end, so afterwards the run is exactly that node's data.

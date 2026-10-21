@@ -54,11 +54,12 @@ export const usePreviewFindStore = defineStore("previewFind", () => {
   }
 
   /**
-   * Move the active hit by `delta`, wrapping at both ends.
+   * Move the active hit by `delta`, wrapping at both ends; a count of 0 is a
+   * no-op.
    *
-   * The modulo formula rather than a branch: from -1 (nothing active yet) a
-   * forward step lands on 0 and a backward step lands on the last hit, which is
-   * what the bar's Enter and Shift+Enter expect; `count` of 0 stays a no-op.
+   * From -1 (nothing active yet) a forward step lands on 0 and a backward step
+   * on the last hit, because that is the hit the bar shows before the first
+   * active one is set.
    */
   function step(delta: number) {
     const count = matchCount.value;
