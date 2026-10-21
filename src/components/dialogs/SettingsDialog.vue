@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { FolderOpen, RefreshCw, RotateCcw, ShieldCheck, SlidersHorizontal } from "@lucide/vue";
+import { FolderOpen, RefreshCw, RotateCcw, ShieldCheck, SlidersHorizontal, Trash2 } from "@lucide/vue";
 import ModalFrame from "@/components/ui/ModalFrame.vue";
 import AppButton from "@/components/ui/AppButton.vue";
 import AppField from "@/components/ui/AppField.vue";
@@ -12,6 +12,7 @@ import { humanSize } from "@/lib/format";
 import { IS_MAC, keyLabel, modLabel, shortcutLabel } from "@/lib/keyboard";
 import { useUiStore } from "@/stores/ui";
 import { useDialogsStore } from "@/stores/dialogs";
+import { useObjectsStore } from "@/stores/objects";
 import { useToastsStore } from "@/stores/toasts";
 import { useUpdatesStore } from "@/stores/updates";
 import UpdateDialog from "@/components/dialogs/UpdateDialog.vue";
@@ -25,6 +26,7 @@ const props = defineProps<{
 
 const ui = useUiStore();
 const dialogs = useDialogsStore();
+const objects = useObjectsStore();
 const toasts = useToastsStore();
 const updates = useUpdatesStore();
 
@@ -133,6 +135,12 @@ async function chooseDownloadDir() {
  */
 function resetDefaults() {
   form.value = { ...DEFAULTS };
+}
+
+/** Drop every cached folder; the next visit to one lists it again. */
+function clearCache() {
+  objects.clearListingCache();
+  toasts.ok("Listing cache cleared.");
 }
 
 function cancel() {
@@ -256,6 +264,21 @@ function onEnter(event: KeyboardEvent) {
             </span>
           </span>
         </label>
+      </div>
+
+      <div class="mt-3 flex items-center gap-3">
+        <p class="min-w-0 flex-1 text-xs text-muted" data-testid="settings-cache-usage">
+          <template v-if="objects.cacheFolders">{{ objects.cacheFolders }} folder{{ objects.cacheFolders === 1 ? "" : "s" }} cached, {{ humanSize(objects.cacheBytes) }} in memory.</template>
+          <template v-else>No folders are cached.</template>
+        </p>
+        <AppButton
+          :icon="Trash2"
+          :disabled="!objects.cacheFolders"
+          data-testid="settings-clear-cache"
+          @click="clearCache"
+        >
+          Clear cache
+        </AppButton>
       </div>
     </fieldset>
 

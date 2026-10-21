@@ -129,7 +129,7 @@ function togglePreviewPanel() {
         <AppButton
           variant="ghost"
           :icon="RefreshCw"
-          :busy="objects.loading"
+          :busy="objects.loading || objects.refreshing"
           :title="`Refresh (${shortcutLabel('R')})`"
           data-testid="refresh"
           @click="objects.reload()"

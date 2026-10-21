@@ -1,7 +1,8 @@
 import { defineStore } from "pinia";
-import { computed, ref, shallowRef } from "vue";
+import { computed, ref, shallowRef, watch } from "vue";
 import { api, ApiError } from "@/lib/ipc";
 import { asFolderPrefix } from "@/lib/keys";
+import { ListingCache, listingCacheKey } from "@/lib/listingCache";
 import { useConnectionsStore } from "@/stores/connections";
 import { useToastsStore } from "@/stores/toasts";
 import { useUiStore } from "@/stores/ui";
@@ -15,6 +16,9 @@ import type {
 } from "@/types";
 
 export type SortKey = "name" | "size" | "modified" | "kind";
+
+/** A cached folder is served as-is while it is younger than this. */
+const LISTING_CACHE_FRESH_MS = 30_000;
 
 /**
  * One browsing session: the folder on screen, its objects, the selection, and the
@@ -79,6 +83,38 @@ export const useObjectsStore = defineStore("objects", () => {
   let announcedListingFailure: string | null = null;
 
   /**
+   * Opened folders stay in memory for the rest of the session so going back is
+   * instant. Bounded by the setting; never written to disk. The getter is read
+   * on every operation so a new limit applies without recreating the cache.
+   */
+  const cache = new ListingCache(() => {
+    const bytes = useUiStore().settings?.listingCacheMaxBytes;
+    return typeof bytes === "number" && Number.isFinite(bytes) ? bytes : 64 * 1024 * 1024;
+  });
+  /** Bumped after every cache mutation so the computed usage below re-reads. */
+  const cacheVersion = ref(0);
+  function touchCache() {
+    cacheVersion.value += 1;
+  }
+  const cacheBytes = computed(() => {
+    void cacheVersion.value;
+    return cache.bytes;
+  });
+  const cacheFolders = computed(() => {
+    void cacheVersion.value;
+    return cache.size;
+  });
+  /** True while a cached folder is being refreshed in the background. */
+  const refreshing = ref(false);
+  /** The request id of that background refresh, or null. */
+  let revalidating: string | null = null;
+  /**
+   * A background refresh whose invoke already rejected. Its `listing://error`
+   * can still arrive afterwards; that event must not blank the cached list.
+   */
+  let failedRevalidation: string | null = null;
+
+  /**
    * Short transition logs. A hung listing or a stale preview is otherwise
    * invisible from the outside: the state just says "loading" forever. These
    * rings are exposed on the harness surface and printed by failing checks.
@@ -101,7 +137,10 @@ export const useObjectsStore = defineStore("objects", () => {
     return errorDetail.value?.requestId ?? null;
   }
 
-  async function loadFolder(targetPrefix: string) {
+  async function loadFolder(
+    targetPrefix: string,
+    { force = false }: { force?: boolean } = {},
+  ) {
     const connections = useConnectionsStore();
     const connection = connections.active;
     if (!connection) return;
@@ -111,6 +150,14 @@ export const useObjectsStore = defineStore("objects", () => {
     // folder (or a different connection on the same prefix) starts fresh.
     const continuing =
       sessionConnectionId.value === connection.id && nextPrefix === prefix.value;
+    const cacheKey = listingCacheKey(connection.id, nextPrefix);
+    const cached = force ? null : cache.get(cacheKey);
+    if (force) {
+      // A forced reload must not be answered from the entry it is replacing,
+      // and a failed reload must not leave the old list looking current.
+      cache.delete(cacheKey);
+      touchCache();
+    }
     // A preview belongs to the session that fetched it. Drop it before the
     // session id moves to another connection: the listing streams, so the panel
     // would otherwise show the old connection's object under the new one's
@@ -118,7 +165,7 @@ export const useObjectsStore = defineStore("objects", () => {
     if (sessionConnectionId.value !== connection.id) clearPreview();
     sessionConnectionId.value = connection.id;
     prefix.value = nextPrefix;
-    entries.value = [];
+    entries.value = cached ? cached.entries : [];
     staged = [];
     if (!continuing) {
       selected.value = new Set();
@@ -129,17 +176,43 @@ export const useObjectsStore = defineStore("objects", () => {
       // behind a full-width preview that no longer has an object.
       useUiStore().collapsePreview();
     }
-    loading.value = true;
-    awaitingFirstPage.value = true;
+    loading.value = !cached;
+    awaitingFirstPage.value = !cached;
     error.value = null;
     errorDetail.value = null;
     announcedListingFailure = null;
-    warning.value = null;
-    truncated.value = false;
+    warning.value = cached ? cached.warning : null;
+    truncated.value = cached ? cached.truncated : false;
 
     if (loading.value) note(listingLog, `superseded#${listingRequest}`);
     const requestId = String(++listingRequest);
     note(listingLog, `start#${requestId} "${prefix.value}"`);
+
+    refreshing.value = false;
+    revalidating = null;
+    failedRevalidation = null;
+
+    if (cached) {
+      note(listingLog, `cache#${requestId} "${prefix.value}"`);
+      if (Date.now() - cached.fetchedAt < LISTING_CACHE_FRESH_MS) return;
+      revalidating = requestId;
+      refreshing.value = true;
+      // Stale-while-revalidate: the cached list stays on screen and this stream
+      // replaces it on `done`. A failure here is silent by design (D4).
+      void api
+        .listObjectsStream({ connectionId: connection.id, prefix: prefix.value, requestId })
+        .catch((failure) => {
+          if (revalidating === requestId) {
+            revalidating = null;
+            // The error event may follow this rejection; remember the id so
+            // `onListingError` can drop it instead of showing an error.
+            failedRevalidation = requestId;
+            refreshing.value = false;
+          }
+          note(listingLog, `revalidate-failed#${requestId} ${(failure as Error)?.message ?? ""}`);
+        });
+      return;
+    }
 
     const guard = setTimeout(() => {
       if (String(listingRequest) === requestId && loading.value) {
@@ -184,14 +257,14 @@ export const useObjectsStore = defineStore("objects", () => {
 
   /** Reload the folder currently on screen. */
   function reload() {
-    return loadFolder(prefix.value);
+    return loadFolder(prefix.value, { force: true });
   }
 
   /** Re-open the session after a connection was edited. */
   function reloadSession() {
     const connection = useConnectionsStore().active;
     if (!connection) return Promise.resolve();
-    return loadFolder(connection.prefix ?? "");
+    return loadFolder(connection.prefix ?? "", { force: true });
   }
 
   function onListingPage(event: ListingPageEvent) {
@@ -206,6 +279,11 @@ export const useObjectsStore = defineStore("objects", () => {
   /** Returns false when the event belongs to a superseded request. */
   function onListingDone(event: ListingDoneEvent): boolean {
     note(listingLog, `done#${event.requestId} total=${event.total}`);
+    if (event.requestId === revalidating || event.requestId === failedRevalidation) {
+      revalidating = null;
+      failedRevalidation = null;
+      refreshing.value = false;
+    }
     if (event.requestId !== String(listingRequest)) return false;
     entries.value = staged;
     staged = [];
@@ -214,6 +292,17 @@ export const useObjectsStore = defineStore("objects", () => {
     truncated.value = event.truncated;
     warning.value = event.warning ?? null;
     prefix.value = event.prefix ?? prefix.value;
+
+    const connectionId = sessionConnectionId.value;
+    if (connectionId) {
+      cache.set(listingCacheKey(connectionId, prefix.value), {
+        entries: entries.value,
+        truncated: event.truncated,
+        warning: event.warning ?? null,
+        fetchedAt: Date.now(),
+      });
+      touchCache();
+    }
 
     // A reload must not lose the user's place: keep only what still exists in
     // the new listing, and drop a focus or anchor that vanished with it.
@@ -243,6 +332,15 @@ export const useObjectsStore = defineStore("objects", () => {
   /** Returns false when the event belongs to a superseded request. */
   function onListingError(event: ListingErrorEvent): boolean {
     note(listingLog, `error#${event.requestId} ${event.error?.message ?? ""}`);
+    // A failed background refresh keeps the cached list: silence here also
+    // keeps App.vue from marking the connection unhealthy for it.
+    if (event.requestId === revalidating || event.requestId === failedRevalidation) {
+      revalidating = null;
+      failedRevalidation = null;
+      refreshing.value = false;
+      note(listingLog, `revalidate-failed#${event.requestId} ${event.error?.message ?? ""}`);
+      return false;
+    }
     if (event.requestId !== String(listingRequest)) return false;
     staged = [];
     loading.value = false;
@@ -303,7 +401,16 @@ export const useObjectsStore = defineStore("objects", () => {
     warning.value = null;
     error.value = null;
     errorDetail.value = null;
+    refreshing.value = false;
+    revalidating = null;
+    failedRevalidation = null;
     clearPreview();
+  }
+
+  /** Drop every cached folder; the next visit lists it again. */
+  function clearListingCache() {
+    cache.clear();
+    touchCache();
   }
 
   // ---------------------------------------------------------------- selection
@@ -560,6 +667,16 @@ export const useObjectsStore = defineStore("objects", () => {
     previewView.value = view;
   }
 
+  // A new limit applies in place: drop the least recently used folders until
+  // the cache fits again, so lowering it is visible immediately.
+  watch(
+    () => useUiStore().settings?.listingCacheMaxBytes,
+    () => {
+      cache.trim();
+      touchCache();
+    },
+  );
+
   return {
     logging: { listing: listingLog, preview: previewLog },
     prefix,
@@ -571,6 +688,9 @@ export const useObjectsStore = defineStore("objects", () => {
     warning,
     error,
     errorDetail,
+    refreshing,
+    cacheBytes,
+    cacheFolders,
     selected,
     focusedKey,
     selectionAnchor,
@@ -598,6 +718,7 @@ export const useObjectsStore = defineStore("objects", () => {
     navigate,
     navigateUp,
     close,
+    clearListingCache,
     setSort,
     toggleSelected,
     selectOnly,
