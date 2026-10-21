@@ -1175,6 +1175,167 @@ const SCENARIO: &str = r#"(async () => {
       return code.textContent.length + ' chars';
     });
 
+    await check('preview find: ⌘F is the filter outside the preview and the bar inside it', async () => {
+      clickRow('notes.txt');
+      const scroller = await wait('the text scroller', () => $('[data-preview-scroll]'));
+      // Outside the preview the old contract has to survive untouched: ⌘F with
+      // the list focused focuses the folder filter.
+      press($$('.object-row')[0] || document.body, 'f', { metaKey: true });
+      await frame();
+      const filter = $('[data-testid=filter-input]');
+      if (document.activeElement !== filter) {
+        throw new Error('⌘F with the list focused did not focus the filter, active='
+          + String(document.activeElement && document.activeElement.outerHTML).slice(0, 120));
+      }
+      if ($('[data-testid=find-bar]')) throw new Error('the find bar opened outside the preview');
+      press(filter, 'Escape');
+      await frame();
+      // Inside the preview the same key opens the bar and hands it the keyboard.
+      press(scroller, 'f', { metaKey: true });
+      await wait('the find bar', () => $('[data-testid=find-bar]'));
+      const input = $('[data-testid=find-input]');
+      if (document.activeElement !== input) {
+        throw new Error('⌘F in the preview did not focus the find input, active='
+          + String(document.activeElement && document.activeElement.outerHTML).slice(0, 120));
+      }
+      // A second ⌘F re-selects the query in the bar, it never jumps to the filter.
+      press(input, 'f', { metaKey: true });
+      await frame();
+      if (document.activeElement !== input) throw new Error('⌘F inside the bar lost the keyboard');
+      return 'list → filter, preview → bar, bar keeps ⌘F';
+    });
+
+    await check('preview find: hits are counted, marked and stepped through', async () => {
+      setInput('[data-testid=find-input]', 'Line');
+      await wait('the counter at 1 of 2', () => {
+        const node = $('[data-testid=find-counter]');
+        return node && node.textContent.trim() === '1 of 2' ? node : null;
+      });
+      const marks = $$('mark.preview-find-hit');
+      if (marks.length !== 2) throw new Error('expected 2 marks for "Line", found ' + marks.length);
+      const active = $('mark.preview-find-active');
+      if (!active) throw new Error('the first hit was not made active');
+      if (active.dataset.findIndex !== '0') throw new Error('the active mark is #' + active.dataset.findIndex);
+      if (!active.closest('[data-testid=preview-code]')) throw new Error('the active mark is not inside the text preview');
+      press($('[data-testid=find-input]'), 'Enter');
+      await wait('Enter to move to 2 of 2', () => {
+        const node = $('[data-testid=find-counter]');
+        return node && node.textContent.trim() === '2 of 2' ? node : null;
+      });
+      if ($('mark.preview-find-active').dataset.findIndex !== '1') throw new Error('Enter did not move the active mark');
+      press($('[data-testid=find-input]'), 'Enter', { shiftKey: true });
+      await wait('⇧Enter to move back to 1 of 2', () => {
+        const node = $('[data-testid=find-counter]');
+        return node && node.textContent.trim() === '1 of 2' ? node : null;
+      });
+      if ($('mark.preview-find-active').dataset.findIndex !== '0') throw new Error('⇧Enter did not move back');
+      return '2 marks, Enter → 2 of 2, ⇧Enter → 1 of 2';
+    });
+
+    await check('preview find: match case, whole word and regex do what their toggles say', async () => {
+      const counterIs = (text, what) => wait(what, () => {
+        const node = $('[data-testid=find-counter]');
+        return node && node.textContent.trim() === text ? node : null;
+      });
+      // Case: "LINE" hits both lines until Match Case is on.
+      setInput('[data-testid=find-input]', 'LINE');
+      await counterIs('1 of 2', 'the case-insensitive hits for LINE');
+      $('[data-testid=find-case]').click();
+      await counterIs('No results', 'Match Case to hide the lowercase hits');
+      if ($$('mark.preview-find-hit').length) throw new Error('marks survived a query with no hits');
+      $('[data-testid=find-case]').click();
+      await counterIs('1 of 2', 'Match Case off again');
+
+      // Whole word: a prefix matches, then stops matching once the boundary counts.
+      setInput('[data-testid=find-input]', 'previ');
+      await counterIs('1 of 1', 'the prefix hit');
+      $('[data-testid=find-whole-word]').click();
+      await counterIs('No results', 'whole word to reject the prefix');
+      if ($('[data-testid=find-whole-word]').getAttribute('aria-pressed') !== 'true') {
+        throw new Error('the whole-word toggle did not report itself pressed');
+      }
+
+      // Whole word stays on while regex ignores it — and stays on afterwards.
+      setInput('[data-testid=find-input]', 'L.ne');
+      await counterIs('No results', 'the literal "L.ne" with whole word on');
+      $('[data-testid=find-regex]').click();
+      await counterIs('1 of 2', 'the pattern to match once whole word is ignored');
+      const wholeWord = $('[data-testid=find-whole-word]');
+      if (!wholeWord.disabled) throw new Error('whole word stayed enabled in regex mode');
+      if (wholeWord.getAttribute('aria-pressed') !== 'true') throw new Error('turning regex on cleared whole word');
+
+      // An invalid pattern explains itself instead of throwing.
+      setInput('[data-testid=find-input]', '[');
+      await counterIs('Invalid regex', 'the invalid-pattern message');
+      const input = $('[data-testid=find-input]');
+      if (input.getAttribute('aria-invalid') !== 'true') throw new Error('the invalid pattern was not marked on the input');
+      if ($$('mark.preview-find-hit').length) throw new Error('an invalid pattern left marks behind');
+      $('[data-testid=find-regex]').click();
+      await counterIs('No results', 'the literal "[" once regex is off');
+      if ($('[data-testid=find-whole-word]').getAttribute('aria-pressed') !== 'true') {
+        throw new Error('turning regex off lost the whole-word setting');
+      }
+      $('[data-testid=find-whole-word]').click();
+      setInput('[data-testid=find-input]', 'Line');
+      await counterIs('1 of 2', 'the reset query');
+      return 'case, whole word, regex, invalid pattern and the saved toggles all agree';
+    });
+
+    await check('preview find: Escape closes the bar first, and the header button reopens it', async () => {
+      // Expanded preview, bar open: the overlay on the text goes before the layout does.
+      $('[data-testid=preview-expand]').click();
+      await wait('the expanded preview', async () =>
+        ($('[data-testid=preview-expand]').getAttribute('aria-pressed') === 'true' ? true : null));
+      const list = $('[data-testid=object-list]');
+      press($('[data-testid=find-input]'), 'Escape');
+      await wait('the bar to close', () => ($('[data-testid=find-bar]') ? null : true));
+      if ($('[data-testid=preview-expand]').getAttribute('aria-pressed') !== 'true') {
+        throw new Error('Escape collapsed the preview before it closed the bar');
+      }
+      const scroller = $('[data-preview-scroll]');
+      if (document.activeElement !== scroller) throw new Error('closing did not return focus to the text');
+      press(scroller, 'Escape');
+      await wait('the next Escape to collapse the preview', async () =>
+        (list.offsetParent !== null && $('[data-testid=preview-expand]').getAttribute('aria-pressed') === 'false'
+          ? true : null));
+
+      // The header button is the pointer entry point and keeps the query.
+      $('[data-testid=preview-find]').click();
+      await wait('the bar from the header button', () => $('[data-testid=find-bar]'));
+      const input = $('[data-testid=find-input]');
+      if (input.value !== 'Line') throw new Error('the header button changed the query: ' + input.value);
+      press(input, 'Escape');
+      await wait('the bar to close again', () => ($('[data-testid=find-bar]') ? null : true));
+      return 'bar closed before the expansion, focus returned, header button reopened with the query';
+    });
+
+    await check('preview find: only text views offer it, and they close it when they stop being text', async () => {
+      // An image has no text to search: ⌘F there must still reach the folder filter.
+      clickRow('image.png');
+      await wait('the image preview', () => $('[data-testid=preview-image]'));
+      if ($('[data-testid=preview-find]')) throw new Error('the find button is offered on an image preview');
+      press($('#preview-body'), 'f', { metaKey: true });
+      await frame();
+      if (document.activeElement !== $('[data-testid=filter-input]')) {
+        throw new Error('⌘F on an image preview did not focus the folder filter');
+      }
+      if ($('[data-testid=find-bar]')) throw new Error('the find bar opened over an image');
+      press($('[data-testid=filter-input]'), 'Escape');
+
+      // Markdown: find exists in Raw and disappears with the view that has the source.
+      clickRow('readme.md');
+      await wait('the rendered markdown', () => $('[data-testid=preview-markdown]'));
+      if ($('[data-testid=preview-find]')) throw new Error('the find button is offered on rendered Markdown');
+      $('[data-testid=md-view-raw]').click();
+      const raw = await wait('the raw markdown', () => $('[data-testid=preview-code]'), 10000);
+      press(raw, 'f', { metaKey: true });
+      await wait('the find bar over raw Markdown', () => $('[data-testid=find-bar]'));
+      $('[data-testid=md-view-rendered]').click();
+      await wait('rendered Markdown to close the bar', () => ($('[data-testid=find-bar]') ? null : true));
+      if (!$('[data-testid=preview-markdown]')) throw new Error('rendered Markdown did not come back');
+      return 'image → filter, rendered → no button, raw → bar, back to rendered → bar closed';
+    });
+
     await check('preview: binary content is refused with a reason', async () => {
       clickRow('blob.bin');
       const node = await wait('the refusal message', () => $('[data-testid=preview-unavailable]'));
