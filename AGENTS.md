@@ -7,10 +7,16 @@ reach installed users or offers the same update on every launch.
 ## What the app is
 
 A Tauri 2 desktop S3 browser: Rust backend in `src-tauri/`, Vue 3 + Pinia
-frontend in `src/`. macOS 12.3+ and Linux only: the UI uses the native
-`<dialog>` element (Safari 15.4), and `minimumSystemVersion` in
-`src-tauri/tauri.conf.json` must stay at 12.3 or the installer promises a
-macOS the dialogs cannot run on.
+frontend in `src/`. macOS 14.2+ and Linux only: the UI uses the native
+`<dialog>` element (Safari 15.4) and the CSS Custom Highlight API for
+find-in-file (Safari 17.2), and `minimumSystemVersion` in
+`src-tauri/tauri.conf.json` must stay at 14.2 or the installer promises a
+macOS where find counts matches but never paints them.
+
+On Linux the same two features come from WebKitGTK: `<dialog>` 2.32+, the
+Custom Highlight API 2.44+. The find code guards on `CSS.highlights` so an
+older WebKitGTK counts, steps and scrolls matches but does not paint them —
+never make that guard throw.
 
 ## Build and test
 

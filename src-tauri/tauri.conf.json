@@ -47,7 +47,7 @@
       }
     },
     "macOS": {
-      "minimumSystemVersion": "12.3"
+      "minimumSystemVersion": "14.2"
     }
   },
   "plugins": {
