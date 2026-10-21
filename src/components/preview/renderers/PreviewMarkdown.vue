@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { marked } from "marked";
 import { sanitize } from "@/lib/previewText";
 import { api } from "@/lib/ipc";
+import PreviewTextBody from "@/components/preview/PreviewTextBody.vue";
 import { useToastsStore } from "@/stores/toasts";
 import type { PreviewData } from "@/types";
 
@@ -41,13 +42,27 @@ function onContentClick(event: MouseEvent) {
     toasts.error(message, "Cannot open link");
   });
 }
+
+const body = ref<InstanceType<typeof PreviewTextBody> | null>(null);
+
+/** Only the raw view has a body to close; rendered Markdown has no find bar. */
+defineExpose({ closeFind: () => body.value?.closeFind() });
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-1 flex-col">
+  <!-- Find-in-file covers raw Markdown only: the rendered view shows markup, not
+       the file's text, so it has no body for the bar to search. -->
+  <PreviewTextBody
+    v-if="props.view === 'raw'"
+    ref="body"
+    :source="source"
+    :markup="null"
+    :truncated="props.data.truncated"
+  />
+
+  <div v-else class="flex min-h-0 flex-1 flex-col">
     <!-- eslint-disable-next-line vue/no-v-html -- sanitised by `sanitize` above -->
     <div
-      v-if="props.view === 'rendered'"
       class="markdown scrollbar min-h-0 flex-1 overflow-auto px-4 py-3"
       tabindex="-1"
       data-preview-scroll
@@ -55,21 +70,5 @@ function onContentClick(event: MouseEvent) {
       v-html="rendered"
       @click="onContentClick"
     />
-
-    <pre
-      v-else
-      class="scrollbar min-h-0 flex-1 overflow-auto p-3 font-mono text-meta leading-relaxed whitespace-pre text-content"
-      tabindex="-1"
-      data-preview-scroll
-      data-testid="preview-code"
-    ><code class="hljs">{{ source }}</code></pre>
-
-    <p
-      v-if="props.data.truncated"
-      class="shrink-0 border-t border-line bg-warn/10 px-3 py-1.5 text-meta text-warn"
-      data-testid="preview-truncated"
-    >
-      Showing only the beginning of the file.
-    </p>
   </div>
 </template>

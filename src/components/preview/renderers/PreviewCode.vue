@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { highlight, highlightDetected } from "@/lib/highlight";
 import { DETECT_CANDIDATES, DETECT_MAX_BYTES, resolveLanguage, tryPrettyJson } from "@/lib/previewText";
+import PreviewTextBody from "@/components/preview/PreviewTextBody.vue";
 import type { PreviewData } from "@/types";
 
 const props = defineProps<{ data: PreviewData }>();
@@ -23,24 +24,13 @@ const markup = computed(() => {
   if (text.length <= DETECT_MAX_BYTES) return highlightDetected(text, DETECT_CANDIDATES);
   return highlight(text, null);
 });
+
+const body = ref<InstanceType<typeof PreviewTextBody> | null>(null);
+
+/** The panel closes the bar through the renderer, so pass the body's close up. */
+defineExpose({ closeFind: () => body.value?.closeFind() });
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-1 flex-col">
-    <!-- eslint-disable-next-line vue/no-v-html -- produced by highlight.js from escaped text -->
-    <pre
-      class="scrollbar min-h-0 flex-1 overflow-auto p-3 font-mono text-meta leading-relaxed whitespace-pre text-content"
-      tabindex="-1"
-      data-preview-scroll
-      data-testid="preview-code"
-    ><code class="hljs" v-html="markup" /></pre>
-
-    <p
-      v-if="props.data.truncated"
-      class="shrink-0 border-t border-line bg-warn/10 px-3 py-1.5 text-meta text-warn"
-      data-testid="preview-truncated"
-    >
-      Showing only the beginning of the file.
-    </p>
-  </div>
+  <PreviewTextBody ref="body" :source="source" :markup="markup" :truncated="props.data.truncated" />
 </template>
