@@ -57,10 +57,8 @@ interface CopyRequest {
 interface TransferJob<R> {
   /** The backend call that creates the progress entry; a throw means nothing started. */
   start: () => Promise<R>;
-  /** Arm Retry: once for the request, or once per entry an upload plan created. */
+  /** Runs once the start was accepted and the poll began — arm Retry here. */
   retry?: (result: R) => void;
-  /** Runs after the backend accepted the request — only delete drops rows here. */
-  accepted?: (result: R) => void;
   /** Wait for the entry and report it; omitted when the transfers panel owns it. */
   settle?: (result: R) => void | Promise<void>;
   /** Leave the settle running: Retry resolves once the replacement exists. */
@@ -142,7 +140,7 @@ export function useObjectActions() {
   async function runTransfer<R>(job: TransferJob<R>): Promise<R>;
   /**
    * Start one transfer and run the lifecycle every operation shares: start the
-   * progress poll, arm Retry, run the accepted side effects, then settle.
+   * progress poll, arm Retry, then settle.
    *
    * The operation still owns its request, its Retry target and its summary; this
    * keeps their order — and the "toast, or let Retry see it" failure rule — in
@@ -153,7 +151,6 @@ export function useObjectActions() {
       const result = await job.start();
       transfers.start();
       job.retry?.(result);
-      job.accepted?.(result);
       if (job.settle) {
         if (job.background) void job.settle(result);
         else await job.settle(result);
@@ -498,14 +495,15 @@ export function useObjectActions() {
       // Every transfer can be repeated on its own: a partially failed folder
       // upload is the case Retry exists for (IO-3).
       retry: (plan) => registerUploadRetries(plan, captured),
-      // An empty plan started nothing, so there is nothing to report or reload.
-      settle: (plan) => (plan.length ? settleUpload(plan, captured) : undefined),
+      settle: (plan) => settleUpload(plan, captured),
       failure: "Cannot upload",
     });
   }
 
   /** Wait for a started upload and report its one summary. */
   async function settleUpload(plan: UploadPlanItem[], target: UploadTarget) {
+    // An empty plan started nothing, so there is nothing to report or reload.
+    if (!plan.length) return;
     const outcomes = await transfers.waitForAll(plan.map((item) => item.id));
     reportUploadBatch(plan, outcomes, target);
     if (sameTarget(target)) await objects.reload();
@@ -536,7 +534,7 @@ export function useObjectActions() {
           overwrite: true,
         }),
       retry: (started) => registerUploadRetries(started, target),
-      settle: (started) => (started.length ? settleUpload(started, target) : undefined),
+      settle: (started) => settleUpload(started, target),
       background: true,
     });
     // Nothing was left to upload: reject so the progress store keeps the old
@@ -714,23 +712,19 @@ export function useObjectActions() {
     );
   }
 
-  /**
-   * Drop the rows a delete is removing, once the request was accepted — a failed
-   * start leaves the selection intact.
-   */
-  function deleteRows(keys: string[]) {
-    objects.clearSelection();
-    if (objects.previewKey && keys.some((key) => key === objects.previewKey)) {
-      objects.clearPreview();
-    }
-  }
-
   /** One delete request: start, retry and settle, shared by the run and its Retry. */
   function deleteJob(target: UploadTarget, keys: string[]): TransferJob<DeleteOutcome> {
     return {
       start: () => api.deleteObjects({ connectionId: target.connectionId, keys }),
-      retry: (result) => transfers.registerRetry(result.id, () => retryDelete(target, keys)),
-      accepted: () => deleteRows(keys),
+      retry: (result) => {
+        transfers.registerRetry(result.id, () => retryDelete(target, keys));
+        // The request was accepted, so the rows are going away; a failed start
+        // never reaches here and leaves the selection intact.
+        objects.clearSelection();
+        if (objects.previewKey && keys.some((key) => key === objects.previewKey)) {
+          objects.clearPreview();
+        }
+      },
       settle: (result) => settleDelete(result, target),
     };
   }
