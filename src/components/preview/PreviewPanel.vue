@@ -186,10 +186,10 @@ function showFind() {
 }
 
 /**
- * Escape in the preview column and the header's ⌘F both land here: hiding is
- * the panel's decision, while the text body's `find.open` watcher repaints away
- * the marks. The bar's own close button stays inside the body, which hides and
- * focuses the scroller without asking the panel.
+ * Escape in the preview column lands here: hiding is the panel's decision, while
+ * the text body's `find.open` watcher repaints away the marks. The header button
+ * and `⌘F` go to `showFind()` instead, and the bar's own close button stays
+ * inside the body, which hides and focuses the scroller without asking the panel.
  */
 function closeFind() {
   if (!find.open) return false;
