@@ -109,8 +109,10 @@ export const useObjectsStore = defineStore("objects", () => {
   /** The request id of that background refresh, or null. */
   let revalidating: string | null = null;
   /**
-   * A background refresh whose invoke already rejected. Its `listing://error`
-   * can still arrive afterwards; that event must not blank the cached list.
+   * A background refresh whose result must be dropped: its invoke already
+   * rejected, or the cache was cleared while it was in flight. Its late
+   * `listing://error` must not blank the cached list, and its `done` must not
+   * repopulate a cache the user just cleared.
    */
   let failedRevalidation: string | null = null;
 
@@ -279,7 +281,9 @@ export const useObjectsStore = defineStore("objects", () => {
   /** Returns false when the event belongs to a superseded request. */
   function onListingDone(event: ListingDoneEvent): boolean {
     note(listingLog, `done#${event.requestId} total=${event.total}`);
-    if (event.requestId === revalidating || event.requestId === failedRevalidation) {
+    // A cleared cache drops the in-flight refresh's write, not its list.
+    const droppedRevalidation = event.requestId === failedRevalidation;
+    if (event.requestId === revalidating || droppedRevalidation) {
       revalidating = null;
       failedRevalidation = null;
       refreshing.value = false;
@@ -294,7 +298,7 @@ export const useObjectsStore = defineStore("objects", () => {
     prefix.value = event.prefix ?? prefix.value;
 
     const connectionId = sessionConnectionId.value;
-    if (connectionId) {
+    if (connectionId && !droppedRevalidation) {
       cache.set(listingCacheKey(connectionId, prefix.value), {
         entries: entries.value,
         truncated: event.truncated,
@@ -410,6 +414,13 @@ export const useObjectsStore = defineStore("objects", () => {
   /** Drop every cached folder; the next visit lists it again. */
   function clearListingCache() {
     cache.clear();
+    if (revalidating) {
+      // A refresh that is already in flight must not repopulate what was just
+      // cleared. Its `done` still updates the visible list, but is not cached.
+      failedRevalidation = revalidating;
+      revalidating = null;
+      refreshing.value = false;
+    }
     touchCache();
   }
 

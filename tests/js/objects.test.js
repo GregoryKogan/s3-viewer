@@ -426,3 +426,69 @@ test("the cache is scoped to the connection", async () => {
   listing.release();
   await loading;
 });
+
+test("a zero cache limit turns the cache off", async () => {
+  const { objects } = seed("a");
+  const ui = useUiStore();
+  ui.settings = { ...ui.settings, listingCacheMaxBytes: 0 };
+  const listing = streamListing(objects, [objectEntry("big/one.txt")]);
+
+  await objects.loadFolder("big/");
+  assert.equal(listing.calls.length, 1);
+  assert.equal(objects.cacheFolders, 0);
+  assert.equal(objects.cacheBytes, 0);
+
+  await objects.loadFolder("");
+  assert.equal(listing.calls.length, 2);
+  assert.equal(objects.cacheFolders, 0);
+
+  // Coming back is a miss again: 0 means "do not cache", not "cache nothing yet".
+  await objects.loadFolder("big/");
+  assert.equal(listing.calls.length, 3);
+  assert.equal(objects.cacheFolders, 0);
+  assert.equal(objects.cacheBytes, 0);
+  assert.deepEqual(objects.entries.map((entry) => entry.key), ["big/one.txt"]);
+});
+
+test("clearing the cache drops an in-flight refresh's write", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  const { objects } = seed("a");
+  const first = streamListing(objects, [objectEntry("big/kept.txt")]);
+  await objects.loadFolder("big/");
+  assert.equal(first.calls.length, 1);
+  assert.equal(objects.cacheFolders, 1);
+
+  t.mock.timers.tick(31_000);
+  const refresh = streamListing(objects, [], { manual: true });
+  const loading = objects.loadFolder("big/");
+  assert.equal(objects.refreshing, true);
+  const requestId = refresh.calls[0].requestId;
+  await loading;
+
+  objects.clearListingCache();
+  assert.equal(objects.cacheFolders, 0);
+  assert.equal(objects.cacheBytes, 0);
+
+  // The refresh still lands and updates the visible list, but it must not put
+  // the cleared folder back: the button promises the cache stays empty.
+  objects.onListingPage({
+    requestId,
+    prefix: "big/",
+    entries: [objectEntry("big/fresh.txt")],
+    total: 1,
+    done: true,
+  });
+  objects.onListingDone({
+    requestId,
+    prefix: "big/",
+    total: 1,
+    files: 1,
+    truncated: false,
+    warning: null,
+  });
+
+  assert.deepEqual(objects.entries.map((entry) => entry.key), ["big/fresh.txt"]);
+  assert.equal(objects.refreshing, false);
+  assert.equal(objects.cacheFolders, 0);
+  assert.equal(objects.cacheBytes, 0);
+});
