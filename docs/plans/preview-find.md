@@ -321,15 +321,19 @@ mistake the superseded half of Task 4 for the contract.
 (frontend build, `cargo fmt --check`, `clippy -D warnings`, 123 Rust tests) — all
 green on the branch head.
 
-The manual smoke list in Task 5 was **not** run: it needs a live window against a
-real bucket, and no credentials were available while this landed. It is waived
-here rather than quietly skipped, and it is what the next person with a bucket
-should run: `⌘F` with the list focused still filters the folder; `⌘F` with a
-`.txt` preview focused opens the bar; the header button opens it; `⌘F` on an
-image preview still filters the folder; Escape closes the bar before it collapses
-an expanded preview. Everything the tests can reach without a DOM is covered in
-`tests/js/textSearch.test.js`; the marking, focus and Escape/`⌘F` handoff are
-manual-QA by construction (`package.json` has no DOM test environment).
+The manual smoke list in Task 5 is now an **automated** part of the GUI suite
+(`src-tauri/src/e2e/mod.rs`, five checks prefixed `preview find:`), because the
+marking, focus and Escape/`⌘F` handoff are the parts `tests/js` cannot reach. It
+runs against the real window and a real bucket: `pnpm test:e2e`, 89/89 checks pass
+on the merged head. What it covers: `⌘F` with the list focused still filters the
+folder and with a `.txt` preview focused opens the bar (and a second `⌘F` in the
+bar never reaches the filter); hits are counted, marked and stepped with `↩` /
+`⇧↩`; Match Case, Whole Word and regex change the count as their toggles say, an
+invalid pattern shows `Invalid regex` without leaving marks, and regex mode
+disables but keeps Whole Word; `Esc` closes the bar before it collapses an
+expanded preview and returns focus to the text; the header button reopens the bar
+with the retained query; an image preview offers no button and routes `⌘F` to the
+filter; raw Markdown can be searched and switching to Rendered closes the bar.
 
 ---
 
