@@ -52,3 +52,6 @@ Thumbs.db
 
 # --- installer staging for the release workflow ---
 release-assets/
+
+# --- agent scratch (SDD plans, briefs, reviews) ---
+.superpowers/
