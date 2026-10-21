@@ -98,7 +98,9 @@
               <h3>Media, without waiting</h3>
               <p>
                 Images, audio and video are streamed from S3 with HTTP range requests. Playback
-                starts on the first bytes; seeking fetches only what you seek to.
+                starts on the first bytes; seeking fetches only what you seek to. Audio and video
+                skip the preview size limit entirely, so an hour-long recording plays without being
+                downloaded.
               </p>
             </article>
 
@@ -113,10 +115,12 @@
 
             <article class="card">
               <img class="card__icon" src="assets/icons/code.svg" width="38" height="38" alt="" />
-              <h3>Text, highlighted</h3>
+              <h3>Text, highlighted and searchable</h3>
               <p>
                 Markdown renders with a sanitised preview and a raw toggle. Code is highlighted for
-                about 30 languages, JSON is pretty-printed, CSV becomes a table.
+                about 30 languages, JSON is pretty-printed, CSV becomes a table. Press <kbd>⌘F</kbd>
+                to find any string in the text — match case, whole word, regular expressions — and
+                step through the hits.
               </p>
             </article>
 
@@ -130,29 +134,12 @@
             </article>
 
             <article class="card">
-              <img class="card__icon" src="assets/icons/file-search.svg" width="38" height="38" alt="" />
-              <h3>Files with no extension</h3>
-              <p>
-                SSH keys, <code>.pub</code>, <code>.pem</code>, dotfiles and extensionless files are
-                shown as text when the bytes say they are text, rather than being labelled binary.
-              </p>
-            </article>
-
-            <article class="card">
               <img class="card__icon" src="assets/icons/layers.svg" width="38" height="38" alt="" />
               <h3>Large folders stay responsive</h3>
               <p>
                 Listings stream in pages and the table renders only the rows on screen, so a prefix
-                with a hundred thousand objects scrolls like any other.
-              </p>
-            </article>
-
-            <article class="card">
-              <img class="card__icon" src="assets/icons/badge-check.svg" width="38" height="38" alt="" />
-              <h3>Honest about what it can do</h3>
-              <p>
-                A probe tells you whether these credentials can list, read, write and delete.
-                Per-connection read-only mode blocks every write in the interface.
+                with a hundred thousand objects scrolls like any other. A folder you have already
+                opened is served from memory, so going back is instant.
               </p>
             </article>
 
@@ -178,33 +165,14 @@
             </article>
 
             <article class="card">
-              <img class="card__icon" src="assets/icons/terminal.svg" width="38" height="38" alt="" />
-              <h3>Bring the credentials you already have</h3>
-              <p>
-                Paste the credentials JSON you already use, or a boto3 client snippet straight out
-                of your code, and the app builds the connections from it — secrets are encrypted
-                before anything is written to disk.
-              </p>
-            </article>
-
-            <article class="card">
-              <img class="card__icon" src="assets/icons/refresh-cw.svg" width="38" height="38" alt="" />
-              <h3>It updates itself</h3>
-              <p>
-                On launch the app checks GitHub Releases and offers the new version, which it
-                installs and restarts into. The download is checked against a signing key built
-                into the app, so a tampered bundle is refused rather than installed.
-              </p>
-            </article>
-
-            <article class="card">
               <img class="card__icon" src="assets/icons/keyboard.svg" width="38" height="38" alt="" />
               <h3>Keyboard first</h3>
               <p>
                 <kbd>←</kbd>/<kbd>→</kbd> move between the connections, the list and the preview;
-                <kbd>⌘L</kbd> pastes an <code>s3://</code> address, <kbd>⌘D</kbd> downloads,
-                <kbd>⌘⇧C</kbd> copies S3 URIs, <kbd>⌘A</kbd> selects all, Shift+click covers ranges.
-                Every action is reachable without a pointer; the row menu is on <kbd>⇧F10</kbd>.
+                <kbd>⌘L</kbd> pastes an <code>s3://</code> address, <kbd>⌘F</kbd> finds inside the
+                preview, <kbd>⌘D</kbd> downloads, <kbd>⌘⇧C</kbd> copies S3 URIs, <kbd>⌘A</kbd>
+                selects all, Shift+click covers ranges. Every action is reachable without a
+                pointer; the row menu is on <kbd>⇧F10</kbd>.
               </p>
             </article>
           </div>
@@ -217,11 +185,16 @@
           <ol class="steps">
             <li>Download the disk image and open it.</li>
             <li>Drag <strong>S3&nbsp;Viewer</strong> into <strong>Applications</strong>.</li>
-            <li>Add a connection: the fields mirror a boto3 client one to one.</li>
+            <li>
+              Add a connection: the fields mirror a boto3 client one to one, or paste a credentials
+              JSON or a boto3 snippet and let the app fill them in.
+            </li>
           </ol>
           <p class="muted">
-            Linux releases are a <code>.deb</code> and an <code>AppImage</code> in the same release.
-            On Linux there is an extra step before that: nothing — they just run.
+            Linux releases are a <code>.deb</code> and an <code>AppImage</code> in the same release,
+            and they just run. On every platform the app updates itself: each launch asks GitHub
+            Releases for a newer version and checks the download against a signing key built into
+            the app.
           </p>
         </div>
 
@@ -244,8 +217,8 @@
           </div>
           <p class="notice__small">
             You will see the same prompt once per new version until the build is signed with an
-            Apple Developer ID. Verify what you downloaded against the
-            <code>.sha256</code> file published with each release.
+            Apple Developer ID. Verify what you downloaded against
+            <code>SHA256SUMS.txt</code> in the same release.
           </p>
         </aside>
       </section>
@@ -267,6 +240,7 @@
             <li>Signature V4, or legacy V2 where the service needs it.</li>
             <li>Path-style or virtual-host addressing.</li>
             <li>Both checksum switches, for services that need the other behaviour.</li>
+            <li>A probe reports what these keys may list, read, write and delete; read-only mode blocks every write in the interface.</li>
           </ul>
         </div>
       </section>

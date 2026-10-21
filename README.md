@@ -86,6 +86,12 @@ The full feature tour is on the
   previews the row without selecting it; <kbd>⌘</kbd>/<kbd>Ctrl</kbd>-click selects,
   and a double click opens a folder or brings a hidden preview back. Checkboxes
   stay out of the way until you select something.
+- **Going back is instant.** Folders you have already opened stay in a bounded
+  in-memory cache (64 MB by default, never written to disk), so stepping back into
+  one paints the rows it had before a request goes out. A folder older than 30
+  seconds is served from the cache and refreshed behind the list. The budget is a
+  setting — megabytes, 0 turns it off — and Settings shows how many folders are
+  held, how much memory they take and a button to clear it.
 - **The breadcrumb is the connection root.** A connection pins one endpoint, one
   bucket and one prefix, so you cannot wander out of the prefix it was set up
   for. The address bar (<kbd>⌘L</kbd> or the pencil) accepts `s3://bucket/key`,
@@ -143,6 +149,17 @@ the whole object arrives.
 > instead of loading them. Audio and video are exempt: they stream over ranged
 > reads, so even a multi-gigabyte file plays without being downloaded. Parquet has
 > an additional 64 MB read ceiling.
+
+**Find in a file.** <kbd>⌘F</kbd> in the preview column, or the magnifier in the
+panel header, searches the text the preview loaded — plain text, code and JSON,
+plus Markdown in the **Raw** view — and highlights every hit. <kbd>Enter</kbd> and
+<kbd>⇧Enter</kbd> step through them, the bar counts "3 of 47", and the search stops
+at 2,000 matches with a `+` on the count. Match Case, Match Whole Word and Regular
+Expression are one click each; an invalid pattern is reported in the bar. `Esc`
+closes the bar before it moves the keyboard anywhere else. Previews without text
+to search — an image, a PDF, a rendered Markdown document — hand <kbd>⌘F</kbd>
+back to the folder filter. On Linux the count, stepping and scrolling work on any
+WebKitGTK; painting the marks needs 2.44 or newer.
 
 Markdown is rendered through `marked` and then sanitised by a small allow-list
 walker in `src/lib/previewText.ts`: unknown tags are unwrapped,
@@ -258,12 +275,17 @@ row; `Escape` clears the selection. On macOS use `⌘`, on Linux `Ctrl`.
 | --- | --- |
 | Address bar | <kbd>⌘L</kbd> |
 | Filter the folder | <kbd>⌘F</kbd> |
+| Find in the preview | <kbd>⌘F</kbd> in the preview column |
 | Download the selection or the cursor row | <kbd>⌘D</kbd> |
 | Copy S3 URIs | <kbd>⌘⇧C</kbd> |
 | Upload files / a folder | <kbd>⌘U</kbd> / <kbd>⌘⇧U</kbd> |
 | New connection / new folder | <kbd>⌘N</kbd> / <kbd>⌘⇧N</kbd> |
 | Refresh the listing | <kbd>⌘R</kbd> |
 | Open the row menu | <kbd>⇧F10</kbd> or right-click |
+
+`⌘F` does one of two things, depending on where the keyboard is: inside a preview
+with searchable text it opens find-in-file, everywhere else it focuses the folder
+filter.
 
 The full map — columns, focus restoration, dialogs, menus, the PDF viewer, and
 what is deliberately left to the operating system — is in
@@ -303,7 +325,8 @@ Three layers, all runnable locally:
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml     # Rust: crypto, store, S3, SigV2, previews
-pnpm test:js                                        # JS: formatting, CSV, boto3, versions, latest.json
+pnpm test:js                                        # JS: formatting, CSV, boto3, text search,
+                                                    # listing cache, versions, latest.json
 node e2e/run.mjs                                    # real window, real bucket
 ```
 
@@ -338,12 +361,14 @@ src/                       Vue 3 + Pinia webview
   components/
     layout/                sidebar, header, breadcrumb, toolbar, resizers, transfers
     browser/               virtualised object list and row
-    preview/               panel and one renderer per media type
+    preview/               panel, find bar, shared text body, one renderer per media type
     dialogs/               connection editor, settings, import, copy/move, updates
     ui/                    buttons, badges, fields, modal frame, toasts
-  stores/                  ui, connections, objects, progress, updates, toasts, dialogs
+  stores/                  ui, connections, objects, progress, preview find, updates,
+                           toasts, dialogs
   lib/                     typed IPC bridge, formatting, key arithmetic, file kinds,
-                           highlight.js setup, Markdown sanitiser, boto3 snippet
+                           highlight.js setup, Markdown sanitiser, boto3 snippet,
+                           find matcher, listing cache
   composables/             dialogs, focus trap, object actions
   types/                   wire types mirroring the Rust Serialize shapes
 
