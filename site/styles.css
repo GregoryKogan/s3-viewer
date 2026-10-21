@@ -260,6 +260,60 @@ h1 {
   color: var(--muted);
 }
 
+/* The download is the one thing someone who lands from a link sees, and the
+   install section is far below it. The quarantine step lives next to the
+   button, so it is read before the disk image is opened, not after. */
+.hero-note {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  max-width: 40rem;
+  margin: 1.75rem auto 0;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.hero-note p {
+  margin: 0;
+}
+
+.hero-note__title {
+  margin-bottom: 0.15rem;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.hero-note strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.hero-note__icon {
+  flex: none;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: 0.2rem;
+  color: var(--warn);
+}
+
+.hero-note a {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.hero-note a:hover {
+  text-decoration-color: var(--accent);
+}
+
 .shot {
   margin: 3rem 0 0;
 }
