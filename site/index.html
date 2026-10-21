@@ -97,10 +97,8 @@
               <img class="card__icon" src="assets/icons/zap.svg" width="38" height="38" alt="" />
               <h3>Media, without waiting</h3>
               <p>
-                Images, audio and video are streamed from S3 with HTTP range requests. Playback
-                starts on the first bytes; seeking fetches only what you seek to. Audio and video
-                skip the preview size limit entirely, so an hour-long recording plays without being
-                downloaded.
+                Images, audio and video stream straight from the bucket — playback starts
+                immediately, and seeking jumps anywhere without a download.
               </p>
             </article>
 
@@ -108,8 +106,8 @@
               <img class="card__icon" src="assets/icons/file-text.svg" width="38" height="38" alt="" />
               <h3>PDFs you can actually read</h3>
               <p>
-                Rendered with pdf.js: zoom, fit to width, page navigation. Pages load on demand
-                instead of pulling the whole document.
+                Zoom, fit to width, jump to a page — a long document opens on the page you need
+                instead of being downloaded first.
               </p>
             </article>
 
@@ -117,10 +115,8 @@
               <img class="card__icon" src="assets/icons/code.svg" width="38" height="38" alt="" />
               <h3>Text, highlighted and searchable</h3>
               <p>
-                Markdown renders with a sanitised preview and a raw toggle. Code is highlighted for
-                about 30 languages, JSON is pretty-printed, CSV becomes a table. Press <kbd>⌘F</kbd>
-                to find any string in the text — match case, whole word, regular expressions — and
-                step through the hits.
+                Markdown, code, JSON and CSV read like they would in an editor. Press <kbd>⌘F</kbd>
+                and search the text — case, whole word, regex — then step through the hits.
               </p>
             </article>
 
@@ -128,8 +124,8 @@
               <img class="card__icon" src="assets/icons/table.svg" width="38" height="38" alt="" />
               <h3>Parquet as a table</h3>
               <p>
-                Columnar files are read properly — schema, columns and the first rows — instead of
-                being treated as opaque bytes.
+                See the schema, the columns and the first rows of a columnar file without a
+                notebook or a download.
               </p>
             </article>
 
@@ -137,9 +133,8 @@
               <img class="card__icon" src="assets/icons/layers.svg" width="38" height="38" alt="" />
               <h3>Large folders stay responsive</h3>
               <p>
-                Listings stream in pages and the table renders only the rows on screen, so a prefix
-                with a hundred thousand objects scrolls like any other. A folder you have already
-                opened is served from memory, so going back is instant.
+                A prefix with a hundred thousand objects scrolls like any other. Go back and the
+                rows are already there.
               </p>
             </article>
 
@@ -147,10 +142,8 @@
               <img class="card__icon" src="assets/icons/arrow-up-down.svg" width="38" height="38" alt="" />
               <h3>Transfers you can steer</h3>
               <p>
-                Every upload and download reports progress per file; a transfer that fails can be
-                retried or cancelled without leaving the app. When an upload would overwrite an
-                object you choose: replace it, replace all, or skip the existing ones. Selecting
-                several files downloads them into one folder.
+                Every upload and download shows progress, can be cancelled and can be retried. An
+                upload that would overwrite asks first — file by file or all at once.
               </p>
             </article>
 
@@ -158,9 +151,8 @@
               <img class="card__icon" src="assets/icons/arrow-right-left.svg" width="38" height="38" alt="" />
               <h3>Copy and move without a round trip</h3>
               <p>
-                Send a selection to another folder, or to a different saved connection, with a
-                server-side copy. A file can travel between buckets without passing through your
-                disk, and the same menu handles folders and single objects.
+                Send files, folders or a whole selection to another folder or connection. The copy
+                happens server-side, so nothing passes through your disk.
               </p>
             </article>
 
@@ -168,11 +160,9 @@
               <img class="card__icon" src="assets/icons/keyboard.svg" width="38" height="38" alt="" />
               <h3>Keyboard first</h3>
               <p>
-                <kbd>←</kbd>/<kbd>→</kbd> move between the connections, the list and the preview;
-                <kbd>⌘L</kbd> pastes an <code>s3://</code> address, <kbd>⌘F</kbd> finds inside the
-                preview, <kbd>⌘D</kbd> downloads, <kbd>⌘⇧C</kbd> copies S3 URIs, <kbd>⌘A</kbd>
-                selects all, Shift+click covers ranges. Every action is reachable without a
-                pointer; the row menu is on <kbd>⇧F10</kbd>.
+                Every action has a key: arrows move between connections, list and preview;
+                <kbd>⌘L</kbd> takes an address, <kbd>⌘F</kbd> searches inside the preview,
+                <kbd>⌘D</kbd> downloads. No pointer needed.
               </p>
             </article>
           </div>
