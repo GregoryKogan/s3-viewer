@@ -91,7 +91,7 @@ pub trait ObjectStore: Send + Sync {
     ) -> AppResult<()>;
 
     /// Streaming PUT from a local file.
-    async fn put_file(&self, key: &str, path: &Path, content_type: Option<&str>) -> AppResult<()>;
+    async fn put_file(&self, key: &str, path: &Path) -> AppResult<()>;
 
     async fn delete_object(&self, key: &str) -> AppResult<()>;
 
@@ -199,10 +199,10 @@ impl ObjectStore for AnyStore {
         }
     }
 
-    async fn put_file(&self, key: &str, path: &Path, content_type: Option<&str>) -> AppResult<()> {
+    async fn put_file(&self, key: &str, path: &Path) -> AppResult<()> {
         match self {
-            AnyStore::Aws(s) => s.as_ref().put_file(key, path, content_type).await,
-            AnyStore::V2(s) => s.as_ref().put_file(key, path, content_type).await,
+            AnyStore::Aws(s) => s.as_ref().put_file(key, path).await,
+            AnyStore::V2(s) => s.as_ref().put_file(key, path).await,
         }
     }
 

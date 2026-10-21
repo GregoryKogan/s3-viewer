@@ -33,7 +33,6 @@ pub struct V2Request<'a> {
     /// Raw query string without the leading `?`.
     pub query: Option<String>,
     pub content_type: Option<&'a str>,
-    pub content_md5: Option<&'a str>,
     /// Already-formatted RFC 2822 date, e.g. `Fri, 16 Oct 2026 16:39:11 GMT`.
     pub date: &'a str,
     pub extra_amz_headers: &'a [(String, String)],
@@ -72,7 +71,8 @@ impl V2Request<'_> {
         let mut s = String::new();
         s.push_str(self.method);
         s.push('\n');
-        s.push_str(self.content_md5.unwrap_or(""));
+        // Content-MD5 is always empty for this client: the S3 API still wants
+        // the blank line in the canonical request.
         s.push('\n');
         s.push_str(self.content_type.unwrap_or(""));
         s.push('\n');
@@ -175,7 +175,6 @@ mod tests {
             path: "/a/b.png",
             query: None,
             content_type: None,
-            content_md5: None,
             date: DATE,
             extra_amz_headers: &[],
             bucket: "mybucket",
@@ -190,7 +189,6 @@ mod tests {
             path: "/",
             query: None,
             content_type: None,
-            content_md5: None,
             date: DATE,
             extra_amz_headers: &[],
             bucket: "mybucket",
@@ -205,7 +203,6 @@ mod tests {
             path: "/",
             query: Some("prefix=a/&max-keys=100&marker=x".into()),
             content_type: None,
-            content_md5: None,
             date: DATE,
             extra_amz_headers: &[],
             bucket: "b",
@@ -226,7 +223,6 @@ mod tests {
             path: "/photo.jpg",
             query: None,
             content_type: Some("image/jpeg"),
-            content_md5: None,
             date: DATE,
             extra_amz_headers: &[],
             bucket: "mybucket",
@@ -248,7 +244,6 @@ mod tests {
             path: "/k",
             query: None,
             content_type: None,
-            content_md5: None,
             date: DATE,
             extra_amz_headers: &headers,
             bucket: "b",
@@ -270,7 +265,6 @@ mod tests {
             path: "/",
             query: None,
             content_type: None,
-            content_md5: None,
             date: DATE,
             extra_amz_headers: &[],
             bucket: "mybucket",
@@ -293,7 +287,6 @@ mod tests {
             path: "/",
             query: None,
             content_type: None,
-            content_md5: None,
             date: DATE,
             extra_amz_headers: &[],
             bucket: "b",

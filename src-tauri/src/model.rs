@@ -42,9 +42,6 @@ pub enum AddressingStyle {
     Auto,
 }
 
-fn default_true() -> bool {
-    true
-}
 fn default_confirm() -> bool {
     true
 }
@@ -154,9 +151,6 @@ pub struct Connection {
     /// boto3 `Config(response_checksum_validation=...)`
     #[serde(default)]
     pub response_checksum_validation: ChecksumValidation,
-    /// boto3 `Config(s3={"us_east_1_regional_endpoint": "regional"})` equivalent:
-    #[serde(default = "default_true")]
-    pub use_path_style_for_list: bool,
     /// Ask the user for confirmation before destructive operations.
     #[serde(default)]
     pub security: SecuritySettings,

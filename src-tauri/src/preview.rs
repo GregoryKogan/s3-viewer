@@ -48,11 +48,6 @@ pub fn is_natively_renderable(kind: FileKind) -> bool {
     )
 }
 
-/// Kinds rendered as a table.
-pub fn is_tabular(kind: FileKind) -> bool {
-    matches!(kind, FileKind::Csv | FileKind::Parquet)
-}
-
 /// Bytes read for a Parquet preview. The footer lives at the end, but the first
 /// rows are at the start, so the whole object is read up to this cap.
 pub const PARQUET_LIMIT: u64 = 64 * 1024 * 1024;

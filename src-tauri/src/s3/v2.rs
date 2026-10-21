@@ -129,7 +129,6 @@ impl V2Store {
             } else {
                 Some(sign_content_type)
             },
-            content_md5: None,
             date: &date,
             extra_amz_headers: &amz_headers,
             bucket: &self.bucket,
@@ -315,7 +314,6 @@ impl ObjectStore for V2Store {
             path: &path_for_sign,
             query: None,
             content_type: None,
-            content_md5: None,
             date: &date,
             extra_amz_headers: &amz_headers,
             bucket: &self.bucket,
@@ -373,18 +371,11 @@ impl ObjectStore for V2Store {
         Ok(())
     }
 
-    async fn put_file(
-        &self,
-        key: &str,
-        path: &std::path::Path,
-        content_type: Option<&str>,
-    ) -> AppResult<()> {
+    async fn put_file(&self, key: &str, path: &std::path::Path) -> AppResult<()> {
         let body = tokio::fs::read(path)
             .await
             .map_err(|e| AppError::msg(format!("read {}: {e}", path.display())))?;
-        let ct = content_type
-            .map(|s| s.to_string())
-            .or_else(|| super::guess_content_type(path));
+        let ct = super::guess_content_type(path);
         self.put_bytes(key, body, ct.as_deref()).await
     }
 
@@ -404,7 +395,6 @@ impl ObjectStore for V2Store {
             path: &path_for_sign,
             query: None,
             content_type: None,
-            content_md5: None,
             date: &date,
             extra_amz_headers: &headers,
             bucket: &self.bucket,

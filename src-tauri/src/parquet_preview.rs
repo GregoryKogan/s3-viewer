@@ -8,7 +8,6 @@ use crate::model::TablePreview;
 use bytes::Bytes;
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use parquet::record::Row;
-use std::sync::Arc;
 
 /// A small, valid Parquet file. Used by the unit tests and written to
 /// `e2e/fixtures/generated/table.parquet` so the end-to-end suite can upload it:
@@ -139,9 +138,6 @@ fn render(field: &parquet::record::Field) -> String {
 pub fn looks_like_parquet(bytes: &[u8]) -> bool {
     bytes.len() >= 8 && &bytes[..4] == b"PAR1" && &bytes[bytes.len() - 4..] == b"PAR1"
 }
-
-/// Shared handle type used by the commands.
-pub type ParquetBytes = Arc<Vec<u8>>;
 
 #[cfg(test)]
 mod tests {

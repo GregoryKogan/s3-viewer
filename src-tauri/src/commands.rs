@@ -261,7 +261,6 @@ impl Ctx<'_> {
                     .response_checksum_validation
                     .or_else(|| existing.as_ref().map(|c| c.response_checksum_validation))
                     .unwrap_or_default(),
-                use_path_style_for_list: true,
                 security: Default::default(),
                 last_used_at: None,
                 created_at: chrono::Utc::now().to_rfc3339(),
@@ -370,12 +369,11 @@ pub async fn list_objects(app: State<'_, Arc<AppCore>>, input: ListInput) -> Cmd
     };
     core.mark_used(&input.connection_id);
     let store = core.client(&input.connection_id).map_err(err)?;
-    let (mut entries, mut truncated) = objects::list_folder(&store, &prefix, limit).await?;
+    let (mut entries, truncated) = objects::list_folder(&store, &prefix, limit).await?;
 
     if !show_system {
         entries.retain(|e| !is_system_entry(e));
     }
-    truncated = trim_to_limit(&mut entries, limit) || truncated;
     Ok(ListResult {
         prefix: prefix.clone(),
         entries,
@@ -467,28 +465,6 @@ pub async fn list_objects_stream(
         }),
     );
     Ok(())
-}
-
-/// Keep every folder and trim only the file tail past `limit`.
-///
-/// `objects::list_folder` already applies this rule page by page (see
-/// `objects::list_folder_streaming`), so for its result this is a no-op guard
-/// and the `truncated` flag comes from the stream. It is kept as the
-/// non-streaming enforcement point for any caller that assembles entries
-/// another way, and it documents the limit = 0 case: no files, folders only.
-fn trim_to_limit(entries: &mut Vec<ObjectEntry>, limit: usize) -> bool {
-    if entries.iter().filter(|e| !e.is_folder).count() <= limit {
-        return false;
-    }
-    let mut kept = 0usize;
-    entries.retain(|entry| {
-        if entry.is_folder {
-            return true;
-        }
-        kept += 1;
-        kept <= limit
-    });
-    true
 }
 
 fn truncation_warning(truncated: bool, limit: usize) -> Option<String> {
@@ -1385,7 +1361,7 @@ pub async fn upload_files_impl(
             if !entry_is_running(&tracker_task, &task.id) {
                 continue;
             }
-            let result = store.put_file(&task.key, &task.local_path, None).await;
+            let result = store.put_file(&task.key, &task.local_path).await;
             match result {
                 Ok(()) => {
                     tracker_task.finish_if_running(&task.id, Some(task.key));

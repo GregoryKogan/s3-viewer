@@ -117,8 +117,7 @@ fn drop_self_marker(entries: Vec<ObjectEntry>, folder: &str) -> Vec<ObjectEntry>
 ///
 /// `limit == 0` means "no files, folders only". The settings UI clamps the
 /// field to at least 200 and maps a blank or zero value back to the default, so
-/// 0 only comes from a hand-edited config; it keeps the same meaning as the
-/// non-streaming path's `trim_to_limit`.
+/// 0 only comes from a hand-edited config.
 pub async fn list_folder_streaming<F>(
     store: &AnyStore,
     prefix: &str,

@@ -102,10 +102,6 @@ impl AwsStore {
         }
     }
 
-    pub fn client(&self) -> &Client {
-        &self.client
-    }
-
     /// The raw error mapper: keeps the S3 error code, message, request id and
     /// HTTP status so the UI can explain what went wrong.
     /// Keeps the S3 error code, message and request id so the UI can explain
@@ -129,7 +125,7 @@ impl AwsStore {
         }
     }
 
-    pub async fn list_raw(
+    async fn list_raw(
         &self,
         prefix: &str,
         delimiter: Option<&str>,
@@ -326,7 +322,7 @@ impl ObjectStore for AwsStore {
         Ok(())
     }
 
-    async fn put_file(&self, key: &str, path: &Path, content_type: Option<&str>) -> AppResult<()> {
+    async fn put_file(&self, key: &str, path: &Path) -> AppResult<()> {
         let body = ByteStream::read_from()
             .path(path)
             .build()
@@ -338,9 +334,7 @@ impl ObjectStore for AwsStore {
             .bucket(&self.bucket)
             .key(key)
             .body(body);
-        let ct = content_type
-            .map(|s| s.to_string())
-            .or_else(|| guess_content_type(path));
+        let ct = guess_content_type(path);
         if let Some(ct) = ct {
             req = req.content_type(ct);
         }

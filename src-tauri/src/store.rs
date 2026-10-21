@@ -108,9 +108,6 @@ pub struct PersistedConfig {
     /// Sealed values, keyed by connection id.
     #[serde(default)]
     pub secrets: HashMap<String, String>,
-    /// `true` when the sealed value holds a session token as well.
-    #[serde(default)]
-    pub secret_has_session_token: HashMap<String, bool>,
     #[serde(default)]
     pub capabilities: HashMap<String, Capabilities>,
     #[serde(default)]
@@ -123,7 +120,6 @@ impl Default for PersistedConfig {
             version: CONFIG_VERSION,
             connections: HashMap::new(),
             secrets: HashMap::new(),
-            secret_has_session_token: HashMap::new(),
             capabilities: HashMap::new(),
             settings: AppSettings::default(),
         }
@@ -270,9 +266,6 @@ impl Store {
             .seal(&payload)
             .map_err(|e| AppError::Store(format!("seal secret: {e}")))?;
         self.config.secrets.insert(id.to_string(), sealed);
-        self.config
-            .secret_has_session_token
-            .insert(id.to_string(), session_token.is_some());
         Ok(())
     }
 
@@ -404,10 +397,6 @@ impl Store {
                 .response_checksum_validation
                 .or_else(|| existing.as_ref().map(|c| c.response_checksum_validation))
                 .unwrap_or_default(),
-            use_path_style_for_list: existing
-                .as_ref()
-                .map(|c| c.use_path_style_for_list)
-                .unwrap_or(true),
             security: input
                 .security
                 .or_else(|| existing.as_ref().map(|c| c.security.clone()))
@@ -420,13 +409,6 @@ impl Store {
         // error in the form rather than on the first listing.
         if conn.bucket.contains('/') {
             return Err(AppError::invalid("bucket name must not contain '/'"));
-        }
-        if conn.addressing_style == crate::model::AddressingStyle::Virtual
-            && conn.bucket.contains('.')
-            && endpoint_is_https(&conn.endpoint_url)
-        {
-            // Allowed, but worth knowing: TLS certificates for dotted buckets
-            // require wildcard support from the provider.
         }
 
         let secret_update = input
@@ -472,7 +454,6 @@ impl Store {
             return Err(AppError::not_found(format!("connection {id}")));
         }
         self.config.secrets.remove(id);
-        self.config.secret_has_session_token.remove(id);
         self.config.capabilities.remove(id);
         self.save()
     }
@@ -517,10 +498,6 @@ struct SealedSecret {
 struct LegacySecret {
     #[serde(default)]
     secret_access_key: Option<String>,
-}
-
-fn endpoint_is_https(endpoint: &str) -> bool {
-    endpoint.starts_with("https://")
 }
 
 /// S3 prefixes are key prefixes, matched literally against object keys — the
