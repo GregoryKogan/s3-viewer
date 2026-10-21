@@ -149,7 +149,13 @@ function cancel() {
 
 /** The form edits MB; the stored setting is bytes. Garbage falls back to the default. */
 function cacheBytesFromForm(): number {
-  const mb = Number(form.value.listingCacheMb);
+  // An emptied input is "" (v-model.number leaves it a string), not 0: only an
+  // explicit 0 turns the cache off.
+  const raw: unknown = form.value.listingCacheMb;
+  const mb =
+    raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "")
+      ? Number.NaN
+      : Number(raw);
   const clamped = Number.isFinite(mb)
     ? Math.min(4096, Math.max(0, Math.round(mb)))
     : DEFAULTS.listingCacheMb;

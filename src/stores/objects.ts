@@ -7,6 +7,7 @@ import { useConnectionsStore } from "@/stores/connections";
 import { useToastsStore } from "@/stores/toasts";
 import { useUiStore } from "@/stores/ui";
 import type {
+  Connection,
   ListErrorDetail,
   ListingDoneEvent,
   ListingErrorEvent,
@@ -19,6 +20,16 @@ export type SortKey = "name" | "size" | "modified" | "kind";
 
 /** A cached folder is served as-is while it is younger than this. */
 const LISTING_CACHE_FRESH_MS = 30_000;
+
+/**
+ * The owner half of a cache key identifies the connection *target*, not just the
+ * saved connection. An edit keeps the id but can move the bucket or the
+ * endpoint, and entries cached from the old target must never paint under the
+ * new one; "\u0000" cannot occur in any of the three fields.
+ */
+function connectionCacheOwner(connection: Connection): string {
+  return [connection.id, connection.bucket, connection.endpointUrl].join("\u0000");
+}
 
 /**
  * One browsing session: the folder on screen, its objects, the selection, and the
@@ -34,6 +45,13 @@ export const useObjectsStore = defineStore("objects", () => {
    * another bucket that happens to share the same keys.
    */
   const sessionConnectionId = ref<string | null>(null);
+  /**
+   * The cache key's owner for the listing on screen: the target (id, bucket,
+   * endpoint) of the connection this session belongs to. Kept next to the
+   * session so the write path never has to re-resolve a connection that an
+   * edit may have moved.
+   */
+  let sessionCacheOwner: string | null = null;
   const entries = ref<ObjectEntry[]>([]);
   const loading = ref(false);
   const awaitingFirstPage = ref(false);
@@ -152,7 +170,8 @@ export const useObjectsStore = defineStore("objects", () => {
     // folder (or a different connection on the same prefix) starts fresh.
     const continuing =
       sessionConnectionId.value === connection.id && nextPrefix === prefix.value;
-    const cacheKey = listingCacheKey(connection.id, nextPrefix);
+    const owner = connectionCacheOwner(connection);
+    const cacheKey = listingCacheKey(owner, nextPrefix);
     const cached = force ? null : cache.get(cacheKey);
     if (force) {
       // A forced reload must not be answered from the entry it is replacing,
@@ -165,6 +184,7 @@ export const useObjectsStore = defineStore("objects", () => {
     // would otherwise show the old connection's object under the new one's
     // Download/Copy URI for the whole load.
     if (sessionConnectionId.value !== connection.id) clearPreview();
+    sessionCacheOwner = owner;
     sessionConnectionId.value = connection.id;
     prefix.value = nextPrefix;
     entries.value = cached ? cached.entries : [];
@@ -297,9 +317,9 @@ export const useObjectsStore = defineStore("objects", () => {
     warning.value = event.warning ?? null;
     prefix.value = event.prefix ?? prefix.value;
 
-    const connectionId = sessionConnectionId.value;
-    if (connectionId && !droppedRevalidation) {
-      cache.set(listingCacheKey(connectionId, prefix.value), {
+    const owner = sessionCacheOwner;
+    if (owner && !droppedRevalidation) {
+      cache.set(listingCacheKey(owner, prefix.value), {
         entries: entries.value,
         truncated: event.truncated,
         warning: event.warning ?? null,
@@ -394,6 +414,7 @@ export const useObjectsStore = defineStore("objects", () => {
     listingRequest += 1;
     prefix.value = "";
     sessionConnectionId.value = null;
+    sessionCacheOwner = null;
     entries.value = [];
     staged = [];
     selected.value.clear();

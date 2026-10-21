@@ -127,6 +127,19 @@ function seed(sessionConnectionId) {
   return { connections, objects };
 }
 
+/**
+ * Replace one saved connection the way an edit does: the id survives, the
+ * fields the dialog writes change. `views` is what `active` is computed from,
+ * so this is the same state `connections.load()` would install after a save.
+ */
+function retarget(connections, id, changes) {
+  connections.views = connections.views.map((view) =>
+    view.connection.id === id
+      ? { ...view, connection: { ...view.connection, ...changes } }
+      : view,
+  );
+}
+
 test("switching connections clears the old preview before the session id moves", async () => {
   const { connections, objects } = seed("a");
   const listing = pendingListing();
@@ -491,4 +504,58 @@ test("clearing the cache drops an in-flight refresh's write", async (t) => {
   assert.equal(objects.refreshing, false);
   assert.equal(objects.cacheFolders, 0);
   assert.equal(objects.cacheBytes, 0);
+});
+
+test("an edit that retargets a connection does not serve the old target's listing", async () => {
+  const { connections, objects } = seed("a");
+  const first = streamListing(objects, [objectEntry("big/old.txt")]);
+  await objects.loadFolder("big/");
+  assert.equal(first.calls.length, 1);
+  assert.equal(objects.cacheFolders, 1);
+
+  // An edit keeps the id but moves the connection to another bucket.
+  retarget(connections, "a", { bucket: "other-bucket" });
+
+  const listing = pendingListing();
+  const loading = objects.loadFolder("big/");
+
+  // The old target's entry is not this target's entry: list for real, and do
+  // not paint bucket A's rows against bucket B.
+  assert.equal(listing.started.length, 1);
+  assert.equal(listing.started[0].connectionId, "a");
+  assert.deepEqual(objects.entries, []);
+  assert.equal(objects.loading, true);
+
+  listing.release();
+  await loading;
+});
+
+test("the same target is still served from the cache", async () => {
+  const { objects } = seed("a");
+  const listing = streamListing(objects, [objectEntry("big/one.txt")]);
+  await objects.loadFolder("big/");
+  await objects.loadFolder("");
+  assert.equal(listing.calls.length, 2);
+
+  // No edit happened, so the same prefix is the same target: no IPC.
+  await objects.loadFolder("big/");
+  assert.equal(listing.calls.length, 2);
+  assert.deepEqual(objects.entries.map((entry) => entry.key), ["big/one.txt"]);
+});
+
+test("renaming a connection keeps its cached folders", async () => {
+  const { connections, objects } = seed("a");
+  const listing = streamListing(objects, [objectEntry("big/one.txt")]);
+  await objects.loadFolder("big/");
+  await objects.loadFolder("");
+  assert.equal(listing.calls.length, 2);
+
+  // A name is not part of the target: the bucket, endpoint and id are unchanged,
+  // so the listing stays valid.
+  retarget(connections, "a", { name: "renamed" });
+  assert.equal(connections.active?.name, "renamed");
+
+  await objects.loadFolder("big/");
+  assert.equal(listing.calls.length, 2);
+  assert.deepEqual(objects.entries.map((entry) => entry.key), ["big/one.txt"]);
 });

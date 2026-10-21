@@ -18,7 +18,7 @@
 
 ## Decisions (binding for all tasks)
 
-- **D1. Key.** A cache entry is keyed by `JSON.stringify([connectionId, prefix])`, where `prefix` is the normalized folder prefix (`asFolderPrefix`). The same prefix in two connections is two entries; editing a connection never shows another bucket's listing.
+- **D1. Key.** A cache entry is keyed by `listingCacheKey(owner, prefix)`, i.e. `JSON.stringify([owner, prefix])`, where `prefix` is the normalized folder prefix (`asFolderPrefix`) and `owner` is the connection *target*: `[connection.id, connection.bucket, connection.endpointUrl].join("\u0000")`. The same prefix on two targets is two entries. The target rather than the id is in the key because an edit keeps the id but can move the bucket or the endpoint, so an id-only key would paint the old target's listing after an edit. A rename or other non-target edit keeps the key.
 - **D2. Freshness.** An entry younger than `30_000` ms is served without any S3 request. Older entries are painted immediately and refreshed in the background with the same `requestId`; the `done` event replaces the list atomically through the existing `staged` mechanism.
 - **D3. Force paths.** `reload()` and `reloadSession()` delete the entry for the folder they list and then list for real. They are what ⌘R, the refresh buttons, every mutation and every settings save call, so a created or deleted object always shows up and a deleted one is never resurrected.
 - **D4. Silent background failure.** A failed background refresh keeps the cached list, shows no error and raises no toast; it must not mark the connection unhealthy. A failed *foreground* listing behaves exactly as today.
@@ -170,7 +170,7 @@ export interface CachedListing {
 
 Exports:
 
-- `export function listingCacheKey(connectionId: string, prefix: string): string` — `JSON.stringify([connectionId, prefix])`.
+- `export function listingCacheKey(connectionId: string, prefix: string): string` — `JSON.stringify([connectionId, prefix])`. The store passes the connection *target* (`connection.id`, `connection.bucket` and `connection.endpointUrl` joined with `"\u0000"`) as the first argument, not the bare id, so editing a connection cannot serve the old target's listing; the module treats it as an opaque owner string.
 - `export function estimateListingBytes(entries: ObjectEntry[]): number` — `ENTRY_OVERHEAD_BYTES = 160` per entry plus `STRING_BYTES = 2` per UTF-16 unit of `key`, `name`, `lastModified`, `etag`, `storageClass`, `kind` (missing optional fields count as 0). Document that it is an estimate, used for bounding, not an exact heap measurement.
 - `export class ListingCache` with:
 
@@ -288,7 +288,8 @@ const LISTING_CACHE_FRESH_MS = 30_000;
 In the body, after `nextPrefix` and `continuing`:
 
 ```ts
-    const cacheKey = listingCacheKey(connection.id, nextPrefix);
+    const owner = connectionCacheOwner(connection);
+    const cacheKey = listingCacheKey(owner, nextPrefix);
     const cached = force ? null : cache.get(cacheKey);
     if (force) {
       // A forced reload must not be answered from the entry it is replacing,
@@ -299,6 +300,8 @@ In the body, after `nextPrefix` and `continuing`:
 ```
 
 Then keep the existing preview/selection logic, but:
+
+- Keep a module-level `sessionCacheOwner` next to `sessionConnectionId`: set it to the composed owner when the session moves, and clear it in `close()`, so the write path never re-resolves a connection after an edit.
 
 - `entries.value = cached ? cached.entries : [];`
 - `loading.value = !cached;`
@@ -354,9 +357,9 @@ The existing guard, invoke, catch and `finally` stay as they are and now run onl
 After `prefix.value = event.prefix ?? prefix.value;`, write the cache:
 
 ```ts
-    const connectionId = sessionConnectionId.value;
-    if (connectionId) {
-      cache.set(listingCacheKey(connectionId, prefix.value), {
+    const owner = sessionCacheOwner;
+    if (owner) {
+      cache.set(listingCacheKey(owner, prefix.value), {
         entries: entries.value,
         truncated: event.truncated,
         warning: event.warning ?? null,
