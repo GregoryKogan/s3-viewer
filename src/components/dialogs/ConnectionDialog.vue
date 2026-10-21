@@ -90,7 +90,7 @@ const PLACEHOLDER = {
  */
 const AWS_DEFAULTS = { endpointUrl: "https://s3.amazonaws.com", region: "us-east-1" };
 
-function useAwsDefaults() {
+function applyAwsDefaults() {
   if (!form.value.endpointUrl.trim()) form.value.endpointUrl = AWS_DEFAULTS.endpointUrl;
   if (!form.value.region.trim()) form.value.region = AWS_DEFAULTS.region;
 }
@@ -333,7 +333,7 @@ function onEnter(event: KeyboardEvent) {
 
     <div class="flex flex-wrap items-center gap-1.5" data-testid="conn-presets">
       <span class="text-meta text-subtle">Start from a preset:</span>
-      <AppButton size="sm" data-testid="conn-preset-aws" @click="useAwsDefaults">
+      <AppButton size="sm" data-testid="conn-preset-aws" @click="applyAwsDefaults">
         Use AWS S3
       </AppButton>
     </div>
