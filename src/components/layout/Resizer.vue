@@ -9,7 +9,7 @@ const props = withDefaults(
     /** Which way a drag grows the panel. Defaults to the opposite edge. */
     grow?: "left" | "right";
     min: number;
-    max: number | (() => number);
+    max: number;
     /** Highlight while dragging and show a resize cursor. */
     label?: string;
   }>(),
@@ -25,12 +25,8 @@ let startValue = 0;
 const growDirection = () => props.grow ?? (props.side === "left" ? "right" : "left");
 const sign = () => (growDirection() === "right" ? 1 : -1);
 
-function maxWidth(): number {
-  return typeof props.max === "function" ? props.max() : props.max;
-}
-
 function clamp(value: number) {
-  return Math.min(Math.max(props.min, value), maxWidth());
+  return Math.min(Math.max(props.min, value), props.max);
 }
 
 function onPointerMove(event: PointerEvent) {

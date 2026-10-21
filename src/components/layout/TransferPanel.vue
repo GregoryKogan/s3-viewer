@@ -36,7 +36,7 @@ function barClass(item: ProgressView): string {
   if (item.state === "done") return "bg-ok";
   if (item.state === "failed") return "bg-danger";
   if (item.state === "cancelled") return "bg-subtle";
-  return percent(item) === null ? "bg-accent" : "bg-accent";
+  return "bg-accent";
 }
 
 function label(item: ProgressView): string {

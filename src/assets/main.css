@@ -142,8 +142,6 @@
      badges, counters and other non-essential labels. */
   --text-meta: 0.75rem;
   --text-micro: 0.6875rem;
-
-  --spacing-row: var(--row-height);
 }
 
 /* ------------------------------------------------ file-kind icon colours
@@ -254,12 +252,7 @@
    out of step with the store. */
 
 [data-sidebar-collapsed] #sidebar {
-  width: 4rem !important;
   min-width: 4rem !important;
-}
-
-[data-sidebar-collapsed] #sidebar .sidebar-label {
-  display: none;
 }
 
 [data-preview-hidden] #preview {

@@ -52,7 +52,7 @@ export const useDialogsStore = defineStore("dialogs", () => {
         {
           id,
           component: markRaw(component),
-          props: { ...buildProps(settle), dialogId: id },
+          props: { ...buildProps(settle) },
           size,
           dismissible: options.dismissible ?? true,
         },
@@ -74,11 +74,7 @@ export const useDialogsStore = defineStore("dialogs", () => {
     close(id, null);
   }
 
-  function closeAll() {
-    for (const dialog of [...stack.value]) cancel(dialog.id);
-  }
-
   const isOpen = () => stack.value.length > 0;
 
-  return { stack, open, close, cancel, closeAll, isOpen };
+  return { stack, open, close, cancel, isOpen };
 });

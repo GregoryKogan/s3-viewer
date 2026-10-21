@@ -29,8 +29,6 @@ void listen<{ paths?: string[] }>("tauri://drag-drop", (payload) => {
   const paths = payload?.paths ?? [];
   if (paths.length) emit("drop", paths);
 }).catch(() => {});
-
-defineExpose({ isActive: () => active.value });
 </script>
 
 <template>

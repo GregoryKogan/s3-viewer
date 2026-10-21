@@ -19,7 +19,6 @@ import UpdateDialog from "@/components/dialogs/UpdateDialog.vue";
 import type { AppSettings, Theme } from "@/types";
 
 const props = defineProps<{
-  dialogId?: number;
   size?: ModalSize;
   resolve: (saved: AppSettings | null) => void;
 }>();

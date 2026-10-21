@@ -6,17 +6,15 @@ import type { ModalSize } from "./types";
 
 const props = withDefaults(
   defineProps<{
-    dialogId?: number;
     size?: ModalSize;
     title: string;
     message: string;
     details?: string[];
     confirmLabel?: string;
-    cancelLabel?: string;
     danger?: boolean;
     resolve: (confirmed: boolean) => void;
   }>(),
-  { confirmLabel: "Confirm", cancelLabel: "Cancel", danger: false, details: () => [] },
+  { confirmLabel: "Confirm", danger: false, details: () => [] },
 );
 
 function cancel() {
@@ -73,7 +71,7 @@ function onEnter(event: KeyboardEvent) {
 
     <template #footer>
       <AppButton data-testid="confirm-cancel" :autofocus="props.danger" @click="cancel">
-        {{ props.cancelLabel }}
+        Cancel
       </AppButton>
       <AppButton
         :variant="props.danger ? 'danger' : 'primary'"

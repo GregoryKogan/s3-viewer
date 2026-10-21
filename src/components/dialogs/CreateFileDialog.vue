@@ -15,7 +15,6 @@ export interface CreateFileResult {
 }
 
 const props = defineProps<{
-  dialogId?: number;
   size?: ModalSize;
   prefix: string;
   resolve: (result: CreateFileResult | null) => void;

@@ -36,7 +36,6 @@ import type {
 } from "@/types";
 
 const props = defineProps<{
-  dialogId?: number;
   size?: ModalSize;
   connection?: Connection | null;
   resolve: (saved: Connection | null) => void;

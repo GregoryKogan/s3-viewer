@@ -19,11 +19,10 @@ const props = withDefaults(
     requestId?: string | null;
     /** Render a retry button that repeats the failed operation. */
     retry?: () => void;
-    retryLabel?: string;
     /** Kept on the button so existing selectors keep working. */
     retryTestId?: string;
   }>(),
-  { hints: () => [], retryLabel: "Try again" },
+  { hints: () => [] },
 );
 </script>
 
@@ -51,7 +50,7 @@ const props = withDefaults(
     </p>
     <div v-if="props.retry">
       <AppButton size="sm" :icon="RefreshCw" :data-testid="props.retryTestId" @click="props.retry?.()">
-        {{ props.retryLabel }}
+        Try again
       </AppButton>
     </div>
   </div>

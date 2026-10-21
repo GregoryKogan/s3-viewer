@@ -12,7 +12,6 @@ import { useToastsStore } from "@/stores/toasts";
 import type { ConnectionDraft } from "@/types";
 
 const props = defineProps<{
-  dialogId?: number;
   size?: ModalSize;
   resolve: (imported: string[]) => void;
 }>();

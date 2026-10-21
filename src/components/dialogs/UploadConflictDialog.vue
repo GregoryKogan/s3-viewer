@@ -8,7 +8,6 @@ import type { ModalSize } from "@/components/ui/types";
 export type UploadConflictChoice = "replace" | "skip";
 
 const props = defineProps<{
-  dialogId?: number;
   size?: ModalSize;
   conflicts: string[];
   prefix: string;

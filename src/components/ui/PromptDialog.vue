@@ -8,21 +8,18 @@ import type { ModalSize } from "./types";
 
 const props = withDefaults(
   defineProps<{
-    dialogId?: number;
     size?: ModalSize;
     title: string;
     label: string;
-    initial?: string;
-    placeholder?: string;
     confirmLabel?: string;
     hint?: string;
     validate?: (value: string) => string | null;
     resolve: (value: string | null) => void;
   }>(),
-  { initial: "", placeholder: "", confirmLabel: "Create", hint: "" },
+  { confirmLabel: "Create", hint: "" },
 );
 
-const value = ref(props.initial);
+const value = ref("");
 const error = ref<string | null>(null);
 const input = ref<HTMLInputElement | null>(null);
 
@@ -66,7 +63,6 @@ function onEnter(event: KeyboardEvent) {
         v-model="value"
         :class="inputClass"
         type="text"
-        :placeholder="props.placeholder"
         autofocus
         data-testid="prompt-input"
         @keydown.enter="onEnter"

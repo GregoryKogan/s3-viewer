@@ -7,15 +7,12 @@ export interface ConfirmOptions {
   message: string;
   details?: string[];
   confirmLabel?: string;
-  cancelLabel?: string;
   danger?: boolean;
 }
 
 export interface PromptOptions {
   title: string;
   label: string;
-  initial?: string;
-  placeholder?: string;
   confirmLabel?: string;
   hint?: string;
   validate?: (value: string) => string | null;
@@ -39,7 +36,6 @@ export function useDialogs() {
         message: options.message,
         details: options.details ?? [],
         confirmLabel: options.confirmLabel ?? "Confirm",
-        cancelLabel: options.cancelLabel ?? "Cancel",
         danger: options.danger ?? false,
         resolve: settle,
       }),
@@ -53,8 +49,6 @@ export function useDialogs() {
       (settle) => ({
         title: options.title,
         label: options.label,
-        initial: options.initial ?? "",
-        placeholder: options.placeholder ?? "",
         confirmLabel: options.confirmLabel ?? "Create",
         hint: options.hint ?? "",
         validate: options.validate,

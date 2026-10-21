@@ -10,16 +10,13 @@ const props = withDefaults(
     variant?: Variant;
     size?: Size;
     icon?: Component;
-    trailingIcon?: Component;
     disabled?: boolean;
     loading?: boolean;
     /** Spinner without disabling the button: for refresh-style actions. */
     busy?: boolean;
-    block?: boolean;
-    type?: "button" | "submit";
     title?: string;
   }>(),
-  { variant: "secondary", size: "md", type: "button" },
+  { variant: "secondary", size: "md" },
 );
 
 const VARIANTS: Record<Variant, string> = {
@@ -41,7 +38,7 @@ const SIZES: Record<Size, string> = {
 
 <template>
   <button
-    :type="props.type"
+    type="button"
     :disabled="props.disabled || props.loading"
     :title="props.title"
     :class="[
@@ -49,12 +46,10 @@ const SIZES: Record<Size, string> = {
       'disabled:cursor-default disabled:opacity-45',
       VARIANTS[props.variant],
       SIZES[props.size],
-      props.block ? 'w-full' : '',
     ]"
   >
     <Loader2 v-if="props.loading || props.busy" class="size-3.5 animate-spin" />
     <component :is="props.icon" v-else-if="props.icon" class="size-3.5 shrink-0" />
     <span class="truncate"><slot /></span>
-    <component :is="props.trailingIcon" v-if="props.trailingIcon" class="size-3.5 shrink-0" />
   </button>
 </template>

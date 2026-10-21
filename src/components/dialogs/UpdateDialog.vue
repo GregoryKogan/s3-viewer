@@ -7,7 +7,6 @@ import type { ModalSize } from "@/components/ui/types";
 import { useUpdatesStore } from "@/stores/updates";
 
 const props = defineProps<{
-  dialogId?: number;
   size?: ModalSize;
   resolve: (value: null) => void;
 }>();

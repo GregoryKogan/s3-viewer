@@ -75,7 +75,6 @@ onBeforeUnmount(() => {
         v-show="dialog.id === dialogs.stack[dialogs.stack.length - 1].id"
         :key="dialog.id"
         v-bind="dialog.props"
-        :dialog-id="dialog.id"
         :size="dialog.size"
       />
     </div>

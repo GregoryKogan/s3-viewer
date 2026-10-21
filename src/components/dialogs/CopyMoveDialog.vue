@@ -15,7 +15,6 @@ export interface CopyMoveResult {
 }
 
 const props = defineProps<{
-  dialogId?: number;
   size?: ModalSize;
   moveObjects: boolean;
   connections: Connection[];
