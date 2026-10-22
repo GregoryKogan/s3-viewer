@@ -86,7 +86,7 @@ const searchMessage = computed(() => {
   if (search.error) return `Search failed: ${search.error}`;
   const scanned = `${search.scanned.toLocaleString()} objects read`;
   const matches = `${search.matched.toLocaleString()} match${search.matched === 1 ? "" : "es"}`;
-  if (search.running) return `Searching every folder below · ${scanned} · ${matches} so far`;
+  if (search.running) return `Searching this folder · ${scanned} · ${matches} so far`;
   if (search.stopped) return `Search stopped · ${scanned} · ${matches} found`;
   if (search.capped) return `First ${matches} shown · ${scanned}, more may exist`;
   return `Searched ${scanned} · ${matches}`;
@@ -304,7 +304,7 @@ defineExpose({ scrollToRow, focusList, pageRows });
       </AppButton>
     </div>
 
-    <!-- A search walks the whole prefix instead of the rows on screen, so it
+    <!-- A search walks the whole folder instead of the rows on screen, so it
          reports what it has read rather than a percentage it cannot know. -->
     <div
       v-if="objects.search"
@@ -415,13 +415,13 @@ defineExpose({ scrollToRow, focusList, pageRows });
         </EmptyState>
         <EmptyState
           v-else-if="objects.search?.running"
-          title="Searching every folder below…"
+          title="Searching this folder…"
           description="Matches appear here as soon as the scan finds them."
           data-testid="empty-folder"
         />
         <EmptyState
           v-else-if="objects.search && !objects.search.running"
-          :title="`Nothing below this folder matches “${objects.search.query}”`"
+          :title="`Nothing in this folder matches “${objects.search.query}”`"
           :description="`Searched ${objects.search.scanned.toLocaleString()} objects.`"
           data-testid="empty-folder"
         >

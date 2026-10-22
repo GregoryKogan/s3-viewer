@@ -196,7 +196,7 @@ export const api = {
     invoke<ListResult>("list_objects", { input }),
   listObjectsStream: (input: { connectionId: string; prefix?: string | null; requestId: string }) =>
     invoke<void>("list_objects_stream", { input }),
-  /** Search the whole prefix below `prefix`, streaming matches as they arrive. */
+  /** Search every row of `prefix`, streaming matches as they arrive. */
   searchObjectsStream: (input: {
     connectionId: string;
     prefix?: string | null;

@@ -210,14 +210,14 @@ pub async fn list_all_entries(store: &AnyStore, prefix: &str) -> AppResult<Vec<O
 }
 
 /// How many matching rows a search hands to the UI before it stops walking. A
-/// query like `a` matches most of a bucket; the rows past this point would be
+/// query like `a` matches most of a folder; the rows past this point would be
 /// scrolled, sorted and never read.
 pub const SEARCH_MATCH_CAP: usize = 5_000;
 
-/// What a recursive search has seen so far.
+/// What a scan of one folder has seen so far.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SearchProgress {
-    /// Keys read: the honest measure of how far the scan has gone.
+    /// Rows read: the honest measure of how far the scan has gone.
     pub scanned: usize,
     /// Matching rows found, at most [`SEARCH_MATCH_CAP`].
     pub matched: usize,
@@ -225,64 +225,27 @@ pub struct SearchProgress {
     pub capped: bool,
 }
 
-/// A folder row built from a key path rather than from a common prefix.
-fn folder_row(path: &str, name: &str) -> ObjectEntry {
-    ObjectEntry {
-        key: path.to_string(),
-        name: name.to_string(),
-        is_folder: true,
-        size: 0,
-        last_modified: None,
-        etag: None,
-        storage_class: None,
-        kind: crate::model::FileKind::Folder,
-    }
+/// Whether a listed row is a match. `needle` must already be lowercase.
+///
+/// Only the name the user sees is matched: the walk is flat, so a folder in a
+/// row's key is not a row of this folder and is not a candidate.
+fn name_matches(entry: &ObjectEntry, needle: &str) -> bool {
+    entry.name.to_lowercase().contains(needle)
 }
 
-/// What one key matches: the file itself, and every folder on its way down.
-/// `needle` must already be lowercase (see [`search_folder_streaming`]).
+/// Search every row of one folder for `needle` (case-insensitive, match anywhere
+/// in a file or folder name).
 ///
-/// Folders are derived from the key's own path, not from folder-marker objects.
-/// A prefix written by an upload tool usually has no markers at all — the 380k
-/// sub-folders under `artifacts/vript/` have none — so a marker-driven search
-/// would answer "not found" for a folder that is plainly there. `folder` bounds
-/// the walk: segments above the search root are not what was searched.
-fn key_matches(entry: &ObjectEntry, needle: &str, folder: &str) -> Vec<ObjectEntry> {
-    let rest = entry.key.strip_prefix(folder).unwrap_or(&entry.key);
-    let segments: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
-    let last = segments.len().saturating_sub(1);
-    let mut found = Vec::new();
-    let mut path = folder.to_string();
-    for (index, segment) in segments.iter().enumerate() {
-        path.push_str(segment);
-        let is_the_file = index == last && !entry.is_folder;
-        if !is_the_file {
-            path.push('/');
-        }
-        if segment.to_lowercase().contains(needle) {
-            if is_the_file {
-                found.push(entry.clone());
-            } else {
-                found.push(folder_row(&path, segment));
-            }
-        }
-    }
-    found
-}
-
-/// Search every key at or below `prefix` for `needle` (case-insensitive, match
-/// anywhere in a file or folder name).
+/// Flat on purpose: the walk lists the prefix with a delimiter, so it looks at
+/// the same rows the browser shows and never descends. What it adds over the
+/// client-side filter is reach: the filter only sees what the row budget
+/// delivered, and this reads the whole folder.
 ///
-/// The client-side filter can only see the rows the row budget delivered, which
-/// is why a folder of hundreds of thousands of sub-folders cannot be searched at
-/// all. This walks the whole prefix instead, reports each S3 page through
-/// `on_page` with the running counters, and stops when the caller says so:
-/// walking away from a search must stop the scan, not leave it competing with
-/// the next one. Folder-marker keys are matched like any other key.
-///
-/// `cap` bounds the work: the walk stops as soon as it has that many rows, so a
+/// Each S3 page is reported through `on_page` with the running counters, and the
+/// walk stops when the caller says so: walking away from a search must stop the
+/// scan, not leave it competing with the next one. `cap` bounds the work, so a
 /// query that matches everything cannot spend an hour streaming a list nobody
-/// will read. `capped` then says the rows are only the beginning.
+/// will read; `capped` then says the rows are only the beginning.
 pub async fn search_folder_streaming<F, S>(
     store: &AnyStore,
     prefix: &str,
@@ -307,16 +270,16 @@ where
     let mut seen: HashSet<String> = HashSet::new();
     loop {
         let page = store
-            .list_page(&folder, None, token.as_deref(), PAGE_SIZE)
+            .list_page(&folder, Some("/"), token.as_deref(), PAGE_SIZE)
             .await?;
         progress.scanned += page.entries.len();
         let mut rows = Vec::new();
         for entry in &page.entries {
-            for hit in key_matches(entry, &needle, &folder) {
-                if seen.insert(hit.key.clone()) {
-                    progress.matched = seen.len();
-                    rows.push(hit);
-                }
+            // A provider may report a folder both as a common prefix and as a
+            // marker object; the user must see it once.
+            if name_matches(entry, &needle) && seen.insert(entry.key.clone()) {
+                progress.matched = seen.len();
+                rows.push(entry.clone());
             }
             if seen.len() >= cap {
                 progress.capped = true;
@@ -786,43 +749,18 @@ mod tests {
     }
 
     #[test]
-    fn a_search_finds_the_file_and_the_folders_on_its_path() {
-        // Nothing here has a folder-marker object, which is the shape a real
-        // upload leaves behind: the folder rows can only come from the path.
-        let key = "root/aa12bb/cc34dd/frames/101-9f.jpg";
+    fn a_search_matches_the_name_of_a_row_in_this_folder() {
+        // The walk is flat, so the row's own name is what a query is matched
+        // against: a file, and a folder the listing reports as a prefix.
+        assert!(name_matches(&entry("root/notes.txt", false), "notes"));
+        assert!(name_matches(&entry("root/frames/", true), "rame"));
 
-        let found = key_matches(&entry(key, false), "frames", "root/");
-        assert_eq!(keys(&found), vec!["root/aa12bb/cc34dd/frames/"]);
-        assert!(found[0].is_folder);
-        assert_eq!(found[0].name, "frames");
-
-        // A folder segment matches even when the file does not.
-        let found = key_matches(&entry(key, false), "cc34", "root/");
-        assert_eq!(keys(&found), vec!["root/aa12bb/cc34dd/"]);
-
-        // The file matches on its own name.
-        let found = key_matches(&entry(key, false), "9f.jpg", "root/");
-        assert_eq!(keys(&found), vec![key]);
-        assert!(!found[0].is_folder);
-    }
-
-    #[test]
-    fn a_search_does_not_reach_above_its_root() {
-        let found = key_matches(&entry("root/aa12bb/x.jpg", false), "root", "root/");
+        // A folder further up the key is not a row of this folder, and a flat
+        // walk never sees a row below it either.
         assert!(
-            found.is_empty(),
-            "segments above the search root are out of scope"
+            !name_matches(&entry("root/aa12bb/x.jpg", false), "aa12"),
+            "a search must not reach into the path of a row"
         );
-        // The same name below the root is in scope.
-        let found = key_matches(&entry("root/aa12bb/x.jpg", false), "aa12", "root/");
-        assert_eq!(keys(&found), vec!["root/aa12bb/"]);
-    }
-
-    #[test]
-    fn a_search_matches_folder_markers_too() {
-        let found = key_matches(&entry("root/aa12bb/", true), "aa12", "root/");
-        assert_eq!(keys(&found), vec!["root/aa12bb/"]);
-        assert!(found[0].is_folder);
-        assert_eq!(found[0].name, "aa12bb");
+        assert!(!name_matches(&entry("root/aa12bb/x.jpg", false), "x.jp0"));
     }
 }

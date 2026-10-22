@@ -2126,81 +2126,6 @@ const SCENARIO: &str = r#"(async () => {
         + ' and previewed it; Escape cleared the filter';
     });
 
-    await check('search: a query walks below the folder and finds a nested match', async () => {
-      // The filter only sees the rows this folder delivered, so a key one level
-      // down is invisible to it. The scan that starts on the same query has to
-      // find that key and report its progress while it walks.
-      const deep = 'e2e-deep-' + Date.now();
-      const key = __PREFIX__ + deep + '/nested-target.txt';
-      await invoke('create_file', {
-        input: {
-          connectionId,
-          prefix: __PREFIX__ + deep + '/',
-          name: 'nested-target.txt',
-          content: 'deep probe',
-        },
-      });
-      let found = '';
-      try {
-        $('[data-testid=refresh]').click();
-        await wait('the deep folder row', async () => {
-          const objects = window.__s3viewer.state.objects;
-          if (objects.loading || objects.awaitingFirstPage) return null;
-          return rowNames().includes(deep) ? true : null;
-        }, 20000);
-
-        press(document.body, 'f', { metaKey: true });
-        await frame();
-        setInput('[data-testid=filter-input]', 'nested-target');
-        // Nothing at this level carries the name, so the rows stay empty until
-        // the scan delivers. The status line is the promise that it is running.
-        await wait('the announcement of the scan', async () => {
-          const node = $('[data-testid=search-status]');
-          return node && /search(ing|ed)|stopped/i.test(node.textContent) ? true : null;
-        }, 15000);
-        found = await wait('the nested match', async () => {
-          const name = rowNames().find((text) => text === 'nested-target.txt');
-          return name || null;
-        }, 60000);
-        // The label is the base name (its tooltip carries the key), so the row
-        // that appeared has to be the key one level down, not a same-named one.
-        const row = $$('.object-row').find(
-          (node) => node.querySelector('.row-label').getAttribute('title') === key,
-        );
-        if (!row) throw new Error('the scan painted ' + found + ' from somewhere else');
-
-        // Escape drops the query and the scan rows with it, back to this folder.
-        press($('[data-testid=filter-input]'), 'Escape');
-        await wait('the filter to clear', async () => {
-          const objects = window.__s3viewer.state.objects;
-          return $('[data-testid=filter-input]').value === '' && !objects.search ? true : null;
-        }, 10000);
-        if (!rowNames().includes(deep)) {
-          throw new Error('the folder rows did not come back after the search');
-        }
-      } finally {
-        window.__s3viewer.state.objects.filter = '';
-        await invoke('delete_objects', {
-          input: { connectionId, keys: [key, __PREFIX__ + deep + '/'] },
-        });
-        await wait('S3 to forget the deep key', async () => {
-          const listing = await invoke('list_objects', {
-            input: { connectionId, prefix: __PREFIX__ },
-          });
-          return listing.entries.some((entry) => entry.key.indexOf(__PREFIX__ + deep) === 0)
-            ? null
-            : true;
-        }, 30000);
-        $('[data-testid=refresh]').click();
-        await wait('the cleanup listing', async () => {
-          const objects = window.__s3viewer.state.objects;
-          if (objects.loading || objects.awaitingFirstPage) return null;
-          return rowNames().includes(deep) ? null : true;
-        }, 20000);
-      }
-      return 'scanned below the folder and found ' + found;
-    });
-
     await check('keyboard: a filtered-out cursor is inert', async () => {
       const objects = window.__s3viewer.state.objects;
       const list = $('[data-testid=object-list]');
@@ -3175,6 +3100,28 @@ const SCENARIO: &str = r#"(async () => {
           const objects = window.__s3viewer.state.objects;
           return !objects.loading && !objects.awaitingFirstPage && fileCount() === 3 ? true : null;
         }, 30000);
+
+        // The scan reaches rows this listing never delivered: with three rows on
+        // screen, a query for a file further down the folder still finds it.
+        if (rowNames().includes('notes.txt')) {
+          throw new Error('the premise is wrong: notes.txt is inside the budget');
+        }
+        press(document.body, 'f', { metaKey: true });
+        await frame();
+        setInput('[data-testid=filter-input]', 'notes');
+        await wait('the row the budget never delivered', async () => {
+          const name = rowNames().find((text) => text === 'notes.txt');
+          return name || null;
+        }, 30000).catch((error) => {
+          throw new Error(error.message + ' :: rows=' + rowNames().join(',')
+            + ' search=' + JSON.stringify(window.__s3viewer.state.objects.search));
+        });
+        press($('[data-testid=filter-input]'), 'Escape');
+        await wait('the filter to clear', async () =>
+          ($('[data-testid=filter-input]').value === '' ? true : null), 5000);
+        if (rowNames().includes('notes.txt')) {
+          throw new Error('the scan row stayed after the query was cleared');
+        }
 
         $('[data-testid=truncation-settings]').click();
         await wait('the settings dialog from the banner', () => $('[data-testid=settings-list-limit]'), 10000);

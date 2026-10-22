@@ -519,13 +519,13 @@ export const useObjectsStore = defineStore("objects", () => {
   // ---------------------------------------------------------------- selection
 
   /**
-   * The recursive search below the current folder.
+   * The scan of the current folder, flat.
    *
    * The filter on its own can only see the rows the row budget delivered: in a
-   * folder with hundreds of thousands of sub-folders the object the user wants
-   * is never among them, and "not in the list" reads as "does not exist". So a
-   * query is also answered by scanning the whole prefix on the backend, which
-   * streams matches and a live count of the keys it has read.
+   * folder with hundreds of thousands of rows the object the user wants may be
+   * past the budget, and "not in the list" then reads as "does not exist". So a
+   * query is also answered by walking the folder on the backend, which streams
+   * matches and a live count of the rows it has read.
    */
   const search = ref<SearchState | null>(null);
   /** Rows the scan found; appended to what the local filter matched. */
@@ -541,7 +541,7 @@ export const useObjectsStore = defineStore("objects", () => {
 
   /** Typing must not start one S3 scan per keystroke. */
   const SEARCH_DEBOUNCE_MS = 500;
-  /** One character matches most of a bucket: wait for a word. */
+  /** One character matches most of a folder: wait for a word. */
   const SEARCH_MIN_CHARS = 2;
 
   /** Stop walking, but keep the rows found so far: they are worth reading. */

@@ -494,8 +494,8 @@ pub struct SearchStreamInput {
     pub connection_id: String,
     #[serde(default)]
     pub prefix: Option<String>,
-    /// What the user typed: matched case-insensitively against every file and
-    /// folder name at or below the prefix.
+    /// What the user typed: matched case-insensitively against the name of
+    /// every row in the folder.
     pub query: String,
     /// Echoed back in every event so stale listeners can be ignored. Its own id
     /// space (`search-<n>`, see the objects store): listings and scans share one
@@ -504,12 +504,13 @@ pub struct SearchStreamInput {
     pub request_id: String,
 }
 
-/// Search below a prefix, streaming matches as they are found.
+/// Search one folder, streaming matches as they are found.
 ///
 /// The client-side filter only ever sees the rows the row budget delivered, so a
-/// folder with hundreds of thousands of sub-folders cannot be searched at all.
-/// This walks the prefix instead and reports progress per S3 page: the UI paints
-/// each match as it arrives and shows how much of the prefix has been read.
+/// folder with hundreds of thousands of rows cannot be searched at all. This
+/// walks the folder instead — flat, one level, the same rows the browser shows —
+/// and reports progress per S3 page: the UI paints each match as it arrives and
+/// shows how much of the folder has been read.
 #[tauri::command]
 pub async fn search_objects_stream(
     app: AppHandle,
