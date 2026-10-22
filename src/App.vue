@@ -52,6 +52,8 @@ import type {
   ListingDoneEvent,
   ListingErrorEvent,
   ListingPageEvent,
+  SearchDoneEvent,
+  SearchPageEvent,
 } from "@/types";
 
 const ui = useUiStore();
@@ -979,6 +981,21 @@ const ipcSubscriptions: IpcSubscription[] = [
   ipcSubscription(() =>
     listen<ListingErrorEvent>("listing://error", (payload) => {
       if (objects.onListingError(payload) && connections.activeId) {
+        connections.markUnhealthy(connections.activeId, payload.error?.message);
+      }
+    }),
+  ),
+  // A search is the other half of "find this object": the rows arrive while the
+  // prefix is still being read, and it shares the listing request id space.
+  ipcSubscription(() =>
+    listen<SearchPageEvent>("search://page", (payload) => objects.onSearchPage(payload)),
+  ),
+  ipcSubscription(() =>
+    listen<SearchDoneEvent>("search://done", (payload) => objects.onSearchDone(payload)),
+  ),
+  ipcSubscription(() =>
+    listen<ListingErrorEvent>("search://error", (payload) => {
+      if (objects.onSearchError(payload) && connections.activeId) {
         connections.markUnhealthy(connections.activeId, payload.error?.message);
       }
     }),

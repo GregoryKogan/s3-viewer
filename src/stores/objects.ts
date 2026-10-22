@@ -14,6 +14,9 @@ import type {
   ListingPageEvent,
   ObjectEntry,
   PreviewData,
+  SearchDoneEvent,
+  SearchPageEvent,
+  SearchState,
 } from "@/types";
 
 export type SortKey = "name" | "size" | "modified" | "kind";
@@ -353,7 +356,10 @@ export const useObjectsStore = defineStore("objects", () => {
         // not load". Every repaint re-sorts the whole list on screen, so the
         // list doubles between paints instead of following every page: a page
         // costs six seconds, which would mean 380 re-sorts of a 380k list.
-        if (entries.value.length === 0 || staged.length >= entries.value.length * 2) {
+        if (
+          search.value === null &&
+          (entries.value.length === 0 || staged.length >= entries.value.length * 2)
+        ) {
           paintStaged();
         }
       }
@@ -371,9 +377,12 @@ export const useObjectsStore = defineStore("objects", () => {
       refreshing.value = false;
     }
     if (event.requestId !== String(listingRequest)) return false;
-    entries.value = staged;
+    // While a search owns the list, the folder's rows are not what is on screen:
+    // replacing them would make the matches vanish mid-scan.
+    const painted = search.value === null;
+    if (painted) entries.value = staged;
+    listed.value = staged.length;
     staged = [];
-    listed.value = entries.value.length;
     loading.value = false;
     awaitingFirstPage.value = false;
     truncated.value = event.truncated;
@@ -381,7 +390,7 @@ export const useObjectsStore = defineStore("objects", () => {
     prefix.value = event.prefix ?? prefix.value;
 
     const owner = sessionCacheOwner;
-    if (owner && !droppedRevalidation) {
+    if (owner && !droppedRevalidation && painted) {
       cache.set(listingCacheKey(owner, prefix.value), {
         entries: entries.value,
         truncated: event.truncated,
@@ -472,6 +481,7 @@ export const useObjectsStore = defineStore("objects", () => {
   function close() {
     if (loading.value || revalidating)
       void api.cancelListing(String(listingRequest)).catch(() => {});
+    cancelSearch();
     listingRequest += 1;
     prefix.value = "";
     sessionConnectionId.value = null;
@@ -508,11 +518,145 @@ export const useObjectsStore = defineStore("objects", () => {
 
   // ---------------------------------------------------------------- selection
 
+  /**
+   * The recursive search below the current folder.
+   *
+   * The filter on its own can only see the rows the row budget delivered: in a
+   * folder with hundreds of thousands of sub-folders the object the user wants
+   * is never among them, and "not in the list" reads as "does not exist". So a
+   * query is also answered by scanning the whole prefix on the backend, which
+   * streams matches and a live count of the keys it has read.
+   */
+  const search = ref<SearchState | null>(null);
+  /** Rows the scan found; appended to what the local filter matched. */
+  const searchEntries = ref<ObjectEntry[]>([]);
+  let searchRequest = 0;
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Typing must not start one S3 scan per keystroke. */
+  const SEARCH_DEBOUNCE_MS = 500;
+  /** One character matches most of a bucket: wait for a word. */
+  const SEARCH_MIN_CHARS = 2;
+
+  /** Stop walking, but keep the rows found so far: they are worth reading. */
+  function stopSearch() {
+    const state = search.value;
+    if (!state?.running) return;
+    void api.cancelListing(String(searchRequest)).catch(() => {});
+    state.running = false;
+    state.stopped = true;
+  }
+
+  /** Drop the scan: its rows answer a query nobody is asking any more. */
+  function cancelSearch() {
+    if (searchTimer) {
+      clearTimeout(searchTimer);
+      searchTimer = undefined;
+    }
+    if (search.value?.running) {
+      void api.cancelListing(String(searchRequest)).catch(() => {});
+    }
+    search.value = null;
+    searchEntries.value = [];
+  }
+
+  function startSearch(query: string) {
+    const connection = useConnectionsStore().active;
+    if (!connection) return;
+    searchRequest += 1;
+    const requestId = String(searchRequest);
+    search.value = {
+      query,
+      running: true,
+      scanned: 0,
+      matched: 0,
+      capped: false,
+      stopped: false,
+      error: null,
+    };
+    searchEntries.value = [];
+    void api
+      .searchObjectsStream({
+        connectionId: connection.id,
+        prefix: prefix.value,
+        query,
+        requestId,
+      })
+      .catch((failure) => {
+        // The event usually lands first and carries the service message; a bare
+        // rejection must not leave the banner saying "searching" forever.
+        const state = search.value;
+        if (!state || requestId !== String(searchRequest) || state.error || state.stopped) return;
+        state.running = false;
+        state.error = (failure as Error)?.message ?? "The search failed.";
+      });
+  }
+
+  /**
+   * Every query change restarts the scan: the previous rows answer different
+   * text, and leaving the old S3 walk running competes with the new one.
+   */
+  watch(filter, (value) => {
+    cancelSearch();
+    const needle = value.trim();
+    if (needle.length < SEARCH_MIN_CHARS || !useConnectionsStore().active) return;
+    searchTimer = setTimeout(() => {
+      searchTimer = undefined;
+      startSearch(needle);
+    }, SEARCH_DEBOUNCE_MS);
+  });
+
+  function onSearchPage(event: SearchPageEvent) {
+    const state = search.value;
+    if (!state || event.requestId !== String(searchRequest)) return;
+    state.scanned = event.scanned;
+    state.matched = event.matched;
+    state.capped = event.capped;
+    if (event.entries?.length) searchEntries.value = searchEntries.value.concat(event.entries);
+  }
+
+  function onSearchDone(event: SearchDoneEvent) {
+    const state = search.value;
+    if (!state || event.requestId !== String(searchRequest)) return;
+    state.running = false;
+    // A stop that lost the race still ends in a complete scan.
+    state.stopped = false;
+    state.scanned = event.scanned;
+    state.matched = event.matched;
+    state.capped = event.capped;
+  }
+
+  /** Returns false when the event belongs to a superseded search. */
+  function onSearchError(event: ListingErrorEvent): boolean {
+    const state = search.value;
+    if (!state || event.requestId !== String(searchRequest)) return false;
+    // Stopping is the user's own doing: the rows found so far stay on screen and
+    // a connection is not marked unhealthy because someone pressed Stop.
+    if (state.stopped) return false;
+    state.running = false;
+    state.error = event.error?.message ?? "The search failed.";
+    return true;
+  }
+
+  /** Scan rows are extra rows: the ones already on screen stay where they are. */
+  function withSearchRows(local: ObjectEntry[]): ObjectEntry[] {
+    if (!search.value || searchEntries.value.length === 0) return local;
+    const seen = new Set(local.map((entry) => entry.key));
+    const merged = local.slice();
+    for (const entry of searchEntries.value) {
+      if (seen.has(entry.key)) continue;
+      seen.add(entry.key);
+      merged.push(entry);
+    }
+    return merged;
+  }
+
   const visibleEntries = computed(() => {
     const needle = filter.value.trim().toLowerCase();
-    const matched = needle
+    const local = needle
       ? entries.value.filter((entry) => entry.name.toLowerCase().includes(needle))
       : entries.value.slice();
+    const matched = withSearchRows(local);
 
     const direction = sortAscending.value ? 1 : -1;
     const key = sortKey.value;
@@ -780,6 +924,7 @@ export const useObjectsStore = defineStore("objects", () => {
     focusedKey,
     selectionAnchor,
     filter,
+    search,
     sortKey,
     sortAscending,
     preview,
@@ -800,6 +945,11 @@ export const useObjectsStore = defineStore("objects", () => {
     onListingPage,
     onListingDone,
     onListingError,
+    onSearchPage,
+    onSearchDone,
+    onSearchError,
+    cancelSearch,
+    stopSearch,
     navigate,
     navigateUp,
     close,

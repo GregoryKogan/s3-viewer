@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createPinia, setActivePinia } from "pinia";
+import { nextTick } from "vue";
 import { loadTs } from "./loadTs.mjs";
 
 const { api, ApiError } = await loadTs("src/lib/ipc.ts");
@@ -15,6 +16,9 @@ api.cancelListing = (requestId) => {
   cancelledListings.push(requestId);
   return Promise.resolve();
 };
+
+/** Scans never reach the backend by default; a search test overrides this. */
+api.searchObjectsStream = () => Promise.resolve();
 
 /**
  * The minimal shape `loadFolder` touches. The store reads the id and the scope
@@ -704,4 +708,285 @@ test("walking away from a folder stops the scan still running behind it", async 
 
   listing.release();
   await second;
+});
+
+
+/** Type into the filter and let the debounced scan start. */
+async function typeQuery(objects, t, text) {
+  objects.filter = text;
+  // The store watches the filter, and a watcher flushes on the microtask queue.
+  await nextTick();
+  t.mock.timers.tick(500);
+}
+
+/** A scan the test drives page by page, so the streaming window is observable. */
+function pendingSearch() {
+  const started = [];
+  api.searchObjectsStream = (input) => {
+    started.push(input);
+    return new Promise(() => {});
+  };
+  return { started };
+}
+
+/** One folder row, the shape the backend builds from a key path. */
+function folderEntry(key) {
+  const name = key.replace(/\/$/, "").split("/").pop();
+  return { key, name, isFolder: true, size: 0, kind: "folder" };
+}
+
+test("a query searches every folder below, not just the rows on screen", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { objects } = seed("a");
+  const search = pendingSearch();
+  streamListing(objects, [objectEntry("huge/local.txt")]);
+  await objects.loadFolder("huge/");
+
+  // The row budget never delivered the folder the user is after; the filter
+  // alone would answer "no matches" after 500 ms of typing.
+  await typeQuery(objects, t, "fram");
+
+  assert.equal(search.started.length, 1);
+  assert.equal(search.started[0].prefix, "huge/");
+  assert.equal(search.started[0].query, "fram");
+  const requestId = search.started[0].requestId;
+
+  // The first page arrives while the scan has read 12 000 keys: the row paints
+  // and the counters move, without waiting for the end of the walk.
+  objects.onSearchPage({
+    requestId,
+    prefix: "huge/",
+    entries: [folderEntry("huge/aa12bb/cc34dd/frames/")],
+    scanned: 12_000,
+    matched: 1,
+    capped: false,
+  });
+  assert.equal(objects.search.scanned, 12_000);
+  assert.equal(objects.search.matched, 1);
+  assert.equal(objects.search.running, true);
+  assert.deepEqual(
+    objects.visibleEntries.map((entry) => entry.key),
+    ["huge/aa12bb/cc34dd/frames/"],
+  );
+
+  objects.onSearchDone({
+    requestId,
+    prefix: "huge/",
+    query: "fram",
+    scanned: 380_000,
+    matched: 1,
+    capped: false,
+  });
+  assert.equal(objects.search.running, false);
+  assert.equal(objects.search.scanned, 380_000);
+  // The painted row survives the end of the scan.
+  assert.equal(objects.visibleEntries.length, 1);
+});
+
+test("a search row already on screen is not painted twice", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { objects } = seed("a");
+  const search = pendingSearch();
+  // The filter already matched this folder in the rows that were delivered; the
+  // scan finds it again and a second copy in the list would double every action.
+  streamListing(objects, [folderEntry("huge/frames/")]);
+  await objects.loadFolder("huge/");
+
+  await typeQuery(objects, t, "frames");
+  objects.onSearchPage({
+    requestId: search.started[0].requestId,
+    prefix: "huge/",
+    entries: [folderEntry("huge/frames/"), folderEntry("huge/x/frames/")],
+    scanned: 1_000,
+    matched: 2,
+    capped: false,
+  });
+
+  assert.deepEqual(
+    objects.visibleEntries.map((entry) => entry.key),
+    ["huge/frames/", "huge/x/frames/"],
+  );
+});
+
+test("changing the query stops the scan the old text started", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { objects } = seed("a");
+  const search = pendingSearch();
+  streamListing(objects, [objectEntry("huge/local.txt")]);
+  await objects.loadFolder("huge/");
+  cancelledListings.length = 0;
+
+  await typeQuery(objects, t, "fram");
+  const first = search.started[0].requestId;
+
+  await typeQuery(objects, t, "vript");
+
+  assert.deepEqual(cancelledListings, [first]);
+  assert.equal(search.started.length, 2);
+  assert.equal(search.started[1].query, "vript");
+  // The old text's rows answer a question nobody is asking any more.
+  assert.deepEqual(objects.visibleEntries.map((entry) => entry.key), []);
+  assert.equal(objects.search.matched, 0);
+});
+
+test("clearing the filter drops the rows the scan found", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { objects } = seed("a");
+  const search = pendingSearch();
+  streamListing(objects, [objectEntry("huge/local.txt")]);
+  await objects.loadFolder("huge/");
+
+  await typeQuery(objects, t, "frames");
+  const requestId = search.started[0].requestId;
+  objects.onSearchPage({
+    requestId,
+    prefix: "huge/",
+    entries: [folderEntry("huge/aa12bb/frames/")],
+    scanned: 500,
+    matched: 1,
+    capped: false,
+  });
+  assert.equal(objects.visibleEntries.length, 1);
+
+  objects.filter = "";
+  await nextTick();
+  assert.equal(objects.search, null);
+  assert.deepEqual(
+    objects.visibleEntries.map((entry) => entry.key),
+    ["huge/local.txt"],
+  );
+
+  // A page that arrives after the user walked away must not paint anything.
+  objects.onSearchPage({
+    requestId,
+    prefix: "huge/",
+    entries: [folderEntry("huge/aa12bb/frames/")],
+    scanned: 900,
+    matched: 2,
+    capped: false,
+  });
+  assert.equal(objects.visibleEntries.length, 1);
+});
+
+test("a one-letter query filters the rows on screen without scanning the bucket", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { objects } = seed("a");
+  const search = pendingSearch();
+  streamListing(objects, [objectEntry("huge/alpha.txt"), objectEntry("huge/beta.txt")]);
+  await objects.loadFolder("huge/");
+
+  await typeQuery(objects, t, "a");
+  t.mock.timers.tick(4_500);
+
+  assert.equal(search.started.length, 0);
+  assert.equal(objects.search, null);
+  assert.deepEqual(
+    objects.visibleEntries.map((entry) => entry.key),
+    ["huge/alpha.txt", "huge/beta.txt"],
+  );
+});
+
+test("a folder listing that finishes after a search keeps the matches on screen", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { objects } = seed("a");
+  const listing = pendingListing();
+  const search = pendingSearch();
+  const loading = objects.loadFolder("huge/");
+
+  await typeQuery(objects, t, "frames");
+  const requestId = search.started[0].requestId;
+  objects.onSearchPage({
+    requestId,
+    prefix: "huge/",
+    entries: [folderEntry("huge/a/frames/")],
+    scanned: 10,
+    matched: 1,
+    capped: false,
+  });
+
+  // The folder keeps streaming behind the scan: its pages and its final `done`
+  // must not wipe the rows the user is reading.
+  objects.onListingPage({
+    requestId: listing.started[0].requestId,
+    prefix: "huge/",
+    entries: [objectEntry("huge/a.txt")],
+    total: 1,
+    done: false,
+  });
+  objects.onListingDone({
+    requestId: listing.started[0].requestId,
+    prefix: "huge/",
+    total: 1,
+    files: 1,
+    truncated: false,
+    warning: null,
+  });
+
+  assert.deepEqual(
+    objects.visibleEntries.map((entry) => entry.key),
+    ["huge/a/frames/"],
+  );
+
+  listing.release();
+  await loading;
+});
+
+test("stopping a scan keeps the matches it already found", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { objects } = seed("a");
+  const search = pendingSearch();
+  streamListing(objects, [objectEntry("huge/local.txt")]);
+  await objects.loadFolder("huge/");
+  cancelledListings.length = 0;
+
+  await typeQuery(objects, t, "frames");
+  const requestId = search.started[0].requestId;
+  objects.onSearchPage({
+    requestId,
+    prefix: "huge/",
+    entries: [folderEntry("huge/a/frames/")],
+    scanned: 900,
+    matched: 1,
+    capped: false,
+  });
+
+  objects.stopSearch();
+  assert.deepEqual(cancelledListings, [requestId]);
+  assert.equal(objects.search.running, false);
+  assert.equal(objects.search.stopped, true);
+
+  // Stopping unwinds as a cancelled S3 walk, which arrives as an error event.
+  // It is the user's own doing: no red banner, no unhealthy connection.
+  assert.equal(
+    objects.onSearchError({ requestId, error: { message: "the search was cancelled" } }),
+    false,
+  );
+  assert.equal(objects.search.error, null);
+  assert.deepEqual(
+    objects.visibleEntries.map((entry) => entry.key),
+    ["huge/a/frames/"],
+  );
+});
+
+test("a search that fails says so instead of pretending to be running", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { objects } = seed("a");
+  const search = pendingSearch();
+  streamListing(objects, [objectEntry("huge/local.txt")]);
+  await objects.loadFolder("huge/");
+
+  await typeQuery(objects, t, "frames");
+  const requestId = search.started[0].requestId;
+
+  assert.equal(
+    objects.onSearchError({ requestId, error: { message: "Access denied." } }),
+    true,
+  );
+  assert.equal(objects.search.running, false);
+  assert.equal(objects.search.error, "Access denied.");
+  // A failure of a superseded scan is not this one's problem.
+  assert.equal(
+    objects.onSearchError({ requestId: "0", error: { message: "gone" } }),
+    false,
+  );
 });

@@ -488,6 +488,108 @@ pub async fn list_objects_stream(
     Ok(())
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchStreamInput {
+    pub connection_id: String,
+    #[serde(default)]
+    pub prefix: Option<String>,
+    /// What the user typed: matched case-insensitively against every file and
+    /// folder name at or below the prefix.
+    pub query: String,
+    /// Echoed back in every event so stale listeners can be ignored. The same id
+    /// space as listings, so `cancel_listing` stops a search too.
+    pub request_id: String,
+}
+
+/// Search below a prefix, streaming matches as they are found.
+///
+/// The client-side filter only ever sees the rows the row budget delivered, so a
+/// folder with hundreds of thousands of sub-folders cannot be searched at all.
+/// This walks the prefix instead and reports progress per S3 page: the UI paints
+/// each match as it arrives and shows how much of the prefix has been read.
+#[tauri::command]
+pub async fn search_objects_stream(
+    app: AppHandle,
+    app_state: State<'_, Arc<AppCore>>,
+    input: SearchStreamInput,
+) -> CmdResult<()> {
+    let core = app_state.inner();
+    let conn = core.connection(&input.connection_id).map_err(err)?;
+    let show_system = core.settings().show_system_objects;
+    let prefix = match input.prefix.clone() {
+        Some(p) => as_folder_prefix(&p),
+        None => as_folder_prefix(&conn.prefix),
+    };
+    let query = input.query.trim().to_string();
+    core.mark_used(&input.connection_id);
+    let store = core.client(&input.connection_id).map_err(err)?;
+
+    let request_id = input.request_id.clone();
+    let live = register_listing(&request_id);
+
+    let emit = |event: &str, payload: serde_json::Value| {
+        let _ = app.emit(event, payload);
+    };
+
+    let result = {
+        let app = app.clone();
+        let request = request_id.clone();
+        let prefix_for_pages = prefix.clone();
+        let live = live.clone();
+        objects::search_folder_streaming(
+            &store,
+            &prefix,
+            &query,
+            objects::SEARCH_MATCH_CAP,
+            |mut rows, progress| {
+                if !show_system {
+                    rows.retain(|entry| !is_system_entry(entry));
+                }
+                let _ = app.emit(
+                    "search://page",
+                    serde_json::json!({
+                        "requestId": request,
+                        "prefix": prefix_for_pages,
+                        "entries": rows,
+                        "scanned": progress.scanned,
+                        "matched": progress.matched,
+                        "capped": progress.capped,
+                    }),
+                );
+            },
+            || live.load(Ordering::Relaxed),
+        )
+        .await
+    };
+
+    let progress = match result {
+        Ok(progress) => progress,
+        Err(e) => {
+            release_listing(&request_id);
+            let payload = ErrorPayload::from(&e);
+            let _ = app.emit(
+                "search://error",
+                serde_json::json!({ "requestId": input.request_id, "error": payload }),
+            );
+            return Err(payload);
+        }
+    };
+    release_listing(&request_id);
+    emit(
+        "search://done",
+        serde_json::json!({
+            "requestId": request_id,
+            "prefix": prefix,
+            "query": query,
+            "scanned": progress.scanned,
+            "matched": progress.matched,
+            "capped": progress.capped,
+        }),
+    );
+    Ok(())
+}
+
 fn truncation_warning(truncated: bool, limit: usize) -> Option<String> {
     truncated.then(|| {
         format!(

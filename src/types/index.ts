@@ -243,6 +243,42 @@ export interface ListingErrorEvent {
   };
 }
 
+// -------------------------------------------------------------- search stream
+
+/**
+ * A recursive search below the current folder. `scanned` is the only progress
+ * signal S3 can give: there is no total to measure against, so the UI shows how
+ * much has been read instead of a percentage.
+ */
+export interface SearchState {
+  query: string;
+  running: boolean;
+  scanned: number;
+  matched: number;
+  /** The backend stopped delivering rows: more matches exist than are shown. */
+  capped: boolean;
+  /** The user stopped the scan: the numbers describe part of the prefix. */
+  stopped: boolean;
+  error: string | null;
+}
+
+export interface SearchPageEvent {
+  requestId: string;
+  prefix: string;
+  entries: ObjectEntry[];
+  scanned: number;
+  matched: number;
+  capped: boolean;
+}
+
+export interface SearchDoneEvent {
+  requestId: string;
+  prefix: string;
+  query: string;
+  scanned: number;
+  matched: number;
+  capped: boolean;
+}
 /**
  * The detail half of a failure, as the error notices render it: hints, the
  * service code and the S3 request id.

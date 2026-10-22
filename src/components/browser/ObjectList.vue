@@ -75,6 +75,23 @@ const truncationMessage = computed(
   () => objects.warning ?? "Only the first objects are shown.",
 );
 
+/**
+ * What the search banner says. S3 cannot report how many keys a prefix holds, so
+ * there is no percentage to show; the number of keys already read is the honest
+ * progress, and it moves on every page.
+ */
+const searchMessage = computed(() => {
+  const search = objects.search;
+  if (!search) return "";
+  if (search.error) return `Search failed: ${search.error}`;
+  const scanned = `${search.scanned.toLocaleString()} objects read`;
+  const matches = `${search.matched.toLocaleString()} match${search.matched === 1 ? "" : "es"}`;
+  if (search.running) return `Searching every folder below · ${scanned} · ${matches} so far`;
+  if (search.stopped) return `Search stopped · ${scanned} · ${matches} found`;
+  if (search.capped) return `First ${matches} shown · ${scanned}, more may exist`;
+  return `Searched ${scanned} · ${matches}`;
+});
+
 const totalHeight = computed(() => rows.value.length * ROW_HEIGHT);
 
 /** Only the rows inside the viewport (plus overscan) are ever rendered. */
@@ -287,6 +304,37 @@ defineExpose({ scrollToRow, focusList, pageRows });
       </AppButton>
     </div>
 
+    <!-- A search walks the whole prefix instead of the rows on screen, so it
+         reports what it has read rather than a percentage it cannot know. -->
+    <div
+      v-if="objects.search"
+      class="flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-inset/60 px-3.5 py-1.5"
+      role="status"
+      data-testid="search-status"
+    >
+      <div class="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-hover">
+        <div
+          class="h-full w-1/3 rounded-full bg-accent"
+          :class="objects.search.running ? 'animate-pulse' : 'w-full opacity-60'"
+        />
+      </div>
+      <p
+        class="min-w-0 flex-1 text-meta leading-relaxed"
+        :class="objects.search.error ? 'text-danger' : 'text-muted'"
+      >
+        {{ searchMessage }}
+      </p>
+      <AppButton
+        v-if="objects.search.running"
+        variant="ghost"
+        size="sm"
+        data-testid="search-stop"
+        @click="objects.stopSearch()"
+      >
+        Stop
+      </AppButton>
+    </div>
+
     <div
       class="grid shrink-0 items-center gap-1.5 border-b border-line px-3.5 text-meta tracking-wide text-subtle uppercase"
       :style="{ gridTemplateColumns: gridTemplate }"
@@ -365,6 +413,18 @@ defineExpose({ scrollToRow, focusList, pageRows });
             class="w-full text-left"
           />
         </EmptyState>
+        <EmptyState
+          v-else-if="objects.search?.running"
+          title="Searching every folder below…"
+          description="Matches appear here as soon as the scan finds them."
+          data-testid="empty-folder"
+        />
+        <EmptyState
+          v-else-if="objects.search && !objects.search.running"
+          :title="`Nothing below this folder matches “${objects.search.query}”`"
+          :description="`Searched ${objects.search.scanned.toLocaleString()} objects.`"
+          data-testid="empty-folder"
+        />
         <EmptyState
           v-else-if="objects.filter"
           title="Nothing matches the filter"

@@ -65,6 +65,7 @@ pub fn run() {
             commands::detect_capabilities,
             commands::list_objects,
             commands::list_objects_stream,
+            commands::search_objects_stream,
             commands::cancel_listing,
             commands::get_preview,
             commands::object_meta,

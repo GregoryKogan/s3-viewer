@@ -196,7 +196,14 @@ export const api = {
     invoke<ListResult>("list_objects", { input }),
   listObjectsStream: (input: { connectionId: string; prefix?: string | null; requestId: string }) =>
     invoke<void>("list_objects_stream", { input }),
-  /** Stop a listing whose rows nobody is looking at any more. */
+  /** Search the whole prefix below `prefix`, streaming matches as they arrive. */
+  searchObjectsStream: (input: {
+    connectionId: string;
+    prefix?: string | null;
+    query: string;
+    requestId: string;
+  }) => invoke<void>("search_objects_stream", { input }),
+  /** Stop a listing (or a search) whose rows nobody is looking at any more. */
   cancelListing: (requestId: string) => invoke<void>("cancel_listing", { requestId }),
   getPreview: (input: { connectionId: string; key: string; kindHint?: string | null }) =>
     invoke<PreviewData>("get_preview", { input }),
