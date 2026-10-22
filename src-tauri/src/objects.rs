@@ -37,52 +37,43 @@ pub struct ListingPage {
     pub truncated: bool,
 }
 
-/// One S3 page fitted into the remaining file budget.
+/// One S3 page fitted into the remaining row budget.
 struct FittedPage {
     entries: Vec<ObjectEntry>,
-    /// File budget left after this page.
-    remaining_files: usize,
+    /// Row budget left after this page.
+    remaining_rows: usize,
     /// The caller must not request another page.
     is_last: bool,
-    /// The listing is incomplete: a file was dropped or pages were left unread.
+    /// The listing is incomplete: a row was dropped or pages were left unread.
     truncated: bool,
 }
 
-/// Fit one S3 page into the remaining file budget.
+/// Fit one S3 page into the remaining row budget.
 ///
-/// Folders never consume the budget and keep their original positions, even
-/// after the budget is exhausted. Files past the budget are dropped. When
-/// `has_more_pages` is true and the budget is spent — a file had to be dropped,
-/// or exactly `remaining` files were emitted — no further page is requested, so
-/// `is_last` is set and `truncated` records that the listing is incomplete.
-/// `already_truncated` carries the flag across pages, although a page that sets
-/// it is always the last one.
+/// Every row costs one, folders and files alike. Folders used to be free, which
+/// sounds kind and is why a prefix with hundreds of thousands of sub-folders
+/// never stopped being read: no number of folders could ever spend the budget.
+/// The budget exists to stop that read and say so, so rows past it are dropped.
+/// When `has_more_pages` is true and the budget is spent — a row had to be
+/// dropped, or exactly `remaining` rows were emitted — no further page is
+/// requested, so `is_last` is set and `truncated` records that the listing is
+/// incomplete. `already_truncated` carries the flag across pages, although a
+/// page that sets it is always the last one.
 fn fit_page(
     entries: Vec<ObjectEntry>,
     remaining: usize,
     has_more_pages: bool,
     already_truncated: bool,
 ) -> FittedPage {
-    let mut kept_files = 0usize;
-    let mut dropped_file = false;
-    let mut fitted = Vec::with_capacity(entries.len());
-    for entry in entries {
-        if entry.is_folder {
-            fitted.push(entry);
-        } else if kept_files < remaining {
-            kept_files += 1;
-            fitted.push(entry);
-        } else {
-            dropped_file = true;
-        }
-    }
-    let remaining_files = remaining - kept_files;
-    let budget_spent = dropped_file || remaining_files == 0;
+    let dropped = entries.len() > remaining;
+    let entries: Vec<ObjectEntry> = entries.into_iter().take(remaining).collect();
+    let remaining_rows = remaining - entries.len();
+    let budget_spent = dropped || remaining_rows == 0;
     FittedPage {
-        entries: fitted,
-        remaining_files,
+        entries,
+        remaining_rows,
         is_last: !has_more_pages || budget_spent,
-        truncated: already_truncated || dropped_file || (has_more_pages && remaining_files == 0),
+        truncated: already_truncated || dropped || (has_more_pages && remaining_rows == 0),
     }
 }
 
@@ -107,17 +98,15 @@ fn drop_self_marker(entries: Vec<ObjectEntry>, folder: &str) -> Vec<ObjectEntry>
 ///
 /// The caller receives every page as soon as S3 returns it, which is what lets
 /// the UI paint results while a large prefix is still being read. `limit` is a
-/// budget for *files*, not rows: folders never consume it, and every folder on a
-/// delivered page is kept in its original position, since a prefix full of
-/// sub-folders must not eat the budget meant for files. Once the budget is spent
-/// — a file would be dropped, or exactly `limit` files were emitted and S3 has
-/// another page — the stream stops requesting pages, and the final emitted page
-/// reports `truncated` and `is_last`. Folders that only exist on the unrequested
-/// pages are therefore not delivered; stopping is what bounds the listing.
+/// budget for delivered *rows*: folders and files both spend it, so a prefix of
+/// hundreds of thousands of sub-folders stops being read once the budget is
+/// spent instead of streaming for half an hour. The final emitted page then
+/// reports `truncated` and `is_last`, and rows that only exist on the
+/// unrequested pages are not delivered; stopping is what bounds the listing.
 ///
-/// `limit == 0` means "no files, folders only". The settings UI clamps the
-/// field to at least 200 and maps a blank or zero value back to the default, so
-/// 0 only comes from a hand-edited config.
+/// `limit == 0` delivers nothing. The settings UI clamps the field to at least
+/// 200 and maps a blank or zero value back to the default, so 0 only comes from
+/// a hand-edited config.
 ///
 /// `on_page` returns whether to keep going. A prefix with hundreds of thousands
 /// of sub-folders takes tens of minutes to walk, so a caller whose rows nobody
@@ -151,11 +140,11 @@ where
         let fitted = fit_page(page_entries, remaining, next_token.is_some(), truncated);
         let FittedPage {
             entries,
-            remaining_files,
+            remaining_rows,
             is_last,
             truncated: page_truncated,
         } = fitted;
-        remaining = remaining_files;
+        remaining = remaining_rows;
         truncated = page_truncated;
         let keep_going = on_page(ListingPage {
             entries,
@@ -512,37 +501,26 @@ mod tests {
     }
 
     #[test]
-    fn page_fit_keeps_folders_and_caps_files() {
-        // Three folders and ten files. `f2/` and `f3/` sort after files, so they
-        // only survive if folders are exempt from the file budget.
+    fn page_fit_caps_rows_and_keeps_their_order() {
+        // Folders count like files now, so the page is cut where the budget
+        // ends and the rest of the prefix is never requested.
         let page = vec![
             entry("f1/", true),
             entry("a.png", false),
             entry("b.png", false),
             entry("f2/", true),
             entry("c.png", false),
-            entry("d.png", false),
-            entry("e.png", false),
-            entry("f3/", true),
-            entry("f.png", false),
-            entry("g.png", false),
-            entry("h.png", false),
-            entry("i.png", false),
-            entry("j.png", false),
         ];
 
         let fitted = fit_page(page, 3, true, false);
 
-        assert_eq!(
-            keys(&fitted.entries),
-            vec!["f1/", "a.png", "b.png", "f2/", "c.png", "f3/"]
-        );
-        assert_eq!(fitted.remaining_files, 0);
+        assert_eq!(keys(&fitted.entries), vec!["f1/", "a.png", "b.png"]);
+        assert_eq!(fitted.remaining_rows, 0);
         assert!(
             fitted.is_last,
             "the budget is spent, so no next page may be requested"
         );
-        assert!(fitted.truncated, "seven files were dropped");
+        assert!(fitted.truncated, "two rows were dropped");
     }
 
     #[test]
@@ -557,12 +535,12 @@ mod tests {
 
         let fitted = fit_page(page.clone(), 10, false, false);
         assert_eq!(fitted.entries.len(), 5);
-        assert_eq!(fitted.remaining_files, 7);
+        assert_eq!(fitted.remaining_rows, 5);
         assert!(fitted.is_last, "there is no next S3 page");
         assert!(!fitted.truncated);
 
         let more = fit_page(page, 10, true, false);
-        assert_eq!(more.remaining_files, 7);
+        assert_eq!(more.remaining_rows, 5);
         assert!(
             !more.is_last,
             "budget remains, so the next page is requested"
@@ -581,7 +559,7 @@ mod tests {
         };
 
         let more = fit_page(page(), 3, true, false);
-        assert_eq!(more.remaining_files, 0);
+        assert_eq!(more.remaining_rows, 0);
         assert!(more.is_last);
         assert!(
             more.truncated,
@@ -597,7 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn folders_after_the_file_budget_are_still_delivered() {
+    fn folders_after_the_budget_are_dropped() {
         let page = vec![
             entry("a.png", false),
             entry("b.png", false),
@@ -607,12 +585,13 @@ mod tests {
 
         let fitted = fit_page(page, 1, true, false);
 
-        assert_eq!(keys(&fitted.entries), vec!["a.png", "z1/", "z2/"]);
+        assert_eq!(keys(&fitted.entries), vec!["a.png"]);
+        assert!(fitted.is_last);
         assert!(fitted.truncated);
     }
 
     #[test]
-    fn zero_limit_emits_folders_only() {
+    fn zero_limit_emits_nothing() {
         let page = vec![
             entry("a.png", false),
             entry("f1/", true),
@@ -622,10 +601,10 @@ mod tests {
 
         let fitted = fit_page(page, 0, true, false);
 
-        assert_eq!(keys(&fitted.entries), vec!["f1/", "f2/"]);
-        assert_eq!(fitted.remaining_files, 0);
+        assert!(fitted.entries.is_empty());
+        assert_eq!(fitted.remaining_rows, 0);
         assert!(fitted.is_last);
-        assert!(fitted.truncated, "files were dropped");
+        assert!(fitted.truncated, "rows were dropped");
     }
 
     #[test]
@@ -647,18 +626,18 @@ mod tests {
     }
 
     #[test]
-    fn file_budget_is_shared_across_pages() {
+    fn row_budget_is_shared_across_pages() {
         let first = fit_page(
             vec![
                 entry("a.png", false),
                 entry("b.png", false),
                 entry("f1/", true),
             ],
-            3,
+            4,
             true,
             false,
         );
-        assert_eq!(first.remaining_files, 1);
+        assert_eq!(first.remaining_rows, 1);
         assert!(!first.is_last);
         assert!(!first.truncated);
 
@@ -668,13 +647,13 @@ mod tests {
                 entry("d.png", false),
                 entry("f2/", true),
             ],
-            first.remaining_files,
+            first.remaining_rows,
             false,
             first.truncated,
         );
 
-        assert_eq!(keys(&second.entries), vec!["c.png", "f2/"]);
+        assert_eq!(keys(&second.entries), vec!["c.png"]);
         assert!(second.is_last);
-        assert!(second.truncated, "only three files fit across both pages");
+        assert!(second.truncated, "only four rows fit across both pages");
     }
 }

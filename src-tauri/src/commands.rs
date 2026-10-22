@@ -490,7 +490,9 @@ pub async fn list_objects_stream(
 
 fn truncation_warning(truncated: bool, limit: usize) -> Option<String> {
     truncated.then(|| {
-        format!("Listing truncated at {limit} objects. Open a sub-folder or narrow the prefix.")
+        format!(
+            "Listing truncated at {limit} objects. Raise the limit in Settings, or open a sub-folder."
+        )
     })
 }
 

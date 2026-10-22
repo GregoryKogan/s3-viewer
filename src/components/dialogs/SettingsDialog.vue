@@ -213,7 +213,10 @@ function onEnter(event: KeyboardEvent) {
         Browsing
       </legend>
       <div class="grid grid-cols-2 gap-3">
-        <AppField label="Objects loaded per folder" hint="A safety cap for very large prefixes.">
+        <AppField
+          label="Rows loaded per folder"
+          hint="Folders and files both count. A larger folder stops here and says so."
+        >
           <input
             v-model.number="form.listPageLimit"
             type="number"
