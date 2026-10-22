@@ -2065,7 +2065,9 @@ const SCENARIO: &str = r#"(async () => {
       setInput('[data-testid=filter-input]', 'zzz-no-match');
       await wait('the no-match state', () => $('[data-testid=clear-filter]'), 10000);
       const emptyText = $('[data-testid=empty-folder]').textContent;
-      if (!/nothing matches the filter/i.test(emptyText)) {
+      // The filter narrows the rows that were delivered; the store also scans
+      // below the folder, so the empty state may speak for the whole prefix.
+      if (!/nothing (matches the filter|below this folder matches)/i.test(emptyText)) {
         throw new Error('the no-match state reads: ' + emptyText.slice(0, 80));
       }
       $('[data-testid=clear-filter]').click();
@@ -2122,6 +2124,81 @@ const SCENARIO: &str = r#"(async () => {
       if ($$('.object-row').length < 12) throw new Error('the filter did not come back off');
       return '↓ landed on ' + cursor.querySelector('.row-label').textContent
         + ' and previewed it; Escape cleared the filter';
+    });
+
+    await check('search: a query walks below the folder and finds a nested match', async () => {
+      // The filter only sees the rows this folder delivered, so a key one level
+      // down is invisible to it. The scan that starts on the same query has to
+      // find that key and report its progress while it walks.
+      const deep = 'e2e-deep-' + Date.now();
+      const key = __PREFIX__ + deep + '/nested-target.txt';
+      await invoke('create_file', {
+        input: {
+          connectionId,
+          prefix: __PREFIX__ + deep + '/',
+          name: 'nested-target.txt',
+          content: 'deep probe',
+        },
+      });
+      let found = '';
+      try {
+        $('[data-testid=refresh]').click();
+        await wait('the deep folder row', async () => {
+          const objects = window.__s3viewer.state.objects;
+          if (objects.loading || objects.awaitingFirstPage) return null;
+          return rowNames().includes(deep) ? true : null;
+        }, 20000);
+
+        press(document.body, 'f', { metaKey: true });
+        await frame();
+        setInput('[data-testid=filter-input]', 'nested-target');
+        // Nothing at this level carries the name, so the rows stay empty until
+        // the scan delivers. The status line is the promise that it is running.
+        await wait('the announcement of the scan', async () => {
+          const node = $('[data-testid=search-status]');
+          return node && /search(ing|ed)|stopped/i.test(node.textContent) ? true : null;
+        }, 15000);
+        found = await wait('the nested match', async () => {
+          const name = rowNames().find((text) => text === 'nested-target.txt');
+          return name || null;
+        }, 60000);
+        // The label is the base name (its tooltip carries the key), so the row
+        // that appeared has to be the key one level down, not a same-named one.
+        const row = $$('.object-row').find(
+          (node) => node.querySelector('.row-label').getAttribute('title') === key,
+        );
+        if (!row) throw new Error('the scan painted ' + found + ' from somewhere else');
+
+        // Escape drops the query and the scan rows with it, back to this folder.
+        press($('[data-testid=filter-input]'), 'Escape');
+        await wait('the filter to clear', async () => {
+          const objects = window.__s3viewer.state.objects;
+          return $('[data-testid=filter-input]').value === '' && !objects.search ? true : null;
+        }, 10000);
+        if (!rowNames().includes(deep)) {
+          throw new Error('the folder rows did not come back after the search');
+        }
+      } finally {
+        window.__s3viewer.state.objects.filter = '';
+        await invoke('delete_objects', {
+          input: { connectionId, keys: [key, __PREFIX__ + deep + '/'] },
+        });
+        await wait('S3 to forget the deep key', async () => {
+          const listing = await invoke('list_objects', {
+            input: { connectionId, prefix: __PREFIX__ },
+          });
+          return listing.entries.some((entry) => entry.key.indexOf(__PREFIX__ + deep) === 0)
+            ? null
+            : true;
+        }, 30000);
+        $('[data-testid=refresh]').click();
+        await wait('the cleanup listing', async () => {
+          const objects = window.__s3viewer.state.objects;
+          if (objects.loading || objects.awaitingFirstPage) return null;
+          return rowNames().includes(deep) ? null : true;
+        }, 20000);
+      }
+      return 'scanned below the folder and found ' + found;
     });
 
     await check('keyboard: a filtered-out cursor is inert', async () => {
