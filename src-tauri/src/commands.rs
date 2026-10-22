@@ -497,8 +497,10 @@ pub struct SearchStreamInput {
     /// What the user typed: matched case-insensitively against every file and
     /// folder name at or below the prefix.
     pub query: String,
-    /// Echoed back in every event so stale listeners can be ignored. The same id
-    /// space as listings, so `cancel_listing` stops a search too.
+    /// Echoed back in every event so stale listeners can be ignored. Its own id
+    /// space (`search-<n>`, see the objects store): listings and scans share one
+    /// cancellation registry, and a shared counter would let them cancel each
+    /// other. `cancel_listing` stops either.
     pub request_id: String,
 }
 

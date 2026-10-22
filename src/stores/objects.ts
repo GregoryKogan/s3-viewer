@@ -531,6 +531,12 @@ export const useObjectsStore = defineStore("objects", () => {
   /** Rows the scan found; appended to what the local filter matched. */
   const searchEntries = ref<ObjectEntry[]>([]);
   let searchRequest = 0;
+  /**
+   * The id a scan is known by on the wire. Its own space (`search-<n>`): a
+   * listing counter also starts at 1, and one registry holds both, so a bare
+   * number would let a scan and a folder listing cancel each other.
+   */
+  let searchRequestId = "";
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** Typing must not start one S3 scan per keystroke. */
@@ -542,7 +548,7 @@ export const useObjectsStore = defineStore("objects", () => {
   function stopSearch() {
     const state = search.value;
     if (!state?.running) return;
-    void api.cancelListing(String(searchRequest)).catch(() => {});
+    void api.cancelListing(searchRequestId).catch(() => {});
     state.running = false;
     state.stopped = true;
   }
@@ -553,9 +559,7 @@ export const useObjectsStore = defineStore("objects", () => {
       clearTimeout(searchTimer);
       searchTimer = undefined;
     }
-    if (search.value?.running) {
-      void api.cancelListing(String(searchRequest)).catch(() => {});
-    }
+    if (search.value?.running) void api.cancelListing(searchRequestId).catch(() => {});
     search.value = null;
     searchEntries.value = [];
   }
@@ -564,7 +568,8 @@ export const useObjectsStore = defineStore("objects", () => {
     const connection = useConnectionsStore().active;
     if (!connection) return;
     searchRequest += 1;
-    const requestId = String(searchRequest);
+    searchRequestId = `search-${searchRequest}`;
+    const requestId = searchRequestId;
     search.value = {
       query,
       running: true,
@@ -586,7 +591,7 @@ export const useObjectsStore = defineStore("objects", () => {
         // The event usually lands first and carries the service message; a bare
         // rejection must not leave the banner saying "searching" forever.
         const state = search.value;
-        if (!state || requestId !== String(searchRequest) || state.error || state.stopped) return;
+        if (!state || requestId !== searchRequestId || state.error || state.stopped) return;
         state.running = false;
         state.error = (failure as Error)?.message ?? "The search failed.";
       });
@@ -608,7 +613,7 @@ export const useObjectsStore = defineStore("objects", () => {
 
   function onSearchPage(event: SearchPageEvent) {
     const state = search.value;
-    if (!state || event.requestId !== String(searchRequest)) return;
+    if (!state || event.requestId !== searchRequestId) return;
     state.scanned = event.scanned;
     state.matched = event.matched;
     state.capped = event.capped;
@@ -617,7 +622,7 @@ export const useObjectsStore = defineStore("objects", () => {
 
   function onSearchDone(event: SearchDoneEvent) {
     const state = search.value;
-    if (!state || event.requestId !== String(searchRequest)) return;
+    if (!state || event.requestId !== searchRequestId) return;
     state.running = false;
     // A stop that lost the race still ends in a complete scan.
     state.stopped = false;
@@ -629,7 +634,7 @@ export const useObjectsStore = defineStore("objects", () => {
   /** Returns false when the event belongs to a superseded search. */
   function onSearchError(event: ListingErrorEvent): boolean {
     const state = search.value;
-    if (!state || event.requestId !== String(searchRequest)) return false;
+    if (!state || event.requestId !== searchRequestId) return false;
     // Stopping is the user's own doing: the rows found so far stay on screen and
     // a connection is not marked unhealthy because someone pressed Stop.
     if (state.stopped) return false;

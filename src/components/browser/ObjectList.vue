@@ -424,7 +424,11 @@ defineExpose({ scrollToRow, focusList, pageRows });
           :title="`Nothing below this folder matches “${objects.search.query}”`"
           :description="`Searched ${objects.search.scanned.toLocaleString()} objects.`"
           data-testid="empty-folder"
-        />
+        >
+          <AppButton size="sm" data-testid="clear-filter" @click="objects.filter = ''">
+            Clear search
+          </AppButton>
+        </EmptyState>
         <EmptyState
           v-else-if="objects.filter"
           title="Nothing matches the filter"
