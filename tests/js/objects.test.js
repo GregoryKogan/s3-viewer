@@ -9,6 +9,13 @@ const { useObjectsStore } = await loadTs("src/stores/objects.ts");
 const { useToastsStore } = await loadTs("src/stores/toasts.ts");
 const { useUiStore } = await loadTs("src/stores/ui.ts");
 
+/** Listing ids the store asked the backend to stop, in order. */
+const cancelledListings = [];
+api.cancelListing = (requestId) => {
+  cancelledListings.push(requestId);
+  return Promise.resolve();
+};
+
 /**
  * The minimal shape `loadFolder` touches. The store reads the id and the scope
  * prefix; nothing here reaches the backend because the test replaces `api`.
@@ -680,4 +687,21 @@ test("the list sorts folders first and names in natural order", async () => {
     objects.visibleEntries.map((entry) => entry.name),
     ["zeta", "2.jpg", "9.jpg", "10.jpg"],
   );
+});
+
+test("walking away from a folder stops the scan still running behind it", async () => {
+  const { objects } = seed("a");
+  const listing = pendingListing();
+  cancelledListings.length = 0;
+
+  // The user gives up on a huge folder and opens another one. S3 is still
+  // walking `huge/`, a page every few seconds, and nobody will read the rest.
+  void objects.loadFolder("huge/");
+  const firstRequest = listing.started[0].requestId;
+  const second = objects.loadFolder("small/");
+
+  assert.deepEqual(cancelledListings, [firstRequest]);
+
+  listing.release();
+  await second;
 });

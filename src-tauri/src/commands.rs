@@ -14,9 +14,10 @@ use crate::s3::{AnyStore, ObjectStore};
 use crate::state::AppCore;
 use crate::store::{AppSettings, ConnectionInput, Theme};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 use tauri::{AppHandle, Emitter, State};
 
 pub type CmdResult<T> = Result<T, ErrorPayload>;
@@ -363,6 +364,41 @@ pub async fn list_objects(app: State<'_, Arc<AppCore>>, input: ListInput) -> Cmd
     })
 }
 
+/// Listings the webview can still abort, keyed by the `request_id` it chose.
+///
+/// A prefix with hundreds of thousands of sub-folders keeps S3 answering one
+/// page every few seconds for half an hour, so walking away from it must stop
+/// the scan instead of leaving it to compete with whatever is opened next.
+static LIVE_LISTINGS: LazyLock<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+    LazyLock::new(Default::default);
+
+fn register_listing(id: &str) -> Arc<AtomicBool> {
+    let flag = Arc::new(AtomicBool::new(false));
+    if let Ok(mut live) = LIVE_LISTINGS.lock() {
+        live.insert(id.to_string(), flag.clone());
+    }
+    flag
+}
+
+fn release_listing(id: &str) {
+    if let Ok(mut live) = LIVE_LISTINGS.lock() {
+        live.remove(id);
+    }
+}
+
+/// Stop a listing whose rows nobody is going to look at.
+///
+/// An unknown id is not an error: the listing may have finished between the UI
+/// deciding to walk away and this call arriving.
+#[tauri::command]
+pub fn cancel_listing(request_id: String) {
+    if let Ok(live) = LIVE_LISTINGS.lock() {
+        if let Some(flag) = live.get(&request_id) {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
 /// Listing that streams: every S3 page is emitted as an event so the UI can paint
 /// results while a large prefix is still being read.
 ///
@@ -386,6 +422,7 @@ pub async fn list_objects_stream(
     let store = core.client(&input.connection_id).map_err(err)?;
 
     let request_id = input.request_id.clone();
+    let live = register_listing(&request_id);
 
     let emit = |event: &str, payload: serde_json::Value| {
         let _ = app.emit(event, payload);
@@ -395,6 +432,7 @@ pub async fn list_objects_stream(
         let app = app.clone();
         let prefix_for_pages = prefix.clone();
         let request = request_id.clone();
+        let live = live.clone();
         let mut sent = 0usize;
         let mut total_files = 0usize;
         let mut truncated = false;
@@ -416,6 +454,7 @@ pub async fn list_objects_stream(
                     "done": page.is_last,
                 }),
             );
+            !live.load(Ordering::Relaxed)
         })
         .await?;
         Ok::<_, AppError>((sent, total_files, truncated))
@@ -425,6 +464,7 @@ pub async fn list_objects_stream(
     let (sent, total_files, truncated) = match result {
         Ok(counts) => counts,
         Err(e) => {
+            release_listing(&request_id);
             let payload = ErrorPayload::from(&e);
             let _ = app.emit(
                 "listing://error",
@@ -433,6 +473,7 @@ pub async fn list_objects_stream(
             return Err(payload);
         }
     };
+    release_listing(&request_id);
     emit(
         "listing://done",
         serde_json::json!({
@@ -1865,6 +1906,24 @@ pub async fn read_text_file(path: String) -> CmdResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cancelled_listing_stops_and_is_forgotten() {
+        let live = register_listing("cancel-live");
+        assert!(!live.load(Ordering::Relaxed));
+        cancel_listing("cancel-live".into());
+        assert!(live.load(Ordering::Relaxed));
+        release_listing("cancel-live");
+        assert!(!LIVE_LISTINGS.lock().unwrap().contains_key("cancel-live"));
+    }
+
+    /// The webview can walk away between the last page and `done`; a cancel that
+    /// arrives for a listing nobody is streaming is a no-op, not an error.
+    #[test]
+    fn cancelling_an_unknown_listing_is_harmless() {
+        cancel_listing("never-started".into());
+        assert!(!LIVE_LISTINGS.lock().unwrap().contains_key("never-started"));
+    }
 
     #[test]
     fn system_entries_are_filtered() {

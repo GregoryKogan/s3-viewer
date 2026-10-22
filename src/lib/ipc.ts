@@ -196,6 +196,8 @@ export const api = {
     invoke<ListResult>("list_objects", { input }),
   listObjectsStream: (input: { connectionId: string; prefix?: string | null; requestId: string }) =>
     invoke<void>("list_objects_stream", { input }),
+  /** Stop a listing whose rows nobody is looking at any more. */
+  cancelListing: (requestId: string) => invoke<void>("cancel_listing", { requestId }),
   getPreview: (input: { connectionId: string; key: string; kindHint?: string | null }) =>
     invoke<PreviewData>("get_preview", { input }),
   objectMeta: (connectionId: string, key: string) =>

@@ -245,6 +245,11 @@ export const useObjectsStore = defineStore("objects", () => {
       // behind a full-width preview that no longer has an object.
       useUiStore().collapsePreview();
     }
+    // S3 keeps walking a prefix for minutes after the UI looks elsewhere: a
+    // folder with 380k sub-folders answers one page every few seconds. Leaving
+    // that scan running competes with whatever is opened next, so the load it
+    // belonged to is told to stop.
+    const abandoned = loading.value || revalidating ? String(listingRequest) : null;
     loading.value = !cached;
     awaitingFirstPage.value = !cached;
     error.value = null;
@@ -254,6 +259,7 @@ export const useObjectsStore = defineStore("objects", () => {
     truncated.value = cached ? cached.truncated : false;
 
     if (loading.value) note(listingLog, `superseded#${listingRequest}`);
+    if (abandoned) void api.cancelListing(abandoned).catch(() => {});
     const requestId = String(++listingRequest);
     note(listingLog, `start#${requestId} "${prefix.value}"`);
 
@@ -464,6 +470,8 @@ export const useObjectsStore = defineStore("objects", () => {
   }
 
   function close() {
+    if (loading.value || revalidating)
+      void api.cancelListing(String(listingRequest)).catch(() => {});
     listingRequest += 1;
     prefix.value = "";
     sessionConnectionId.value = null;

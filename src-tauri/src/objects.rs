@@ -118,6 +118,10 @@ fn drop_self_marker(entries: Vec<ObjectEntry>, folder: &str) -> Vec<ObjectEntry>
 /// `limit == 0` means "no files, folders only". The settings UI clamps the
 /// field to at least 200 and maps a blank or zero value back to the default, so
 /// 0 only comes from a hand-edited config.
+///
+/// `on_page` returns whether to keep going. A prefix with hundreds of thousands
+/// of sub-folders takes tens of minutes to walk, so a caller whose rows nobody
+/// is looking at any more says no and the S3 scan stops after the page in hand.
 pub async fn list_folder_streaming<F>(
     store: &AnyStore,
     prefix: &str,
@@ -125,7 +129,7 @@ pub async fn list_folder_streaming<F>(
     mut on_page: F,
 ) -> AppResult<()>
 where
-    F: FnMut(ListingPage),
+    F: FnMut(ListingPage) -> bool,
 {
     let folder = as_folder_prefix(prefix);
     let mut remaining = limit;
@@ -153,12 +157,12 @@ where
         } = fitted;
         remaining = remaining_files;
         truncated = page_truncated;
-        on_page(ListingPage {
+        let keep_going = on_page(ListingPage {
             entries,
             is_last,
             truncated,
         });
-        if is_last {
+        if is_last || !keep_going {
             break;
         }
         token = next_token;
@@ -177,6 +181,7 @@ pub async fn list_folder(
     list_folder_streaming(store, prefix, limit, |page| {
         entries.extend(page.entries);
         truncated = page.truncated;
+        true
     })
     .await?;
     Ok((entries, truncated))
