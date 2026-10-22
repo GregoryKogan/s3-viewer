@@ -555,3 +555,85 @@ test("renaming a connection keeps its cached folders", async () => {
   assert.equal(listing.calls.length, 2);
   assert.deepEqual(objects.entries.map((entry) => entry.key), ["big/one.txt"]);
 });
+
+test("the first page paints while the rest of a large folder is still streaming", async () => {
+  const { objects } = seed("a");
+  const listing = pendingListing();
+
+  const loading = objects.loadFolder("huge/");
+  const requestId = listing.started[0].requestId;
+  assert.deepEqual(objects.entries, []);
+  assert.equal(objects.awaitingFirstPage, true);
+
+  objects.onListingPage({
+    requestId,
+    prefix: "huge/",
+    entries: [objectEntry("huge/a.txt")],
+    total: 1,
+    done: false,
+  });
+
+  // A prefix that needs minutes to enumerate shows its first page instead of an
+  // empty window that reads as "this folder does not load".
+  assert.deepEqual(objects.entries.map((entry) => entry.key), ["huge/a.txt"]);
+  assert.equal(objects.awaitingFirstPage, false);
+  assert.equal(objects.loading, true, "the rest of the folder is still loading");
+
+  // Later pages stay staged: `done` replaces the list with all of them.
+  objects.onListingPage({
+    requestId,
+    prefix: "huge/",
+    entries: [objectEntry("huge/b.txt")],
+    total: 2,
+    done: true,
+  });
+  assert.deepEqual(objects.entries.map((entry) => entry.key), ["huge/a.txt"]);
+
+  objects.onListingDone({
+    requestId,
+    prefix: "huge/",
+    total: 2,
+    files: 2,
+    truncated: false,
+    warning: null,
+  });
+  assert.deepEqual(objects.entries.map((entry) => entry.key), ["huge/a.txt", "huge/b.txt"]);
+  assert.equal(objects.loading, false);
+
+  listing.release();
+  await loading;
+});
+
+test("the stall watchdog measures silence, not elapsed time", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { objects } = seed("a");
+  const toasts = useToastsStore();
+  toasts.clear();
+  const listing = pendingListing();
+
+  const loading = objects.loadFolder("huge/");
+  const requestId = listing.started[0].requestId;
+
+  // A slow folder keeps delivering pages; each one buys another window, so a
+  // listing that is still making progress is never declared stalled.
+  t.mock.timers.tick(100_000);
+  objects.onListingPage({
+    requestId,
+    prefix: "huge/",
+    entries: [objectEntry("huge/a.txt")],
+    total: 1,
+    done: false,
+  });
+  t.mock.timers.tick(100_000);
+  assert.equal(objects.error, null);
+  assert.equal(objects.loading, true);
+
+  // Nothing for a whole window is a stall.
+  t.mock.timers.tick(120_000);
+  assert.equal(objects.loading, false);
+  assert.equal(objects.error, "The listing took too long to finish.");
+  assert.equal(toasts.toasts.filter((toast) => toast.level === "warn").length, 1);
+
+  listing.release();
+  await loading;
+});

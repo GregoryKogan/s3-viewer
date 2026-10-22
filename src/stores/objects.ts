@@ -33,9 +33,10 @@ function connectionCacheOwner(connection: Connection): string {
 
 /**
  * One browsing session: the folder on screen, its objects, the selection, and the
- * preview. Listings stream in, so `entries` is only replaced when a folder has
- * finished loading — never partially, which previously let a cancelled load show
- * an empty folder as fact.
+ * preview. Listings stream in, so the first page is painted while the rest is
+ * still being read and `done` replaces the list with all of it; a cancelled load
+ * therefore never leaves a partial list on screen, which previously showed an
+ * empty folder as fact.
  */
 export const useObjectsStore = defineStore("objects", () => {
   const prefix = ref("");
@@ -91,6 +92,29 @@ export const useObjectsStore = defineStore("objects", () => {
   let listingRequest = 0;
   let previewRequest = 0;
   let staged: ObjectEntry[] = [];
+  /**
+   * The stall watchdog for the listing in flight. What it measures is silence,
+   * not elapsed time: every page re-arms it. A prefix with hundreds of thousands
+   * of sub-folders takes minutes to enumerate legitimately, and it used to be
+   * declared stalled while it was still delivering pages.
+   */
+  const LISTING_STALL_MS = 120_000;
+  let stallGuard: ReturnType<typeof setTimeout> | undefined;
+  /** The request that owns `stallGuard`; a superseded one must not clear it. */
+  let stallGuardOwner: string | undefined;
+
+  function armStallGuard(requestId: string) {
+    clearTimeout(stallGuard);
+    stallGuardOwner = requestId;
+    stallGuard = setTimeout(() => {
+      if (String(listingRequest) === requestId && loading.value) {
+        loading.value = false;
+        awaitingFirstPage.value = false;
+        error.value = "The listing took too long to finish.";
+        useToastsStore().warn("The listing stalled. Press refresh to try again.", "Listing stalled");
+      }
+    }, LISTING_STALL_MS);
+  }
   /**
    * The listing failure already announced by a toast. The `listing://error`
    * event normally sets it; the rejected invoke covers failures raised before
@@ -236,14 +260,7 @@ export const useObjectsStore = defineStore("objects", () => {
       return;
     }
 
-    const guard = setTimeout(() => {
-      if (String(listingRequest) === requestId && loading.value) {
-        loading.value = false;
-        awaitingFirstPage.value = false;
-        error.value = "The listing took too long to finish.";
-        useToastsStore().warn("The listing stalled. Press refresh to try again.", "Listing stalled");
-      }
-    }, 120_000);
+    armStallGuard(requestId);
 
     try {
       await api.listObjectsStream({ connectionId: connection.id, prefix: prefix.value, requestId });
@@ -269,7 +286,10 @@ export const useObjectsStore = defineStore("objects", () => {
         }
       }
     } finally {
-      clearTimeout(guard!);
+      if (stallGuardOwner === requestId) {
+        clearTimeout(stallGuard);
+        stallGuardOwner = undefined;
+      }
     }
   }
 
@@ -289,8 +309,22 @@ export const useObjectsStore = defineStore("objects", () => {
     note(listingLog, `page#${event.requestId}+${event.entries?.length ?? 0}`);
     if (event.requestId !== String(listingRequest)) return;
     if (!useConnectionsStore().active) return;
+    // Only the foreground load owns the guard: a background revalidation is
+    // silent by design and has no `finally` to release it.
+    if (loading.value) armStallGuard(event.requestId);
     if (event.entries?.length) {
       staged.push(...event.entries);
+      // Paint the first page rather than holding the whole folder behind a
+      // spinner until the last one: a prefix with hundreds of thousands of
+      // sub-folders legitimately takes minutes, and a blank window reads as
+      // "this folder does not load". Only the first page is painted — `done`
+      // replaces the list with all of them, and repainting every page would
+      // re-sort a list that grows by a thousand rows a step. A revalidation
+      // keeps the cached rows on screen (`loading` is false there).
+      if (loading.value && entries.value.length === 0) {
+        entries.value = staged.slice();
+        awaitingFirstPage.value = false;
+      }
     }
   }
 
