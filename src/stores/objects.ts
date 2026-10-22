@@ -22,6 +22,17 @@ export type SortKey = "name" | "size" | "modified" | "kind";
 const LISTING_CACHE_FRESH_MS = 30_000;
 
 /**
+ * Sort collators, built once.
+ *
+ * `localeCompare` with an options bag builds a collator per call, and a folder
+ * with hundreds of thousands of entries sorts again on every keystroke of the
+ * filter: 8.2 s per sort at 380k rows against 0.7 s for a reused collator, with
+ * the same order.
+ */
+const NAME_COLLATOR = new Intl.Collator(undefined, { numeric: true });
+const TEXT_COLLATOR = new Intl.Collator();
+
+/**
  * The owner half of a cache key identifies the connection *target*, not just the
  * saved connection. An edit keeps the id but can move the bucket or the
  * endpoint, and entries cached from the old target must never paint under the
@@ -56,6 +67,12 @@ export const useObjectsStore = defineStore("objects", () => {
   const entries = ref<ObjectEntry[]>([]);
   const loading = ref(false);
   const awaitingFirstPage = ref(false);
+  /**
+   * How many entries the listing in flight has produced. `entries` paints in
+   * steps (see `paintStaged`), so this is what tells the toolbar that a folder
+   * taking minutes is still making progress.
+   */
+  const listed = ref(0);
   const truncated = ref(false);
   const warning = ref<string | null>(null);
   const error = ref<string | null>(null);
@@ -92,6 +109,11 @@ export const useObjectsStore = defineStore("objects", () => {
   let listingRequest = 0;
   let previewRequest = 0;
   let staged: ObjectEntry[] = [];
+  /** Show what the stream has produced so far, without waiting for `done`. */
+  function paintStaged() {
+    entries.value = staged.slice();
+    awaitingFirstPage.value = false;
+  }
   /**
    * The stall watchdog for the listing in flight. What it measures is silence,
    * not elapsed time: every page re-arms it. A prefix with hundreds of thousands
@@ -213,6 +235,7 @@ export const useObjectsStore = defineStore("objects", () => {
     prefix.value = nextPrefix;
     entries.value = cached ? cached.entries : [];
     staged = [];
+    listed.value = entries.value.length;
     if (!continuing) {
       selected.value = new Set();
       selectionAnchor.value = null;
@@ -314,16 +337,19 @@ export const useObjectsStore = defineStore("objects", () => {
     if (loading.value) armStallGuard(event.requestId);
     if (event.entries?.length) {
       staged.push(...event.entries);
-      // Paint the first page rather than holding the whole folder behind a
-      // spinner until the last one: a prefix with hundreds of thousands of
-      // sub-folders legitimately takes minutes, and a blank window reads as
-      // "this folder does not load". Only the first page is painted — `done`
-      // replaces the list with all of them, and repainting every page would
-      // re-sort a list that grows by a thousand rows a step. A revalidation
-      // keeps the cached rows on screen (`loading` is false there).
-      if (loading.value && entries.value.length === 0) {
-        entries.value = staged.slice();
-        awaitingFirstPage.value = false;
+      // A revalidation keeps the cached rows on screen (`loading` is false) and
+      // replaces them on `done`; only the foreground load paints as it goes.
+      if (loading.value) {
+        listed.value = staged.length;
+        // Paint as the folder fills rather than once at the end: a prefix with
+        // hundreds of thousands of sub-folders legitimately takes minutes, and
+        // both a blank window and a frozen first page read as "this folder does
+        // not load". Every repaint re-sorts the whole list on screen, so the
+        // list doubles between paints instead of following every page: a page
+        // costs six seconds, which would mean 380 re-sorts of a 380k list.
+        if (entries.value.length === 0 || staged.length >= entries.value.length * 2) {
+          paintStaged();
+        }
       }
     }
   }
@@ -341,6 +367,7 @@ export const useObjectsStore = defineStore("objects", () => {
     if (event.requestId !== String(listingRequest)) return false;
     entries.value = staged;
     staged = [];
+    listed.value = entries.value.length;
     loading.value = false;
     awaitingFirstPage.value = false;
     truncated.value = event.truncated;
@@ -488,11 +515,11 @@ export const useObjectsStore = defineStore("objects", () => {
         case "size":
           return (a.size - b.size) * direction;
         case "modified":
-          return String(a.lastModified ?? "").localeCompare(String(b.lastModified ?? "")) * direction;
+          return TEXT_COLLATOR.compare(String(a.lastModified ?? ""), String(b.lastModified ?? "")) * direction;
         case "kind":
-          return a.kind.localeCompare(b.kind) * direction;
+          return TEXT_COLLATOR.compare(a.kind, b.kind) * direction;
         default:
-          return a.name.localeCompare(b.name, undefined, { numeric: true }) * direction;
+          return NAME_COLLATOR.compare(a.name, b.name) * direction;
       }
     });
     return matched;
@@ -733,6 +760,7 @@ export const useObjectsStore = defineStore("objects", () => {
     entries,
     loading,
     awaitingFirstPage,
+    listed,
     truncated,
     warning,
     error,

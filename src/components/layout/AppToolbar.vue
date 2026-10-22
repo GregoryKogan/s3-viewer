@@ -56,6 +56,10 @@ const status = computed(() => {
     : `${files} file${files === 1 ? "" : "s"}`;
   const parts = [`${folders} folder${folders === 1 ? "" : "s"}`, fileLabel, humanSize(bytes)];
   if (objects.truncated) parts.push("truncated");
+  // A folder that takes minutes to enumerate has produced far more than it has
+  // painted, and the counts above are of the painted rows: say that the listing
+  // is still running instead of presenting a partial count as the whole folder.
+  if (objects.loading) parts.push(`${objects.listed.toLocaleString()} found so far`);
   return parts.join(" · ");
 });
 </script>

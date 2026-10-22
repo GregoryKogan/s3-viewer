@@ -579,25 +579,16 @@ test("the first page paints while the rest of a large folder is still streaming"
   assert.equal(objects.awaitingFirstPage, false);
   assert.equal(objects.loading, true, "the rest of the folder is still loading");
 
-  // Later pages stay staged: `done` replaces the list with all of them.
-  objects.onListingPage({
-    requestId,
-    prefix: "huge/",
-    entries: [objectEntry("huge/b.txt")],
-    total: 2,
-    done: true,
-  });
-  assert.deepEqual(objects.entries.map((entry) => entry.key), ["huge/a.txt"]);
-
+  // `done` settles the folder; the painted page is already the same list.
   objects.onListingDone({
     requestId,
     prefix: "huge/",
-    total: 2,
-    files: 2,
+    total: 1,
+    files: 1,
     truncated: false,
     warning: null,
   });
-  assert.deepEqual(objects.entries.map((entry) => entry.key), ["huge/a.txt", "huge/b.txt"]);
+  assert.deepEqual(objects.entries.map((entry) => entry.key), ["huge/a.txt"]);
   assert.equal(objects.loading, false);
 
   listing.release();
@@ -636,4 +627,57 @@ test("the stall watchdog measures silence, not elapsed time", async (t) => {
 
   listing.release();
   await loading;
+});
+
+test("a listing in flight repaints as the list grows and counts what it found", async () => {
+  const { objects } = seed("a");
+  const listing = pendingListing();
+
+  const loading = objects.loadFolder("huge/");
+  const requestId = listing.started[0].requestId;
+  let next = 0;
+  const page = (count) => {
+    const entries = Array.from({ length: count }, () => objectEntry(`huge/${next++}.txt`));
+    objects.onListingPage({
+      requestId,
+      prefix: "huge/",
+      entries,
+      total: count,
+      done: false,
+    });
+  };
+
+  page(2);
+  assert.equal(objects.entries.length, 2);
+  assert.equal(objects.listed, 2);
+
+  // Pages inside the doubling window are counted but not painted: every repaint
+  // re-sorts the whole list on screen, and a page costs six seconds.
+  page(1);
+  assert.equal(objects.listed, 3);
+  assert.equal(objects.entries.length, 2);
+
+  // Once the staged list has doubled, the next page paints all of it.
+  page(1);
+  assert.equal(objects.listed, 4);
+  assert.equal(objects.entries.length, 4);
+
+  listing.release();
+  await loading;
+});
+
+test("the list sorts folders first and names in natural order", async () => {
+  const { objects } = seed("a");
+  streamListing(objects, [
+    objectEntry("big/10.jpg"),
+    objectEntry("big/9.jpg"),
+    objectEntry("big/2.jpg"),
+    { ...objectEntry("big/zeta"), isFolder: true, kind: "folder" },
+  ]);
+  await objects.loadFolder("big/");
+
+  assert.deepEqual(
+    objects.visibleEntries.map((entry) => entry.name),
+    ["zeta", "2.jpg", "9.jpg", "10.jpg"],
+  );
 });
