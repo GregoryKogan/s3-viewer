@@ -593,7 +593,7 @@ pub async fn search_objects_stream(
 fn truncation_warning(truncated: bool, limit: usize) -> Option<String> {
     truncated.then(|| {
         format!(
-            "Listing truncated at {limit} objects. Raise the limit in Settings, or open a sub-folder."
+            "Listing truncated at {limit} objects. Type in the search box to look below this folder, or raise the limit in Settings."
         )
     })
 }
