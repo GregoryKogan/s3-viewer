@@ -11,7 +11,7 @@ use crate::objects::{self, as_folder_prefix};
 use crate::preview::{self, parse_range};
 use crate::progress::ProgressTracker;
 use crate::s3::{AnyStore, ObjectStore};
-use crate::state::AppCore;
+use crate::state::{AppCore, CachedMedia};
 use crate::store::{AppSettings, ConnectionInput, Theme};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -629,6 +629,9 @@ pub async fn get_preview(
     input: PreviewInput,
 ) -> CmdResult<PreviewData> {
     let core = app.inner();
+    // Opening a preview is the moment to drop whatever media the player had
+    // cached: the object may have been overwritten since it was read.
+    core.forget_media();
     let max = core.settings().preview_max_bytes;
     let store = core.client(&input.connection_id).map_err(err)?;
     let mut data: PreviewData =
@@ -1881,6 +1884,12 @@ pub async fn copy_objects(
 
 // -------------------------------------------------------------- stream bridge
 
+/// Objects up to this size are pulled whole and served from RAM. A webview's
+/// media stack reads a file in a couple of hundred tiny ranges, strictly one
+/// after another; over S3 each of those is a full round trip, which is what made
+/// playback stutter.
+pub const MEDIA_CACHE_LIMIT: u64 = 64 * 1024 * 1024;
+
 /// Metadata + bytes for the `s3stream://` protocol handler. Kept public so
 /// `lib.rs` can register the scheme.
 pub async fn read_stream(
@@ -1889,8 +1898,28 @@ pub async fn read_stream(
     key: &str,
     range_header: Option<&str>,
 ) -> Result<StreamResponse, AppError> {
+    if let Some(media) = core.cached_media(connection_id, key) {
+        return media_slice(&media, range_header);
+    }
+
     let store = core.client(connection_id)?;
     let size = store.stat(key).await?.size.unwrap_or(0);
+
+    if size > 0 && size as u64 <= MEDIA_CACHE_LIMIT {
+        let full = store.get_bytes(key, None).await?;
+        let media = CachedMedia::new(
+            connection_id,
+            key,
+            full.body.len() as u64,
+            full.content_type.clone(),
+            full.etag.clone(),
+            full.body,
+        );
+        let response = media_slice(&media, range_header);
+        core.remember_media(media);
+        return response;
+    }
+
     let range = match range_header {
         Some(h) => match parse_range(h, size as u64) {
             Some(r) => Some(r),
@@ -1932,6 +1961,51 @@ pub struct StreamResponse {
     pub content_length: u64,
     pub etag: Option<String>,
     pub body: Vec<u8>,
+}
+
+/// Answer one `Range` request out of an object already in RAM.
+fn media_slice(
+    media: &CachedMedia,
+    range_header: Option<&str>,
+) -> Result<StreamResponse, AppError> {
+    let total = media.size;
+    let range = match range_header {
+        Some(h) => match parse_range(h, total) {
+            Some(r) => Some(r),
+            None => {
+                return Err(AppError::invalid(format!(
+                    "unsatisfiable range {h} for an object of {total} bytes"
+                )))
+            }
+        },
+        None => None,
+    };
+    let (status, content_range, start, end) = match range {
+        Some(r) => (
+            206u16,
+            Some(format!("bytes {}-{}/{}", r.start, r.end, total)),
+            r.start,
+            r.end,
+        ),
+        None => (200u16, None, 0, total.saturating_sub(1)),
+    };
+    let body = media
+        .body
+        .get(start as usize..=end as usize)
+        .unwrap_or_default()
+        .to_vec();
+    let content_type = media.content_type.clone().unwrap_or_else(|| {
+        crate::s3::guess_content_type(Path::new(&media.key))
+            .unwrap_or_else(|| "application/octet-stream".into())
+    });
+    Ok(StreamResponse {
+        status,
+        content_type,
+        content_range,
+        content_length: body.len() as u64,
+        etag: media.etag.clone(),
+        body,
+    })
 }
 
 // ---------------------------------------------------------------- filesystem
@@ -2328,6 +2402,52 @@ mod tests {
             tracker.get(&running).unwrap().state,
             ProgressState::Cancelled
         );
+    }
+
+    fn cached_media_for_test() -> CachedMedia {
+        CachedMedia::new(
+            "conn-1",
+            "clip.mp4",
+            10,
+            Some("video/mp4".into()),
+            Some("etag-1".into()),
+            (0..10).collect(),
+        )
+    }
+
+    /// The player reads box headers as byte ranges; each one must come back as
+    /// the exact slice it asked for.
+    #[test]
+    fn media_slice_answers_closed_and_open_ranges() {
+        let media = cached_media_for_test();
+        let head = media_slice(&media, Some("bytes=0-3")).unwrap();
+        assert_eq!(head.status, 206);
+        assert_eq!(head.body, vec![0, 1, 2, 3]);
+        assert_eq!(head.content_range.as_deref(), Some("bytes 0-3/10"));
+        assert_eq!(head.content_length, 4);
+
+        let tail = media_slice(&media, Some("bytes=7-")).unwrap();
+        assert_eq!(tail.body, vec![7, 8, 9]);
+        assert_eq!(tail.content_range.as_deref(), Some("bytes 7-9/10"));
+    }
+
+    /// No `Range` means the whole object, and an impossible one is an error the
+    /// caller turns into a 4xx — not a panic on the slice.
+    #[test]
+    fn media_slice_handles_whole_objects_and_bad_ranges() {
+        let media = cached_media_for_test();
+        let whole = media_slice(&media, None).unwrap();
+        assert_eq!(whole.status, 200);
+        assert_eq!(whole.body.len(), 10);
+        assert!(whole.content_range.is_none());
+        assert!(media_slice(&media, Some("bytes=50-60")).is_err());
+    }
+
+    /// S3 does not always report a content type; the extension is the fallback.
+    #[test]
+    fn media_slice_falls_back_to_the_extension() {
+        let media = CachedMedia::new("c", "a/b/clip.mp4", 1, None, None, vec![0]);
+        assert_eq!(media_slice(&media, None).unwrap().content_type, "video/mp4");
     }
 
     #[test]

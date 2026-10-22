@@ -98,6 +98,30 @@ pub async fn build_preview(
         });
     }
 
+    // Audio and video are played by the webview through `s3stream://`, byte
+    // range by byte range. Reading 512 KB here would only delay the first frame,
+    // and the extension already decides the kind, so skip the sniff.
+    let sniffed = detect_kind(key, stat.content_type.as_deref(), None);
+    if is_streamed(sniffed) {
+        return Ok(PreviewData {
+            kind: sniffed,
+            key: key.to_string(),
+            size,
+            content_type: stat.content_type.unwrap_or_else(|| {
+                crate::s3::guess_content_type(std::path::Path::new(key))
+                    .unwrap_or_else(|| "application/octet-stream".to_string())
+            }),
+            etag: stat.etag,
+            last_modified: stat.last_modified,
+            text: None,
+            base64: None,
+            table: None,
+            stream_url: url,
+            truncated: false,
+            unavailable_reason: None,
+        });
+    }
+
     // Sniff the head for classification regardless of size — it is cheap and
     // lets the "too large" message name the real file type.
     let head_range = ByteRange {

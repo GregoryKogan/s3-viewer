@@ -10,8 +10,9 @@
 
 <p align="center">
   An S3 browser that renders images, audio, video, PDFs, Markdown, source code,
-  CSV and Parquet tables in place. Ranged reads mean a video starts playing on
-  the first bytes, and your access keys never leave the machine in cleartext.
+  CSV and Parquet tables in place. Ranged reads mean a video plays without ever
+  being downloaded to disk, and your access keys never leave the machine in
+  cleartext.
 </p>
 
 <p align="center">
@@ -125,9 +126,13 @@ The full feature tour is on the
 ## Preview support
 
 Previews never download a whole file just to decide whether they can show it: the
-app fetches at most 512 KB to classify the content, and media streams through a
-custom `s3stream://` protocol that supports HTTP ranges, so playback starts before
-the whole object arrives.
+app fetches at most 512 KB to classify content the extension does not identify
+(audio and video are classified from the name alone and read no bytes), and media
+streams through a custom `s3stream://` protocol that supports HTTP ranges. A
+viewer asks for a file in a couple of hundred tiny ranges, one after another, so
+objects up to 64 MB are fetched once and answered from memory; larger ones are
+proxied range by range, which is why a multi-gigabyte video seeks without being
+downloaded.
 
 | Content | Behaviour |
 | --- | --- |
